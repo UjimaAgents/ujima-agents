@@ -34,6 +34,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ thr
         body: JSON.stringify({ organizationId, mode }),
       },
       await getSessionTokenFromCookie(),
+      // Summarize and clear both call the LLM before compacting messages.
+      { timeoutMs: 60_000 },
     );
     const body = await response.json().catch(() => null);
 

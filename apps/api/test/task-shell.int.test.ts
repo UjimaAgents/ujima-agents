@@ -2,8 +2,8 @@ import { rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import type { LanguageModel } from 'ai';
-import { MessageCardSchema, MessageSchema } from '@ujima/shared';
-import { makeFilesystemToolCallModel, makeTextModel } from './helpers/mock-language-models.js';
+import { MessageCardSchema } from '@ujima/shared';
+import { makeTextModel } from './helpers/mock-language-models.js';
 import { createTaskShellFixture as createFixture } from './helpers/task-shell-fixture.js';
 
 describe('task shell integrations', () => {
@@ -102,51 +102,6 @@ describe('task shell integrations', () => {
       }),
     );
     expect(failedSummary).toBeDefined();
-  });
-
-  it('aggregates active agents, token usage, and tool usage in run detail for spirit-backed runs', async () => {
-    const fixture = await createFixture({
-      modelResolver: () => makeFilesystemToolCallModel(),
-    });
-    tempDirs.push(fixture.archiveRoot);
-
-    const { session } = fixture.taskSessions.create({
-      organizationId: fixture.organizationId,
-      requestedBy: fixture.ownerId,
-      prompt: 'Audit the README',
-      team: ['frontend-alice'],
-    });
-
-    await fixture.taskSessions.start(fixture.organizationId, session.id, {
-      runFirstTurn: true,
-    });
-
-    const spirit = fixture.repo.listSpiritsForSession(fixture.organizationId, session.id)[0];
-    expect(spirit?.runId).toBeDefined();
-    for (let index = 0; index < 505; index += 1) {
-      fixture.conversations.publishMessage(
-        MessageSchema.parse({
-          id: `bulk-${index}`,
-          organizationId: fixture.organizationId,
-          threadId: session.channelId,
-          channelId: session.channelId,
-          senderId: fixture.ownerId,
-          senderKind: 'human',
-          kind: 'human',
-          content: `bulk task history ${index}`,
-          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
-        }),
-        [],
-      );
-    }
-
-    const detail = fixture.runs.getRunDetail(fixture.organizationId, spirit!.runId!);
-    expect(detail).not.toBeNull();
-    expect(detail?.tokens.perMemberId['frontend-alice']).toBeGreaterThan(0);
-    expect(detail?.tools.filesystem?.count).toBe(1);
-    expect(detail?.tools.filesystem?.pending).toBe(0);
-    expect(detail?.messages.some((message) => message.content === 'bulk task history 0')).toBe(true);
-    expect(detail?.messages.some((message) => message.content === 'bulk task history 504')).toBe(true);
   });
 
 });

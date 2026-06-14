@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { GoalTaskStatusSchema } from '@ujima/shared';
 import {
   IMPLEMENT_QUESTION_OPTION,
+  IMPLEMENT_QUESTION_REJECT_OPTION,
   IMPLEMENT_QUESTION_TEXT,
   QUESTION_RECOMMENDED_SUFFIX,
 } from '../services/goal-system.js';
@@ -76,23 +77,21 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
   execute: (ctx) => {
     const input = ctx.invocation.input as z.infer<typeof GoalStartSchema>;
     const runId = ctx.invocation.runId;
+    const channelId = invocationChannelId(ctx);
     if (runId) {
       const existingQuestions = ctx.repo.listInteractiveQuestionsByRunId?.(ctx.invocation.organizationId, runId) ?? [];
-      const matching = existingQuestions.find((q) => q.toolCallId === ctx.invocation.toolCallId);
-      if (matching?.status === 'answered') {
-        // Resume after the implement-question was answered. Re-read
-        // the goal + tasks from the previous step's output and
-        // explicitly omit `status` and `questionId` before applying
-        // the answered shape. The earlier spread-then-override
-        // pattern leaked a stale `questionId` from the
-        // waiting_for_input step; the model then read that dangling
-        // `questionId` as "tool is still asking" and hallucinated
-        // an "interactive user input required" error even though
-        // the override flipped status to 'completed'. Stripping the
-        // two contradictory fields removes the ambiguity.
+      const implementQuestions = existingQuestions.filter(
+        (question) => question.questionText === IMPLEMENT_QUESTION_TEXT,
+      );
+      const implementQuestion =
+        implementQuestions.find((question) => question.status === 'pending') ??
+        [...implementQuestions]
+          .reverse()
+          .find((question) => question.status === 'answered');
+      if (implementQuestion?.status === 'answered') {
         const existingStep = ctx.repo
           .listRunSteps(ctx.invocation.organizationId, runId)
-          .find((step) => step.toolCallId === ctx.invocation.toolCallId);
+          .find((step) => step.toolCallId === implementQuestion.toolCallId);
         const carry =
           existingStep?.output && typeof existingStep.output === 'object'
             ? (existingStep.output as Record<string, unknown>)
@@ -101,36 +100,31 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
         return {
           ...rest,
           status: 'completed',
-          selectedOption: matching.selectedOption,
+          selectedOption: implementQuestion.selectedOption,
         };
       }
-      if (matching?.status === 'pending') {
-        return { status: 'waiting_for_input', questionId: matching.id };
+      if (implementQuestion?.status === 'pending') {
+        return { status: 'waiting_for_input', questionId: implementQuestion.id };
       }
-      // Same-run, different toolCallId dedup. The model occasionally
-      // retries goal.start within a few hundred ms (different
-      // toolCallId so the (runId, toolCallId) check above doesn't
-      // fire). The second call's create-or-replace path runs
-      // `supersede pending questions for this channel` — which
-      // includes the FIRST call's own question, orphaning the
-      // originating run in waiting_for_input forever. Detect the
-      // duplicate by looking for any pending question this run has
-      // already raised in this channel and return its id instead of
-      // creating a fresh goal + question pair.
-      const channelId = invocationChannelId(ctx);
-      const pendingForChannel = ctx.repo.listPendingInteractiveQuestions?.(
-        ctx.invocation.organizationId,
-        channelId,
-      ) ?? [];
-      const ownPending = pendingForChannel.find((q) => q.runId === runId);
-      if (ownPending) {
-        return { status: 'waiting_for_input', questionId: ownPending.id };
-      }
+    }
+
+    const channel = ctx.repo.getChannel(ctx.invocation.organizationId, channelId);
+    const activeGoal =
+      channel?.kind === 'dm' || channel?.kind === 'self'
+        ? ctx.repo.getGoalByChannel(ctx.invocation.organizationId, channelId)
+        : null;
+    if (activeGoal?.status === 'running') {
+      return {
+        status: 'completed',
+        selectedOption: IMPLEMENT_QUESTION_OPTION,
+        goal: activeGoal,
+        tasks: ctx.repo.listGoalTasks(ctx.invocation.organizationId, activeGoal.id),
+      };
     }
 
     const result = ctx.goals.start({
       organizationId: ctx.invocation.organizationId,
-      channelId: invocationChannelId(ctx),
+      channelId,
       supervisorId: ctx.invocation.memberId,
       title: input.title,
       planMarkdown: input.plan_markdown,
@@ -142,7 +136,6 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
     });
     if (!runId) return result;
 
-    const memberName = ctx.repo.getMember(ctx.invocation.organizationId, ctx.invocation.memberId)?.name ?? ctx.invocation.memberId;
     const question = ctx.goals.ask({
       organizationId: ctx.invocation.organizationId,
       channelId: result.goal.channelId,
@@ -150,7 +143,7 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
       runId,
       toolCallId: ctx.invocation.toolCallId,
       questionText: IMPLEMENT_QUESTION_TEXT,
-      options: [IMPLEMENT_QUESTION_OPTION, `Tell ${memberName} to do something different`],
+      options: [IMPLEMENT_QUESTION_OPTION, IMPLEMENT_QUESTION_REJECT_OPTION],
     });
     const run = ctx.repo.getRun(ctx.invocation.organizationId, runId);
     if (run) {

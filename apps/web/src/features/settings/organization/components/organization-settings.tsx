@@ -151,6 +151,7 @@ function OrganizationSettingsContent({
     channels,
     providers,
     setOrgSettings,
+    setTeamSettings,
     setMembers,
     setChannels,
     setProviders,
@@ -200,7 +201,11 @@ function OrganizationSettingsContent({
         )}
         {activeTab === "workspaces" && (
           <WorkspacesTab
-            currentWorkspaceRoot={teamSettings?.workspace.root ?? ""}
+            currentWorkspaceRoot={
+              orgSettings?.organization.workspace.root ??
+              teamSettings?.workspace.root ??
+              ""
+            }
             configuredProviders={providers}
           />
         )}
@@ -215,6 +220,7 @@ function OrganizationSettingsContent({
             channels={channels}
             providers={providers}
             rolePresets={rolePresets}
+            onTeamSettingsChange={setTeamSettings}
             onMemberUpdated={(member) => {
               setMembers((prev) =>
                 prev.map((m) => (m.id === member.id ? { ...m, ...member } : m)),

@@ -50,7 +50,11 @@ import {
 import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
-import { filterVisibleMessages } from '../utils/message-visibility.js';
+import { selectPromptContextMessages } from '../utils/prompt-context.js';
+import {
+  modelContextWindowTokens,
+  promptCharBudget,
+} from '../utils/model-context-window.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
@@ -95,8 +99,17 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       }),
     );
 
-    const recent = filterVisibleMessages(
-      this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 20 }).data,
+    const recent = selectPromptContextMessages(
+      this.repo.listChannelMessages(input.organizationId, session.channelId, { limit: 600 }).data,
+      600,
+      promptCharBudget(
+        modelContextWindowTokens(
+          member.llm ?? teamRole.provider ?? '',
+          typeof (model as { modelId?: unknown }).modelId === 'string'
+            ? (model as { modelId: string }).modelId
+            : member.model ?? teamRole.model ?? '',
+        ),
+      ),
     );
     const messages = toModelMessages(recent, member.id);
     const interruptCursor = createMessageCursor(recent);
@@ -346,13 +359,14 @@ ${activeMemories
           this.emitRunTokens(input.organizationId, runId, session.channelId, member.id, currentSteps);
         },
         loadInterruptMessages: () =>
-          loadChannelInterruptModelMessages({
-            repo: this.repo,
-            organizationId: input.organizationId,
-            channelId: session.channelId,
-            agentId: member.id,
-            cursor: interruptCursor,
-          }),
+        loadChannelInterruptModelMessages({
+          repo: this.repo,
+          organizationId: input.organizationId,
+          channelId: session.channelId,
+          agentId: member.id,
+          cursor: interruptCursor,
+          runId: spirit.runId ?? spirit.id,
+        }),
         onModelNotFound: createSpiritModelNotFoundHandler({
           logLabel: 'spirit-agent-run',
           memberLabel: input.memberId,
@@ -461,7 +475,7 @@ ${activeMemories
         ? persistedTerminator
         : detectedTerminatingTool;
       if (persistedRun) {
-        this.saveRunAndEmit(SocketEventNames.runCompleted, {
+        const completedRun = this.saveRunAndEmit(SocketEventNames.runCompleted, {
           ...persistedRun,
           status: 'completed',
           step: 'completed',
@@ -469,6 +483,7 @@ ${activeMemories
           endedAt: new Date().toISOString(),
           terminatingTool: finalTerminatingTool,
         });
+        this.invokeRunTerminalHook(completedRun);
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
       this.maybeFinalizeTaskSession(
@@ -675,7 +690,11 @@ ${activeMemories
       taskSessionId: input.spirit.taskSessionId,
       runId: input.spirit.runId,
     });
-    const messageToolCalls = prepared.artifact ? [...wrapped, prepared.artifact] : wrapped;
+    const messageToolCalls = [
+      ...wrapped,
+      ...prepared.goalCards,
+      ...(prepared.artifact ? [prepared.artifact] : []),
+    ];
     const message = input.turn.publishMessage(
       buildAgentMessage({
         organizationId: input.organizationId,

@@ -12,7 +12,7 @@ import {
 import { z } from 'zod';
 import { SessionAuthStateSchema } from './auth.js';
 
-const WorkspaceRootSchema = z.string().min(1);
+const WorkspaceRootSchema = z.string().trim().min(1);
 
 const InlineTeamConfigSchema = z.object({
   name: z.string().optional(),
@@ -33,12 +33,13 @@ const InlineTeamConfigSchema = z.object({
 export type InlineTeamConfig = z.infer<typeof InlineTeamConfigSchema>;
 
 export const OnboardingRequestSchema = z.object({
-  organizationName: z.string().min(1),
-  ownerName: z.string().min(1),
-  ownerEmail: z.string().email(),
+  attemptId: z.string().uuid().optional(),
+  organizationName: z.string().trim().min(1),
+  ownerName: z.string().trim().min(1),
+  ownerEmail: z.string().trim().email(),
   ownerPassword: z.string().min(8),
   workspaceRoot: WorkspaceRootSchema,
-  providerKeys: z.record(z.string().min(1)).default({}),
+  providerKeys: z.record(z.string().trim().min(1)).default({}),
   team: InlineTeamConfigSchema,
 });
 export type OnboardingRequest = z.infer<typeof OnboardingRequestSchema>;

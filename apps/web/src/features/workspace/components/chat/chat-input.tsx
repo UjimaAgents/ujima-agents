@@ -1,18 +1,24 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
+  ArrowRight,
+  BookOpen,
   File as FileIcon,
   FileArchive,
   FileAudio,
   FileImage,
   FileText,
   FileVideo,
+  Folder,
+  ListTodo,
   Loader2,
+  Mic,
   Paperclip,
   Plus,
   Send,
   Square,
+  Zap,
   X,
 } from "lucide-react";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
@@ -32,41 +38,22 @@ import {
 } from "@/lib/list-item-styles";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
+import { useComposerVoiceInput } from "./use-composer-voice-input";
+import { VoiceInputWaves } from "./voice-input-waves";
+
+const assetKinds = ["file", "folder", "mcp", "skill", "task", "culture"] as const;
+type AssetMentionKind = (typeof assetKinds)[number];
+type NamedAssetKind = Exclude<AssetMentionKind, "file" | "folder">;
 
 export interface MentionSuggestion {
   id: string;
   name: string;
   detail?: string;
+  kind?: "member" | AssetMentionKind;
+  path?: string;
 }
 
-export interface SlashSkillCommand {
-  id: string;
-  command: string;
-  label: string;
-  description: string;
-}
-
-export function toSlashSkillCommands(
-  skills: readonly {
-    id: string;
-    commandName: string;
-    description: string;
-    userInvocable: boolean;
-  }[],
-): SlashSkillCommand[] {
-  return skills
-    .filter((skill) => skill.userInvocable)
-    .map((skill) => ({
-      id: skill.id,
-      command: skill.commandName,
-      label: `/${skill.commandName}`,
-      description: skill.description,
-    }));
-}
-
-type SlashMenuOption =
-  | ({ kind: "builtin" } & (typeof BUILTIN_SLASH_COMMANDS)[number])
-  | ({ kind: "skill" } & SlashSkillCommand);
+type SlashMenuOption = { kind: "builtin" } & (typeof BUILTIN_SLASH_COMMANDS)[number];
 
 interface UploadedAttachment {
   id: string;
@@ -87,11 +74,11 @@ interface MentionTrigger {
 export type ComposerCommand = "summarize" | "clear" | "goal" | "schedule";
 type ThreadCommand = Exclude<ComposerCommand, "goal">;
 
-const BUILTIN_SLASH_COMMANDS: Array<{
+const BUILTIN_SLASH_COMMANDS: {
   command: ComposerCommand;
   label: string;
   description: string;
-}> = [
+}[] = [
   {
     command: "clear",
     label: "/clear",
@@ -159,6 +146,96 @@ function findMentionTrigger(value: string, caret: number): MentionTrigger | null
   return { start, end: caret, query };
 }
 
+function assetSearchQuery(raw: string): string {
+  const separator = raw.indexOf(":");
+  return separator < 0 ? raw.trim() : raw.slice(separator + 1).trim();
+}
+
+function assetKindHint(raw: string): AssetMentionKind | null {
+  const separator = raw.indexOf(":");
+  if (separator < 0) return null;
+  const kind = raw.slice(0, separator).toLowerCase();
+  return assetKinds.includes(kind as AssetMentionKind) ? kind as AssetMentionKind : null;
+}
+
+interface WorkspaceAssetHit {
+  kind: AssetMentionKind;
+  name: string;
+  path?: string;
+  id?: string;
+  detail?: string;
+}
+
+function toAssetSuggestion(entry: WorkspaceAssetHit): MentionSuggestion {
+  return {
+    id: `${entry.kind}:${entry.path}`,
+    name: entry.name,
+    kind: entry.kind,
+    path: entry.path,
+    detail: entry.path,
+  };
+}
+
+const CACHED_LIST_TTL_MS = 60_000;
+let cachedRootFolders: { at: number; items: MentionSuggestion[] } | null = null;
+const namedAssetKinds: NamedAssetKind[] = ["mcp", "skill", "task", "culture"];
+const assetDisplay = {
+  file: [FileIcon, "text-blue-500", "Files"],
+  folder: [Folder, "text-amber-500", "Folders"],
+  mcp: [ArrowRight, "text-emerald-500", "MCPs"],
+  skill: [Zap, "text-purple-500", "Skills"],
+  task: [ListTodo, "text-rose-500", "Tasks"],
+  culture: [BookOpen, "text-sky-500", "Culture"],
+} satisfies Record<AssetMentionKind, readonly [typeof FileIcon, string, string]>;
+let cachedNamedAssets: { at: number; items: MentionSuggestion[] } | null = null;
+
+function isNamedAssetKind(kind: AssetMentionKind | null): kind is NamedAssetKind {
+  return kind !== null && kind !== "file" && kind !== "folder";
+}
+
+function AssetSuggestionIcon({ kind }: { kind?: MentionSuggestion["kind"] }) {
+  if (!kind || kind === "member") return null;
+  const [Icon, color] = assetDisplay[kind];
+  return <Icon className={`h-3.5 w-3.5 shrink-0 ${color}`} />;
+}
+
+async function loadWorkspaceAssetSuggestions(searchQuery: string): Promise<MentionSuggestion[]> {
+  const url = searchQuery
+    ? `/api/workspaces/search?q=${encodeURIComponent(searchQuery)}`
+    : "/api/workspaces/search";
+  if (!searchQuery) {
+    const now = Date.now();
+    if (cachedRootFolders && now - cachedRootFolders.at < CACHED_LIST_TTL_MS) {
+      return cachedRootFolders.items;
+    }
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) return [];
+    const results = (await res.json()) as WorkspaceAssetHit[];
+    const items = results.map(toAssetSuggestion);
+    cachedRootFolders = { at: now, items };
+    return items;
+  }
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) return [];
+  const results = (await res.json()) as WorkspaceAssetHit[];
+  return results.map(toAssetSuggestion);
+}
+
+async function loadNamedAssetSuggestions(): Promise<MentionSuggestion[]> {
+  const now = Date.now();
+  if (cachedNamedAssets && now - cachedNamedAssets.at < CACHED_LIST_TTL_MS) {
+    return cachedNamedAssets.items;
+  }
+  const res = await fetch("/api/workspaces/assets", { credentials: "include" });
+  if (!res.ok) return [];
+  const results = (await res.json()) as WorkspaceAssetHit[];
+  const items = results.map(({ id, name, kind, detail }) => ({
+    id: id ?? name, name, kind, detail: detail ?? "",
+  }));
+  cachedNamedAssets = { at: now, items };
+  return items;
+}
+
 function ChatInputComponent({
   placeholder = "Message here or type / for commands",
   onSend,
@@ -173,8 +250,6 @@ function ChatInputComponent({
   stoppableRunIds,
   onStopRun,
   readOnly = false,
-  skillCommands = [],
-  onSkillCommand,
   reasoningProvider,
   reasoningModelValue,
 }: {
@@ -191,8 +266,6 @@ function ChatInputComponent({
   stoppableRunIds?: string[];
   onStopRun?: (runId: string) => Promise<void> | void;
   readOnly?: boolean;
-  skillCommands?: SlashSkillCommand[];
-  onSkillCommand?: (skillId: string, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
   reasoningProvider?: string;
   reasoningModelValue?: string;
 }) {
@@ -214,6 +287,7 @@ function ChatInputComponent({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const contentRef = useRef(content);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
   const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
@@ -232,6 +306,23 @@ function ChatInputComponent({
   );
   const showReasoningSelect = reasoningOptions.length > 1;
   const reasoningDisabled = readOnly;
+
+  const getDraft = useCallback(() => contentRef.current, []);
+  const voice = useComposerVoiceInput({
+    enabled: !readOnly && !uploading,
+    getDraft,
+    onTranscript: setContent,
+    onError: (message) => setError(message),
+  });
+  const stopVoiceListening = voice.stopListening;
+
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    if (readOnly || uploading) stopVoiceListening();
+  }, [readOnly, uploading, stopVoiceListening]);
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -269,9 +360,8 @@ function ChatInputComponent({
   const allSlashCommands = useMemo(
     () => [
       ...BUILTIN_SLASH_COMMANDS.map((option) => ({ ...option, kind: "builtin" as const })),
-      ...skillCommands.map((option) => ({ ...option, kind: "skill" as const })),
     ],
-    [skillCommands],
+    [],
   );
   const exactSlashCommand = readOnly || hasAttachments ? null : getExactSlashCommandDefinition(content, allSlashCommands);
   const slashQuery = readOnly || hasAttachments ? null : getSlashQuery(content);
@@ -306,19 +396,110 @@ function ChatInputComponent({
     !hasDraft &&
     !uploading &&
     !isSending &&
-    !isCommanding;
+    !isCommanding &&
+    !voice.isListening;
+  const canSend =
+    !readOnly &&
+    (content.trim().length > 0 || visibleAttachments.length > 0 || Boolean(exactSlashCommand));
+  const showVoiceInsteadOfSend =
+    !readOnly && voice.support.supported && !canSend && !voice.isListening;
   const mentionTrigger = findMentionTrigger(content, selection.start);
-  const filteredMentionSuggestions = useMemo(() => {
+  const mentionQuery = mentionTrigger?.query ?? "";
+  const mentionSearchQuery = assetSearchQuery(mentionQuery);
+  const mentionAssetKind = assetKindHint(mentionQuery);
+  const mentionOpen = mentionTrigger !== null;
+  const shouldFetchAssetSuggestions =
+    !readOnly && mentionOpen && !(mentionAssetKind === "file" && !mentionSearchQuery);
+  const [assetSuggestions, setAssetSuggestions] = useState<MentionSuggestion[]>([]);
+  const [namedAssetSuggestions, setNamedAssetSuggestions] = useState<
+    Record<NamedAssetKind, MentionSuggestion[]>
+  >({ mcp: [], skill: [], task: [], culture: [] });
+
+  const [prevMentionQuery, setPrevMentionQuery] = useState(mentionQuery);
+  if (mentionQuery !== prevMentionQuery) {
+    setPrevMentionQuery(mentionQuery);
+    setActiveMentionIndex(0);
+  }
+
+  const [prevShouldFetchAssetSuggestions, setPrevShouldFetchAssetSuggestions] = useState(
+    shouldFetchAssetSuggestions,
+  );
+  if (shouldFetchAssetSuggestions !== prevShouldFetchAssetSuggestions) {
+    setPrevShouldFetchAssetSuggestions(shouldFetchAssetSuggestions);
+    if (!shouldFetchAssetSuggestions) {
+      setAssetSuggestions([]);
+    }
+  }
+
+  useEffect(() => {
+    if (!shouldFetchAssetSuggestions) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (!mentionAssetKind || mentionAssetKind === "file" || mentionAssetKind === "folder") {
+        void loadWorkspaceAssetSuggestions(mentionSearchQuery).then((items) => {
+          if (!cancelled) setAssetSuggestions(items);
+        });
+      }
+      if (!mentionAssetKind || isNamedAssetKind(mentionAssetKind)) {
+        void loadNamedAssetSuggestions().then((items) => {
+          if (!cancelled) {
+            setNamedAssetSuggestions(Object.fromEntries(
+              namedAssetKinds.map((kind) => [kind, items.filter((item) => item.kind === kind)]),
+            ) as Record<NamedAssetKind, MentionSuggestion[]>);
+          }
+        });
+      }
+    }, mentionSearchQuery ? 200 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [mentionAssetKind, mentionSearchQuery, shouldFetchAssetSuggestions]);
+
+  const mentionMenuSections = useMemo(() => {
     if (!mentionTrigger) return [];
-    const query = mentionTrigger.query.trim().toLowerCase();
-    return mentionSuggestions.filter((suggestion) =>
-      query
-        ? suggestion.name.toLowerCase().includes(query)
-        : true,
-    );
-  }, [mentionSuggestions, mentionTrigger]);
-  const mentionMenuOpen =
-    !!mentionTrigger && filteredMentionSuggestions.length > 0;
+    const searchQuery = mentionSearchQuery.toLowerCase();
+    const matches = (suggestion: MentionSuggestion) =>
+      !searchQuery ||
+      suggestion.name.toLowerCase().includes(searchQuery) ||
+      (suggestion.detail ?? "").toLowerCase().includes(searchQuery);
+    const visible = (kind: AssetMentionKind) => !mentionAssetKind || mentionAssetKind === kind;
+    return [
+      {
+        label: "Members",
+        items: !mentionAssetKind
+          ? mentionSuggestions.filter((item) => (!item.kind || item.kind === "member") && matches(item))
+          : [],
+      },
+      ...namedAssetKinds.map((kind) => ({
+        label: assetDisplay[kind][2],
+        items: visible(kind) ? namedAssetSuggestions[kind].filter(matches) : [],
+      })),
+      ...(["folder", "file"] as const).map((kind) => ({
+        label: assetDisplay[kind][2],
+        items: visible(kind) ? assetSuggestions.filter((item) => item.kind === kind) : [],
+      })),
+    ].filter((section) => section.items.length);
+  }, [assetSuggestions, mentionAssetKind, mentionSearchQuery, mentionSuggestions, mentionTrigger, namedAssetSuggestions]);
+
+  const flatSuggestions = useMemo(() => {
+    const items: MentionSuggestion[] = [];
+    for (const section of mentionMenuSections) {
+      items.push(...section.items);
+    }
+    return items;
+  }, [mentionMenuSections]);
+
+  const mentionSectionOffsets = useMemo(() => {
+    const offsets: number[] = [];
+    let next = 0;
+    for (const section of mentionMenuSections) {
+      offsets.push(next);
+      next += section.items.length;
+    }
+    return offsets;
+  }, [mentionMenuSections]);
+  const mentionMenuOpen = mentionOpen && flatSuggestions.length > 0;
   const activeReplyTo = readOnly ? null : replyTo;
   const activeSlashSelection = Math.min(
     activeSlashIndex,
@@ -422,6 +603,7 @@ function ChatInputComponent({
     if (files.length === 0) return;
 
     setError(null);
+    voice.stopListening();
     setUploading(true);
     setUploadProgress(0);
     let processed = 0;
@@ -507,7 +689,13 @@ function ChatInputComponent({
     if (!mentionTrigger) return;
     const before = content.slice(0, mentionTrigger.start);
     const after = content.slice(mentionTrigger.end);
-    const mentionValue = `@${suggestion.name} `;
+    const isAsset = suggestion.kind && suggestion.kind !== "member";
+    const value = suggestion.kind === "file" || suggestion.kind === "folder"
+      ? suggestion.path ?? suggestion.name
+      : suggestion.name;
+    const mentionValue = isAsset
+      ? `@${suggestion.kind}:${encodeURIComponent(value)} `
+      : `@${suggestion.name} `;
     const next = `${before}${mentionValue}${after}`;
     const nextCaret = before.length + mentionValue.length;
     setContent(next);
@@ -523,6 +711,7 @@ function ChatInputComponent({
     const next = content.trim();
     if (isSending || uploading || (next.length === 0 && attachments.length === 0)) return;
 
+    voice.stopListening();
     setError(null);
     setIsSending(true);
     try {
@@ -565,19 +754,13 @@ function ChatInputComponent({
 
     setError(null);
     setIsCommanding(true);
+    voice.stopListening();
     try {
       const currentContent = content;
-      if (command.kind === "skill") {
-        await onSkillCommand?.(command.id, currentContent, {
-          ...(goalMode ? { goalMode: true } : {}),
-          reasoningEffort: selectedReasoningEffort,
-        });
-      } else {
-        await onCommand(command.command as ThreadCommand, currentContent, {
-          ...(goalMode ? { goalMode: true } : {}),
-          reasoningEffort: selectedReasoningEffort,
-        });
-      }
+      await onCommand(command.command as ThreadCommand, currentContent, {
+        ...(goalMode ? { goalMode: true } : {}),
+        reasoningEffort: selectedReasoningEffort,
+      });
       setContent("");
       setSelection({ start: 0, end: 0 });
       setAttachments([]);
@@ -592,6 +775,7 @@ function ChatInputComponent({
 
   const confirmClear = async () => {
     setIsCommanding(true);
+    voice.stopListening();
     try {
       const currentContent = content;
       await onCommand("clear", currentContent);
@@ -663,12 +847,13 @@ function ChatInputComponent({
         ) : null}
         <ConfirmDialog
           isOpen={clearConfirmation}
-          onClose={() => { setClearConfirmation(false); setContent(""); setError(null); }}
+          onClose={() => { if (!isCommanding) { setClearConfirmation(false); setContent(""); setError(null); } }}
           title="Clear conversation"
-          message="This will archive the thread and empty the visible chat. This action cannot be undone."
+          message="Older messages are summarized into one archive note and hidden from the thread. This can't be undone."
           confirmLabel="Clear"
           cancelLabel="Cancel"
           variant="primary"
+          busy={isCommanding}
           onConfirm={confirmClear}
         />
         <input
@@ -707,7 +892,7 @@ function ChatInputComponent({
                 <div className="space-y-1">
                   {displayedSlashOptions.map((option, index) => (
                     <button
-                      key={option.kind === "skill" ? option.id : option.command}
+                      key={option.command}
                       type="button"
                       onMouseDown={(event) => {
                         event.preventDefault();
@@ -845,7 +1030,7 @@ function ChatInputComponent({
                 type="button"
                 aria-label="Attach file"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={readOnly || uploading}
+                disabled={readOnly || uploading || voice.isListening}
                 className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-zinc-300"
               >
                 <Paperclip className="h-4 w-4" />
@@ -923,23 +1108,23 @@ function ChatInputComponent({
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
                     setActiveMentionIndex((index) =>
-                      (index + 1) % filteredMentionSuggestions.length,
+                      (index + 1) % flatSuggestions.length,
                     );
                     return;
                   }
                   if (event.key === "ArrowUp") {
                     event.preventDefault();
                     setActiveMentionIndex((index) =>
-                      (index - 1 + filteredMentionSuggestions.length) %
-                      filteredMentionSuggestions.length,
+                      (index - 1 + flatSuggestions.length) %
+                      flatSuggestions.length,
                     );
                     return;
                   }
                   if (event.key === "Enter" || event.key === "Tab") {
                     event.preventDefault();
                     insertMention(
-                      filteredMentionSuggestions[activeMentionIndex] ??
-                        filteredMentionSuggestions[0],
+                      flatSuggestions[activeMentionIndex] ??
+                        flatSuggestions[0],
                     );
                     return;
                   }
@@ -957,32 +1142,49 @@ function ChatInputComponent({
               className="min-h-5 min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-5 focus:outline-none"
             />
           {!readOnly && mentionMenuOpen ? (
-            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-              {filteredMentionSuggestions.map((suggestion, index) => (
-                <button
-                  key={suggestion.id}
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    insertMention(suggestion);
-                  }}
-                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                    index === activeMentionIndex ? listItemSelected : listItemIdle
-                  }`}
-                >
-                  <span className="font-semibold">@{suggestion.name}</span>
-                  {suggestion.detail ? (
-                    <span
-                      className={`ml-2 truncate text-[10px] ${
-                        index === activeMentionIndex
-                          ? listItemSubtitleSelected
-                          : listItemSubtitleIdle
-                      }`}
-                    >
-                      {suggestion.detail}
-                    </span>
-                  ) : null}
-                </button>
+            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+              {mentionMenuSections.map((section, sectionIndex) => (
+                  <div key={section.label}>
+                    <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      {section.label}
+                    </div>
+                    {section.items.map((suggestion, itemIndex) => {
+                      const index = (mentionSectionOffsets[sectionIndex] ?? 0) + itemIndex;
+                      const isAsset = suggestion.kind && suggestion.kind !== "member";
+                      return (
+                        <button
+                          key={suggestion.id}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            insertMention(suggestion);
+                          }}
+                          onMouseEnter={() => setActiveMentionIndex(index)}
+                          className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                            index === activeMentionIndex ? listItemSelected : listItemIdle
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <AssetSuggestionIcon kind={suggestion.kind} />
+                            <span className="font-semibold">
+                              {isAsset ? suggestion.name : `@${suggestion.name}`}
+                            </span>
+                          </span>
+                          <span
+                            className={`ml-2 truncate text-[10px] ${
+                              index === activeMentionIndex
+                                ? listItemSubtitleSelected
+                                : listItemSubtitleIdle
+                            }`}
+                          >
+                            {suggestion.kind === "file" || suggestion.kind === "folder"
+                              ? suggestion.path
+                              : suggestion.detail}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
               ))}
             </div>
           ) : null}
@@ -1031,6 +1233,9 @@ function ChatInputComponent({
                   )}
                 </button>
               )}
+              {voice.isListening ? (
+                <VoiceInputWaves levels={voice.audioLevels} className="mr-0.5" />
+              ) : null}
               {showStopInsteadOfSend ? (
                 <button
                   type="button"
@@ -1046,10 +1251,45 @@ function ChatInputComponent({
                     <Square className="h-3 w-3 fill-current" />
                   )}
                 </button>
+              ) : voice.isListening && canSend ? (
+                <button
+                  type="button"
+                  disabled={working}
+                  onClick={() => void submitComposer()}
+                  aria-label="Send message"
+                  title="Send message"
+                  className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                </button>
+              ) : null}
+              {showStopInsteadOfSend ? null : voice.isListening ? (
+                <button
+                  type="button"
+                  aria-label="Stop listening"
+                  aria-pressed
+                  title="Stop listening"
+                  disabled={working}
+                  onClick={voice.stopListening}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Square className="h-3 w-3 fill-current" />
+                </button>
+              ) : showVoiceInsteadOfSend ? (
+                <button
+                  type="button"
+                  aria-label="Voice message"
+                  title="Voice message"
+                  disabled={working}
+                  onClick={voice.toggleListening}
+                  className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Mic className="h-3.5 w-3.5" />
+                </button>
               ) : (
                 <button
                   type="button"
-                  disabled={working || (!hasDraft && !exactSlashCommand)}
+                  disabled={working || !canSend}
                   onClick={() => void submitComposer()}
                   aria-label={
                     exactSlashCommand?.command === "clear"

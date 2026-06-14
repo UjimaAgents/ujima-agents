@@ -14,7 +14,7 @@ export function createMessageCursor(messages: Message[]): MessageCursor {
     : { createdAt: '', id: '' };
 }
 
-function isMessageAfterCursor(message: Message, cursor: MessageCursor): boolean {
+export function isMessageAfterCursor(message: Message, cursor: MessageCursor): boolean {
   if (message.createdAt > cursor.createdAt) return true;
   return message.createdAt === cursor.createdAt && message.id > cursor.id;
 }

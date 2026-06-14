@@ -6,7 +6,19 @@ const ACTIVE_RUN_STATES: RunState["status"][] = [
   "queued",
   "running",
   "waiting_for_approval",
+  "waiting_for_input",
 ];
+
+export function runStatusToActivityState(
+  status: RunState["status"] | undefined,
+  presence?: string,
+): ActivityState | undefined {
+  if (!status) return undefined;
+  if (ACTIVE_RUN_STATES.includes(status)) return "working";
+  if (status === "failed" || status === "cancelled") return "error";
+  if (status === "completed") return presenceToActivityState(presence);
+  return undefined;
+}
 
 export function conversationActivityState(input: {
   loading: boolean;
@@ -14,8 +26,9 @@ export function conversationActivityState(input: {
   presence?: string;
 }): ActivityState {
   if (input.loading) return "loading";
-  if (input.activeRun && ACTIVE_RUN_STATES.includes(input.activeRun.status)) {
-    return "working";
+  const runState = runStatusToActivityState(input.activeRun?.status, input.presence);
+  if (runState) {
+    return runState;
   }
   return presenceToActivityState(input.presence);
 }

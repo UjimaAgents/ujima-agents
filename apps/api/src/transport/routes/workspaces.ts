@@ -1,3 +1,5 @@
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -15,7 +17,12 @@ import {
   type AuthService,
   type WorkspaceService,
   type McpRegistryService,
+  listProceduresByScope,
 } from '@ujima/orchestrator';
+import {
+  isSensitiveWorkspacePath,
+  shouldSkipWorkspaceTreeDirectory,
+} from '@ujima/shared';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
 
@@ -24,6 +31,14 @@ const workspaceAuthResponses = {
   403: ApiErrorSchema,
   503: ApiErrorSchema,
 };
+const assetSuggestionSchema = z.object({
+  kind: z.enum(['task', 'culture', 'mcp', 'skill']),
+  name: z.string(),
+  id: z.string(),
+  detail: z.string(),
+});
+const newestFirst = <T extends { createdAt: string }>(items: readonly T[]) =>
+  [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
 export interface WorkspaceRoutesOptions {
   host: RuntimeHost;
@@ -39,6 +54,100 @@ export function registerWorkspaceRoutes(
 ): void {
   const { host, auth, workspaces, mcpRegistry, repo } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
+
+  function getOrganizationIdOrThrow(sessionToken: string | null | undefined): string {
+    if (!auth) throw new Error('Auth service not configured');
+    const authState = auth.getAuthState(sessionToken);
+    if (!authState.authenticated || !authState.user) throw new Error('session required');
+    return authState.user.organizationId;
+  }
+
+  function getWorkspaceRootOrThrow(sessionToken: string | null | undefined): string {
+    const org = repo?.getOrganization(getOrganizationIdOrThrow(sessionToken));
+    if (!org?.workspace?.root?.trim()) throw new Error('ERR_NO_WORKSPACE_ROOT');
+    return org.workspace.root.trim();
+  }
+
+  function readWorkspaceDir(absPath: string): string[] {
+    try {
+      return readdirSync(absPath).sort();
+    } catch {
+      return [];
+    }
+  }
+
+  function searchWorkspaceAssets(
+    rootAbs: string,
+    query: string,
+    limit = 50,
+  ): { kind: 'file' | 'folder'; name: string; path: string }[] {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return [];
+
+    const results: { kind: 'file' | 'folder'; name: string; path: string }[] = [];
+
+    function walk(dirRel: string, depth: number): void {
+      if (depth > 10 || results.length >= limit) return;
+      const absPath = dirRel ? join(rootAbs, dirRel) : rootAbs;
+      const entries = readWorkspaceDir(absPath);
+
+      for (const name of entries) {
+        if (results.length >= limit) return;
+        const childRel = dirRel ? `${dirRel}/${name}` : name;
+        if (isSensitiveWorkspacePath(childRel)) continue;
+
+        const childAbs = join(absPath, name);
+        let stat: ReturnType<typeof statSync>;
+        try {
+          stat = statSync(childAbs);
+        } catch {
+          continue;
+        }
+
+        const matches =
+          childRel.toLowerCase().includes(normalized) ||
+          name.toLowerCase().includes(normalized);
+
+        if (stat.isDirectory()) {
+          if (shouldSkipWorkspaceTreeDirectory(name)) continue;
+          if (matches) {
+            results.push({ kind: 'folder', name, path: childRel });
+          }
+          walk(childRel, depth + 1);
+        } else if (stat.isFile() && matches) {
+          results.push({ kind: 'file', name, path: childRel });
+        }
+      }
+    }
+
+    walk('', 0);
+    return results;
+  }
+
+  function listWorkspaceRootFolders(
+    rootAbs: string,
+    limit = 30,
+  ): { kind: 'folder'; name: string; path: string }[] {
+    const results: { kind: 'folder'; name: string; path: string }[] = [];
+
+    for (const name of readWorkspaceDir(rootAbs)) {
+      if (results.length >= limit) break;
+      if (name.startsWith('.')) continue;
+      if (isSensitiveWorkspacePath(name)) continue;
+
+      const childAbs = join(rootAbs, name);
+      let stat: ReturnType<typeof statSync>;
+      try {
+        stat = statSync(childAbs);
+      } catch {
+        continue;
+      }
+      if (!stat.isDirectory() || shouldSkipWorkspaceTreeDirectory(name)) continue;
+      results.push({ kind: 'folder', name, path: name });
+    }
+
+    return results;
+  }
 
   app.get('/workspaces', {
     schema: {
@@ -247,6 +356,87 @@ export function registerWorkspaceRoutes(
         return apiError(reply, 401, message);
       }
       return apiError(reply, 400, message);
+    }
+  });
+
+  app.get('/workspaces/search', {
+    schema: {
+      description: 'Search workspace files by name/path fragment for asset tagging autocomplete',
+      tags: ['Workspaces'],
+      querystring: z.object({
+        q: z.string().optional(),
+      }),
+      response: {
+        200: z.array(z.object({
+          kind: z.enum(['file', 'folder']),
+          name: z.string(),
+          path: z.string(),
+        })),
+        ...workspaceAuthResponses,
+      },
+    },
+  }, async (req, reply) => {
+    if (!auth || !workspaces) {
+      return reply.status(503).send({
+        code: 'ERR_SHUTTING_DOWN',
+        message: 'Workspace routes are not configured',
+      });
+    }
+
+    try {
+      const root = getWorkspaceRootOrThrow(readSessionToken(req));
+      const query = (req.query.q ?? '').trim().replace(/^(file|folder|mcp|skill|task|culture):/i, '').trim();
+      if (!query) {
+        return listWorkspaceRootFolders(root);
+      }
+      return searchWorkspaceAssets(root, query);
+    } catch (err) {
+      const message = errorMessage(err);
+      if (/session required/i.test(message)) {
+        return apiError(reply, 401, message);
+      }
+      if (/ERR_NO_WORKSPACE_ROOT/.test(message)) {
+        return apiError(reply, 400, message);
+      }
+      return apiError(reply, 400, message);
+    }
+  });
+
+  app.get('/workspaces/assets', {
+    schema: {
+      description: 'List named assets for autocomplete',
+      tags: ['Workspaces'],
+      response: { 200: z.array(assetSuggestionSchema), ...workspaceAuthResponses },
+    },
+  }, async (req, reply) => {
+    if (!auth || !repo) {
+      return reply.status(503).send({
+        code: 'ERR_SHUTTING_DOWN',
+        message: 'Workspace routes are not configured',
+      });
+    }
+    try {
+      const token = readSessionToken(req);
+      const orgId = getOrganizationIdOrThrow(token);
+      const goals = new Map(repo.listGoals(orgId).map((goal) => [goal.id, goal.title]));
+      const procedures = await listProceduresByScope(getWorkspaceRootOrThrow(token), 'org', '');
+      return [
+        ...repo.listGoalTasksByOrganization(orgId).map((task) => ({
+          kind: 'task' as const, name: task.title, id: task.id, detail: goals.get(task.goalId) ?? '',
+        })),
+        ...procedures.map((procedure) => ({
+          kind: 'culture' as const, name: procedure.name, id: procedure.name, detail: procedure.description,
+        })),
+        ...newestFirst(mcpRegistry?.list(orgId) ?? []).map((mcp) => ({
+          kind: 'mcp' as const, name: mcp.name, id: mcp.id, detail: mcp.name,
+        })),
+        ...newestFirst(repo.listOrganizationSkillInstalls(orgId)).map((skill) => ({
+          kind: 'skill' as const, name: skill.skillName, id: skill.id, detail: skill.pluginName,
+        })),
+      ];
+    } catch (err) {
+      const message = errorMessage(err);
+      return apiError(reply, /session required/i.test(message) ? 401 : 400, message);
     }
   });
 }

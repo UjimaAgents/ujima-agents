@@ -1,8 +1,12 @@
 import type { OnboardingRequest } from "@ujima/api-schema";
 import { normalizeProviderKey, normalizeProviderToken } from "@/features/providers/catalog";
-import { OWNER_MANAGER_SENTINEL, type OnboardingDraft } from "./types";
+import {
+  OWNER_MANAGER_SENTINEL,
+  type OnboardingDraft,
+  type TeamProviderDraft,
+} from "./types";
 
-export const MIN_TEAM_AGENTS = 2;
+export const MIN_TEAM_AGENTS = 1;
 
 const PROVIDER_NAME_MAP: Record<string, string> = {
   anthropic: "anthropic",
@@ -24,6 +28,11 @@ export function normalizeProviderName(value: string) {
   return PROVIDER_NAME_MAP[normalized] ?? "openrouter";
 }
 
+export function isProviderDraftComplete(provider: TeamProviderDraft): boolean {
+  const name = provider.name.trim();
+  return Boolean(name && (normalizeProviderName(name) === "ollama" || provider.apiKey.trim()));
+}
+
 function toRoleTitle(name: string) {
   return name
     .split("-")
@@ -32,7 +41,7 @@ function toRoleTitle(name: string) {
     .join(" ");
 }
 
-export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingRequest {
+export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: string): OnboardingRequest {
   const channelsById = new Map(draft.channels.map((channel) => [channel.id, channel]));
   const ownerManagerLabels = new Set([OWNER_MANAGER_SENTINEL, "owner", normalizeProviderToken(draft.ownerName)]);
   const agentNameByRoleName = new Map(
@@ -98,6 +107,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingReques
   );
 
   return {
+    attemptId,
     organizationName: draft.organizationName.trim(),
     ownerName: draft.ownerName.trim(),
     ownerEmail: draft.ownerEmail.trim(),

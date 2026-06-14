@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   MCPDef,
   Message,
+  ReasoningEffort,
   RunState,
   RunStep,
   Spirit,
@@ -27,6 +28,7 @@ export interface ModelResolverInput {
   // runtime retry path after `ModelNotFoundError` to recover from
   // misconfigured / deprecated ids without dead-stopping the run.
   forceSafeFallback?: boolean;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export type ModelResolver = (input: ModelResolverInput) => LanguageModel | Promise<LanguageModel>;

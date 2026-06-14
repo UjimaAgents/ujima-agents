@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { OnboardingRequestSchema, OnboardingResponseSchema, BootstrapResponseSchema, ApiErrorSchema } from '@ujima/api-schema';
+import type { OnboardingResponse } from '@ujima/api-schema';
 import type {
   ApiRepository,
   AuthService,
@@ -10,6 +11,8 @@ import type {
 } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
+
+const completedAttempts = new Map<string, OnboardingResponse>();
 
 export interface OnboardingRoutesOptions {
   auth: AuthService;
@@ -49,6 +52,9 @@ export function registerOnboardingRoutes(
       },
     },
   }, async (req, reply) => {
+    if (req.body.attemptId && completedAttempts.has(req.body.attemptId)) {
+      return completedAttempts.get(req.body.attemptId);
+    }
     let organizationId: string | undefined;
     try {
       const result = await onboarding.onboard({
@@ -71,7 +77,7 @@ export function registerOnboardingRoutes(
         email: req.body.ownerEmail,
         password: req.body.ownerPassword,
       });
-      return {
+      const response = {
         ...result,
         auth: {
           authenticated: true as const,
@@ -81,6 +87,10 @@ export function registerOnboardingRoutes(
         },
         sessionToken: session.sessionToken,
       };
+      if (req.body.attemptId) {
+        completedAttempts.set(req.body.attemptId, response);
+      }
+      return response;
     } catch (err) {
       if (organizationId) {
         try {

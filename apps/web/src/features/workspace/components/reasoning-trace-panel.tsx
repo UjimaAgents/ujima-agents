@@ -34,14 +34,6 @@ function getTraceScrollContainer(root: HTMLDivElement | null) {
   return root?.parentElement?.parentElement ?? null;
 }
 
-function matchesTraceFilter(step: TraceStepData, filter: "all" | "errors" | "files" | "shell" | "search") {
-  if (filter === "all") return true;
-  if (filter === "errors") return step.status === "failed";
-  if (filter === "files") return !!step.filesystem || !!step.grep;
-  if (filter === "shell") return !!step.terminal;
-  if (filter === "search") return !!step.webSearch;
-  return true;
-}
 
 function TraceEmpty({ label, detail, loading }: { label: string; detail?: string; loading?: boolean }) {
   return (
@@ -87,7 +79,6 @@ export function ReasoningTracePanel({
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [filter, setFilter] = useState<"all" | "errors" | "files" | "shell" | "search">("all");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [newTraceCount, setNewTraceCount] = useState(0);
 
@@ -284,11 +275,11 @@ export function ReasoningTracePanel({
             steps: entry.steps,
             message: entry.message,
             organizationId,
-          }).filter((step) => matchesTraceFilter(step, filter));
+          });
         })
       : [];
 
-    const liveFiltered = liveSteps.filter((step) => matchesTraceFilter(step, filter));
+    const liveFiltered = liveSteps;
 
     // Deduplicate any overlapping steps by ID
     const historyStepIds = new Set(historySteps.map((step) => step.id));
@@ -313,36 +304,12 @@ export function ReasoningTracePanel({
   }, [
     conversationName,
     conversationType,
-    filter,
     history,
     historyEnabled,
     liveSteps,
     members,
     organizationId,
   ]);
-
-  const filterBar = useMemo(
-    () => (
-      <div className="sticky top-0 z-10 -mx-1 bg-background/95 px-1.5 pb-3 pt-1.5 backdrop-blur-sm">
-        <div className="flex flex-wrap gap-1.5">
-        {(["all", "errors", "files", "shell", "search"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`rounded-full px-2.5 py-1 text-[10px] font-semibold capitalize transition ${
-              filter === f
-                ? "bg-violet-600 text-white shadow-sm dark:bg-violet-500"
-                : "bg-foreground/5 text-foreground/50 hover:bg-foreground/10 hover:text-foreground/70"
-            }`}
-          >
-            {f}
-          </button>
-        ))}
-        </div>
-      </div>
-    ),
-    [filter],
-  );
 
   const scrollBottomButton = useMemo(
     () =>
@@ -428,8 +395,8 @@ export function ReasoningTracePanel({
         </div>
         {traceEmptyLabel ? (
           <TraceEmpty
-            label={filter === "all" ? "No trace steps yet." : `No ${filter} steps.`}
-            detail={liveSteps.length > 0 ? "The agent is active, but this filter has no matching events." : undefined}
+            label="No trace steps yet."
+            detail={undefined}
           />
         ) : null}
         {loadingMore ? <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p> : null}
@@ -441,7 +408,7 @@ export function ReasoningTracePanel({
   );
 
   if (traceRows.length > 0 || elapsed) {
-    return <div className="flex flex-col gap-4">{filterBar}{traceList}</div>;
+    return <div className="flex flex-col gap-4">{traceList}</div>;
   }
 
   if (loadingMore || (historyEnabled && history.length === 0 && !error)) {

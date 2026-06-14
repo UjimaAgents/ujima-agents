@@ -52,6 +52,31 @@ export function scanMentionsInContent(
   }
 }
 
+export const ASSET_REF_PATTERN = /@(file|folder|mcp|skill|task|culture):([^\s)}\]">]+)/g;
+
+export function decodeAssetReference(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export function scanAssetReferences(
+  content: string,
+): { kind: string; path: string }[] {
+  const refs: { kind: string; path: string }[] = [];
+  let match: RegExpExecArray | null;
+  ASSET_REF_PATTERN.lastIndex = 0;
+  while ((match = ASSET_REF_PATTERN.exec(content))) {
+    const kind = match[1];
+    const path = match[2];
+    if (!kind || !path) continue;
+    refs.push({ kind, path: decodeAssetReference(path) });
+  }
+  return refs;
+}
+
 export function buildMentionHandleRegistry(
   entries: Iterable<{ handle: string; value: string }>,
 ): MentionHandleRegistry & { values: Set<string> } {

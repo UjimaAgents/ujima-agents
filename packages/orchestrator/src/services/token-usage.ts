@@ -38,22 +38,6 @@ export function persistMessageTokens(
   });
 }
 
-export function accumulateStepUsage(
-  steps: readonly { usage?: unknown }[],
-): NormalizedTokenUsage {
-  return steps.reduce<NormalizedTokenUsage>(
-    (acc, step) => {
-      const u = normalizeTokenUsage(step.usage);
-      return {
-        inputTokens: acc.inputTokens + u.inputTokens,
-        outputTokens: acc.outputTokens + u.outputTokens,
-        totalTokens: acc.totalTokens + u.totalTokens,
-      };
-    },
-    { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-  );
-}
-
 function tokenTotal(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     return Math.floor(value);

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MemberShellApprovalModeSchema } from './shell-approval.js';
-import { GoalStatusSchema } from './goal-schemas.js';
+import { GoalStatusSchema, GoalTaskStatusSchema } from './goal-schemas.js';
 
 export const IdSchema = z.string().min(1);
 export type Id = z.infer<typeof IdSchema>;
@@ -277,6 +277,7 @@ export const MessageMetadataSchema = z.object({
   failedTrace: z.boolean().optional(),
   stoppedTrace: z.boolean().optional(),
   traceOnly: z.boolean().optional(),
+  compactedInto: IdSchema.optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 
@@ -552,6 +553,37 @@ export const ToolCallCardSchema = z.object({
   isError: z.boolean().default(false),
 });
 
+export const GoalBoardTaskPreviewSchema = z.object({
+  id: IdSchema,
+  title: z.string().min(1),
+  assigneeId: IdSchema,
+  status: GoalTaskStatusSchema,
+  dependsOnTaskId: IdSchema.optional(),
+});
+
+export const GoalBoardCreatedCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('goal.board.created'),
+  goalId: IdSchema,
+  goalTitle: z.string().min(1),
+  goalStatus: GoalStatusSchema,
+  channelId: IdSchema.optional(),
+  tasks: z.array(GoalBoardTaskPreviewSchema).default([]),
+});
+
+export const GoalTaskUpdatedCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('goal.task.updated'),
+  goalId: IdSchema,
+  taskId: IdSchema,
+  taskTitle: z.string().min(1),
+  assigneeId: IdSchema,
+  previousStatus: GoalTaskStatusSchema,
+  status: GoalTaskStatusSchema,
+  handoverSummary: z.string().optional(),
+  actorMemberId: IdSchema.optional(),
+});
+
 export const MessageCardSchema = z.discriminatedUnion('kind', [
   TaskJoinCardSchema,
   TaskOriginLinkCardSchema,
@@ -560,6 +592,8 @@ export const MessageCardSchema = z.discriminatedUnion('kind', [
   ApprovalCardSchema,
   PromotionConfirmCardSchema,
   ToolCallCardSchema,
+  GoalBoardCreatedCardSchema,
+  GoalTaskUpdatedCardSchema,
 ]);
 export type MessageCard = z.infer<typeof MessageCardSchema>;
 
@@ -675,6 +709,21 @@ export const WorkspaceFileSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type WorkspaceFile = z.infer<typeof WorkspaceFileSchema>;
+
+export const WorkspaceFileNodeSchema = z.lazy((): z.ZodType<WorkspaceFileNode> =>
+  z.object({
+    kind: z.enum(['file', 'folder']),
+    name: z.string().min(1),
+    path: z.string().min(1),
+    children: z.array(WorkspaceFileNodeSchema),
+  }),
+);
+export interface WorkspaceFileNode {
+  kind: 'file' | 'folder';
+  name: string;
+  path: string;
+  children: WorkspaceFileNode[];
+}
 
 // -----------------------------------------------------------------------
 // Decision log — Bet 6

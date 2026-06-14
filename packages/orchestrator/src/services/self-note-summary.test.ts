@@ -6,8 +6,6 @@ import {
   CONVERSATION_SUMMARY_MARKER,
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
-  buildConversationArchiveSummary,
-  buildConversationSummary,
   buildStructuredConversationSummary,
   buildSelfNoteSummary,
   formatTimestampedContent,
@@ -78,25 +76,6 @@ describe('conversation-summary', () => {
     expect(summary).toContain('## Current goals');
     expect(summary).toContain('## Decisions');
     expect(summary).toContain('Customer asked about invoice reconciliation.');
-  });
-
-  it('builds conversation archive summaries with dedicated markers', () => {
-    const summary = buildConversationArchiveSummary([
-      makeMessage('Conversation cleared for a fresh start.', '2026-05-08T09:40:00.000Z'),
-    ]);
-    expect(summary.startsWith(CONVERSATION_ARCHIVE_MARKER)).toBe(true);
-    expect(summary).toContain('Archived 1 earlier messages.');
-  });
-
-  it('builds rolling conversation summaries with dedicated markers', () => {
-    const summary = buildConversationSummary([
-      makeMessage('Decision: keep the latest request visible.', '2026-05-08T09:40:00.000Z'),
-      makeMessage('Need to verify approval errors in the UI.', '2026-05-08T09:41:00.000Z'),
-    ]);
-    expect(summary.startsWith(CONVERSATION_SUMMARY_MARKER)).toBe(true);
-    expect(summary).toContain('Compacted 2 earlier messages.');
-    expect(summary).toContain('Decision: keep the latest request visible.');
-    expect(summary).toContain('Need to verify approval errors in the UI.');
   });
 
   it('detects summary and compacted markers', () => {

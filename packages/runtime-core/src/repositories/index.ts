@@ -125,6 +125,7 @@ import {
   getLatestHumanMessageInThread as readLatestHumanMessageInThread,
   getMessage as readMessage,
   countMessagesSince as readMessageCountSince,
+  countUncompactedMessageChars as readUncompactedMessageChars,
   listMessages as readMessages,
   listChannelMessages as readChannelMessages,
   saveMessage as writeMessage,
@@ -182,6 +183,7 @@ import {
   getGoalTask as readGoalTask,
   getInteractiveQuestion as readInteractiveQuestion,
   listGoalTasks as readGoalTasks,
+  listGoalTasksByOrganization as readAllGoalTasks,
   listGoalsByChannel as readGoalsByChannel,
   listGoals as readGoals,
   listPendingInteractiveQuestions as readPendingInteractiveQuestions,
@@ -509,6 +511,8 @@ export class Repository {
     threadId: string,
     input?: { since?: string; excludeSenderId?: string },
   ): number => readMessageCountSince(this.db, organizationId, threadId, input);
+  countUncompactedMessageChars = (organizationId: string, threadId: string): number =>
+    readUncompactedMessageChars(this.db, organizationId, threadId);
   listChannelMessages = (
     organizationId: string,
     channelId: string,
@@ -711,6 +715,8 @@ export class Repository {
     readGoalTask(this.db, organizationId, taskId);
   listGoalTasks = (organizationId: string, goalId: string): GoalTask[] =>
     readGoalTasks(this.db, organizationId, goalId);
+  listGoalTasksByOrganization = (organizationId: string): GoalTask[] =>
+    readAllGoalTasks(this.db, organizationId);
   setGoalTaskLastNudgedAt = (
     organizationId: string,
     taskId: string,

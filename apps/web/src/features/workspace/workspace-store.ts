@@ -83,6 +83,7 @@ export interface WorkspaceState {
     selectedConversation?: SelectedConversation;
     globalActiveRuns?: RunState[];
   }): void;
+  replaceConversationUnreadCounts(conversationUnreadCounts: Record<string, number>): void;
   setSelectedConversation(conversation?: SelectedConversation): void;
   setChannels(channels: WorkspaceChannel[]): void;
   appendChannel(channel: WorkspaceChannel): void;
@@ -99,6 +100,8 @@ export interface WorkspaceState {
   appendRunChunk(message: ChatMessageData | undefined, activity?: ActivityEvent): void;
   appendRunChunkBatch(items: { message?: ChatMessageData; activity?: ActivityEvent }[]): void;
   removeMessage(id: string): void;
+  replaceApprovals(approvals: ApprovalCardData[]): void;
+  replaceRuns(runs: RunState[]): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
   upsertGlobalActiveRun(run: RunState): void;
@@ -118,7 +121,7 @@ const EMPTY_ACTIVITY = {
   activeTab: "conversation" as WorkspaceTab,
   showDetails: false,
   detailsAutoOpenDismissed: false,
-  detailsWidth: 33,
+  detailsWidth: 40,
   detailsTab: "Thinking trace" as WorkspaceDetailsTab,
   selectedConversation: undefined,
   channels: [],
@@ -618,6 +621,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         globalActiveRuns: nextGlobalRuns,
       };
     }),
+  replaceConversationUnreadCounts: (conversationUnreadCounts) =>
+    set((state) => (sameRecord(state.conversationUnreadCounts, conversationUnreadCounts) ? state : { conversationUnreadCounts })),
   setSelectedConversation: (selectedConversation) =>
     set((state) => {
       if (!state.selectedConversation && !selectedConversation) return state;
@@ -748,6 +753,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   removeMessage: (id) =>
     set((state) => ({ messages: state.messages.filter((message) => message.id !== id) })),
+  replaceApprovals: (approvals) =>
+    set((state) => (sameItems(state.approvals, approvals) ? state : { approvals })),
+  replaceRuns: (runs) =>
+    set((state) => (sameItems(state.runs, runs) ? state : { runs })),
   upsertApproval: (approval, toCard, toActivity) =>
     set((state) => ({
       approvals: mergeApprovals(state.approvals, [toCard(approval, state)]),

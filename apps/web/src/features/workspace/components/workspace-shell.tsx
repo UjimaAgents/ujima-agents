@@ -16,12 +16,13 @@ import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/sh
 import { ChannelView } from "./channel-view";
 import { ChannelGoalsBoard } from "./channel-goals-board";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
-import type { BootstrapResponse } from "@ujima/api-schema";
+import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
 import { resolveDefaultConversation } from "../workspace-channels";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useWorkspaceStore } from "../workspace-store";
 import type { RolePresetTemplate } from "../../onboarding/types";
+import { runStatusToActivityState } from "../activity-state";
 import {
   goalModePreferenceKey,
   readGoalModePreference,
@@ -53,6 +54,7 @@ type WorkspaceTeamSettings = {
   workspace?: { root: string; roleScopes?: Record<string, string[]> };
   agents: { name: string; roleName: string; personalityName: string; kind: string }[];
   roles: WorkspaceTeamRole[];
+  tools?: Record<string, { id: string; name?: string; description?: string }>;
   policies?: {
     requireApprovalForWrites: boolean;
     shellApprovalMode: ShellApprovalMode;
@@ -70,11 +72,18 @@ export function WorkspaceShell(props: {
   const organizationId = bootstrap.organization?.id;
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [teamSettings, setTeamSettings] = useState(props.teamSettings);
   const [agentEditorTargetId, setAgentEditorTargetId] = useState<string | null>(null);
   const [goalMode, setGoalMode] = useState(false);
   const [orgShellApprovalMode, setOrgShellApprovalMode] = useState(
     normalizeOrgShellApprovalMode(props.teamSettings?.policies ?? {}),
   );
+  const [prevPropsTeamSettings, setPrevPropsTeamSettings] = useState(props.teamSettings);
+  if (props.teamSettings !== prevPropsTeamSettings) {
+    setPrevPropsTeamSettings(props.teamSettings);
+    setTeamSettings(props.teamSettings);
+    setOrgShellApprovalMode(normalizeOrgShellApprovalMode(props.teamSettings?.policies ?? {}));
+  }
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
@@ -85,6 +94,7 @@ export function WorkspaceShell(props: {
   const {
     setSidebarWidth,
     syncWorkspace,
+    replaceConversationUnreadCounts,
     setSelectedConversation,
     appendChannel,
     appendMember,
@@ -97,6 +107,7 @@ export function WorkspaceShell(props: {
     useShallow((state) => ({
       setSidebarWidth: state.setSidebarWidth,
       syncWorkspace: state.syncWorkspace,
+      replaceConversationUnreadCounts: state.replaceConversationUnreadCounts,
       setSelectedConversation: state.setSelectedConversation,
       appendChannel: state.appendChannel,
       appendMember: state.appendMember,
@@ -110,12 +121,17 @@ export function WorkspaceShell(props: {
   const seenApprovalNotifications = useRef(new Set<string>());
   const goalModeSyncing = useRef(false);
   const activeConversationRef = useRef<SelectedConversation | undefined>(undefined);
+  const membersRef = useRef(members);
 
   // Pull localStorage-backed prefs (chat font size, details auto-open dismissal)
   // into the store after mount so the first render matches the SSR snapshot.
   useEffect(() => {
     hydrateClientPersisted();
   }, [hydrateClientPersisted]);
+
+  useEffect(() => {
+    membersRef.current = members;
+  }, [members]);
 
   const defaultConversation = useMemo(
     () => initialConversation ?? resolveDefaultConversation(channels),
@@ -163,12 +179,14 @@ export function WorkspaceShell(props: {
       setSelectedConversation(conversation);
       const params = new URLSearchParams(searchParams.toString());
       params.delete("view");
+      params.delete("agent");
+      params.delete("agentId");
+      params.delete("channel");
+      params.delete("channelId");
       if (conversation.type === "channel") {
         params.set("channelId", conversation.id);
-        params.delete("agentId");
       } else {
         params.set("agentId", conversation.id);
-        params.delete("channelId");
       }
       router.replace(`?${params.toString()}`, { scroll: false });
     },
@@ -228,6 +246,16 @@ export function WorkspaceShell(props: {
     [appendChannel, handleSelect, organizationId],
   );
 
+  const refreshTeamSettings = useCallback(async () => {
+    if (!organizationId) return;
+    const response = await fetch(
+      `/api/settings/team?organizationId=${encodeURIComponent(organizationId)}`,
+    ).catch(() => null);
+    if (response?.ok) {
+      setTeamSettings((await response.json()) as WorkspaceTeamSettings);
+    }
+  }, [organizationId]);
+
   const handleCreateAgent = useCallback(
     async (input: {
       name: string;
@@ -254,9 +282,10 @@ export function WorkspaceShell(props: {
       }
       const member = (await response.json()) as WorkspaceMember;
       appendMember(member);
+      await refreshTeamSettings();
       return { type: "agent" as const, id: member.id, name: member.name };
     },
-    [appendMember, organizationId],
+    [appendMember, organizationId, refreshTeamSettings],
   );
 
   const handleUpdateAgent = useCallback(
@@ -297,9 +326,10 @@ export function WorkspaceShell(props: {
       }
       const member = (await response.json()) as WorkspaceMember;
       appendMember(member);
+      await refreshTeamSettings();
       return member;
     },
-    [appendMember, organizationId],
+    [appendMember, organizationId, refreshTeamSettings],
   );
 
   useLayoutEffect(() => {
@@ -310,6 +340,26 @@ export function WorkspaceShell(props: {
       ? `Ujima Agents - ${conversationName}`
       : "Ujima Agents";
   }, [activeConversation?.id, activeConversation?.name, activeConversation?.type, workspaceTasksActive]);
+
+  const applyBootstrap = useCallback(
+    (snapshot: BootstrapResponse) => {
+      membersRef.current = snapshot.members;
+      syncWorkspace({
+        channels: snapshot.channels,
+        members: snapshot.members,
+        conversationUnreadCounts: snapshot.conversationUnreadCounts,
+        selectedConversation: activeConversationRef.current,
+        globalActiveRuns: snapshot.activeRuns,
+      });
+      replaceConversationUnreadCounts(snapshot.conversationUnreadCounts ?? {});
+      for (const run of snapshot.activeRuns) {
+        const member = snapshot.members.find((entry) => entry.id === run.agentId);
+        const activity = runStatusToActivityState(run.status, member?.presence);
+        if (activity) setMemberActivity(run.agentId, activity);
+      }
+    },
+    [replaceConversationUnreadCounts, setMemberActivity, syncWorkspace],
+  );
 
   // Cmd+K to open global search
   useEffect(() => {
@@ -324,28 +374,8 @@ export function WorkspaceShell(props: {
   }, []);
 
   useEffect(() => {
-    if (!bootstrap.channels) return;
-    syncWorkspace({
-      channels: bootstrap.channels,
-      members: bootstrap.members,
-      conversationUnreadCounts: bootstrap.conversationUnreadCounts,
-      selectedConversation: activeConversation,
-      globalActiveRuns: bootstrap.activeRuns,
-    });
-    for (const run of bootstrap.activeRuns) {
-      if (isLiveRunStatus(run.status)) {
-        setMemberActivity(run.agentId, "working");
-      }
-    }
-  }, [
-    bootstrap.activeRuns,
-    bootstrap.channels,
-    bootstrap.conversationUnreadCounts,
-    bootstrap.members,
-    activeConversation,
-    setMemberActivity,
-    syncWorkspace,
-  ]);
+    applyBootstrap(bootstrap);
+  }, [applyBootstrap, bootstrap]);
 
   useEffect(() => {
     const currentMemberId = bootstrap.auth.member?.id;
@@ -354,6 +384,7 @@ export function WorkspaceShell(props: {
     const source = new EventSource(
       `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
     );
+    let seenReady = false;
 
     source.onopen = () => {
       console.info("[notifications] stream connected");
@@ -365,7 +396,23 @@ export function WorkspaceShell(props: {
     };
     source.onmessage = (event) => {
       const envelope = parseNotificationEnvelope(event.data);
-      if (!envelope || envelope.type === "ready" || envelope.type === "error") return;
+      if (!envelope) return;
+      if (envelope.type === "ready") {
+        if (seenReady) {
+          void (async () => {
+            const response = await fetch("/api/bootstrap");
+            const body = await response.json().catch(() => null);
+            const parsed = response.ok ? BootstrapResponseSchema.safeParse(body) : null;
+            if (parsed?.success) {
+              applyBootstrap(parsed.data);
+            }
+          })();
+        } else {
+          seenReady = true;
+        }
+        return;
+      }
+      if (envelope.type === "error") return;
       if (
         envelope.event !== SocketEventNames.approvalRequested &&
         !isNotificationMessageEvent(envelope.event) &&
@@ -375,7 +422,7 @@ export function WorkspaceShell(props: {
       }
 
       if (isNotificationRunEvent(envelope.event)) {
-        updateRunActivity(envelope.payload, setMemberActivity);
+        updateRunActivity(envelope.payload, membersRef.current, setMemberActivity);
         const run = (envelope.payload as { run?: RunState })?.run;
         if (run) {
           upsertGlobalActiveRun(run);
@@ -399,6 +446,13 @@ export function WorkspaceShell(props: {
           currentConversation.id === conversationId) ||
           (currentConversation.type === "agent" && currentConversation.id === conversationId))
       ) {
+        if (isNotificationMessageEvent(envelope.event)) {
+          clearConversationUnreadCount(currentConversation.id);
+          void markConversationRead(
+            organizationId,
+            getConversationThreadId(currentConversation, currentMemberId),
+          );
+        }
         return;
       }
 
@@ -420,6 +474,8 @@ export function WorkspaceShell(props: {
     bootstrap.auth.member?.id,
     bootstrap.channels,
     bootstrap.organization?.id,
+    applyBootstrap,
+    clearConversationUnreadCount,
     incrementConversationUnreadCount,
     organizationId,
     setMemberActivity,
@@ -428,15 +484,11 @@ export function WorkspaceShell(props: {
 
   useEffect(() => {
     if (!organizationId || !bootstrap.auth.member || !activeConversation) return;
-    const threadId =
-      activeConversation.type === "agent"
-        ? getDirectMessageThreadId(bootstrap.auth.member.id, activeConversation.id)
-        : activeConversation.id;
     clearConversationUnreadCount(activeConversation.id);
-    void fetch(
-      `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
-      { method: "POST" },
-    ).catch(() => undefined);
+    void markConversationRead(
+      organizationId,
+      getConversationThreadId(activeConversation, bootstrap.auth.member.id),
+    );
   }, [activeConversation, bootstrap.auth.member, clearConversationUnreadCount, organizationId]);
 
   const searchResults = useMemo(() => {
@@ -473,7 +525,7 @@ export function WorkspaceShell(props: {
         <WorkspaceSidebar
           bootstrap={bootstrap}
           rolePresets={props.rolePresets}
-          teamSettings={props.teamSettings}
+          teamSettings={teamSettings}
           goalMode={goalMode}
           channels={channels}
           members={members}
@@ -579,7 +631,7 @@ export function DragHandle({
             ? ((right - e.clientX) / width) * 100
             : ((e.clientX - left) / width) * 100;
         const minPct = side === "right" ? 33 : 15;
-        const pct = Math.max(minPct, Math.min(50, rawPct));
+        const pct = Math.max(minPct, Math.min(40, rawPct));
         onResize(pct);
       };
 
@@ -650,21 +702,31 @@ function isNotificationRunEvent(event: SocketEventName): boolean {
   );
 }
 
+function getConversationThreadId(conversation: SelectedConversation, currentMemberId: string): string {
+  return conversation.type === "agent"
+    ? getDirectMessageThreadId(currentMemberId, conversation.id)
+    : conversation.id;
+}
+
+async function markConversationRead(organizationId: string, threadId: string): Promise<void> {
+  await fetch(
+    `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
+    { method: "POST" },
+  ).catch(() => undefined);
+}
+
 function updateRunActivity(
   payload: unknown,
+  members: WorkspaceMember[],
   setMemberActivity: (memberId: string, activity: "working" | "error" | "idle" | "online" | "offline" | "loading") => void,
 ): void {
   const run = (payload as { run?: Pick<RunState, "agentId" | "status"> })?.run;
   if (!run?.agentId) return;
-  if (isLiveRunStatus(run.status)) {
-    setMemberActivity(run.agentId, "working");
-  } else if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
-    setMemberActivity(run.agentId, "idle");
+  const member = members.find((entry) => entry.id === run.agentId);
+  const activity = runStatusToActivityState(run.status, member?.presence);
+  if (activity) {
+    setMemberActivity(run.agentId, activity);
   }
-}
-
-function isLiveRunStatus(status: RunState["status"] | undefined): boolean {
-  return status === "queued" || status === "running" || status === "waiting_for_approval";
 }
 
 function resolveNotificationConversationId(

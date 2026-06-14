@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { createEmptyWorkspaceTeamConfig, type ProviderConfig, loadAgentTeam } from '@ujima/framework';
+import { relative } from 'node:path';
+import {
+  createEmptyWorkspaceTeamConfig,
+  loadAgentTeam,
+  normalizeProviderKey,
+  type ProviderConfig,
+  type RoleConfig,
+} from '@ujima/framework';
 import type { Organization } from '@ujima/shared';
+import { isPathInsideRoot } from '@ujima/shared/workspace';
 import type { AuthService } from './auth.js';
 import { assertWorkspaceRootPathExists, normalizeProjectFolderPath } from './workspace-root.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -13,6 +21,7 @@ import {
   sweepOrphanCatalogRowsAtPath,
 } from './workspace-path-claim.js';
 import { orgWorkspaceId, organizationIdFromWorkspaceId } from '@ujima/shared';
+import { WORKSPACE_OWNER_MEMBER_ID } from './workspace-org-provision.js';
 
 export interface WorkspaceListItem {
   id: string;
@@ -83,6 +92,28 @@ function toWorkspaceListItem(
     created_at: row.created_at,
     updated_at: row.updated_at,
     is_current: isCurrent,
+  };
+}
+
+function sanitizeCopiedRole(
+  role: RoleConfig,
+  channelNames: Set<string>,
+  toolNames: Set<string>,
+  providerNames: Set<string>,
+  sourceRoot: string,
+): RoleConfig {
+  const channels = role.channels.filter((name) => channelNames.has(name));
+  const provider =
+    role.provider && providerNames.has(role.provider) ? role.provider : undefined;
+  return {
+    ...role,
+    channels: channels.length ? channels : channelNames.has('general') ? ['general'] : [],
+    tools: role.tools.filter((name) => toolNames.has(name)),
+    provider,
+    model: provider ? role.model : undefined,
+    workspaceScopes: role.workspaceScopes
+      .filter((scope) => isPathInsideRoot(sourceRoot, scope))
+      .map((scope) => relative(sourceRoot, scope) || '.'),
   };
 }
 
@@ -246,47 +277,72 @@ export class WorkspaceService {
       throw new Error('Source workspace has no team configuration to duplicate');
     }
 
-    let sourceTeamConfig: Record<string, unknown>;
+    let sourceTeam: ReturnType<typeof loadAgentTeam>;
     try {
-      sourceTeamConfig = JSON.parse(storedConfig) as Record<string, unknown>;
+      sourceTeam = loadAgentTeam(JSON.parse(storedConfig) as Record<string, unknown>);
     } catch {
       throw new Error('Source workspace has invalid team configuration');
     }
 
     const { copyOptions } = input;
-
     const baseConfig = createEmptyWorkspaceTeamConfig({
       name: organizationName,
       workspaceRoot,
     });
+    const providerKeys = [...new Set(copyOptions.providerKeys.map(normalizeProviderKey))];
+    const providerNames = new Set([
+      ...(copyOptions.providerConfigs ? Object.keys(sourceTeam.providers) : []),
+      ...providerKeys,
+    ]);
+    baseConfig.providers = Object.fromEntries(
+      [...providerNames].map((name) => [
+        name,
+        sourceTeam.providers[name] ?? ({ kind: name } as ProviderConfig),
+      ]),
+    );
 
-    if (copyOptions.providerConfigs && sourceTeamConfig.providers) {
-      baseConfig.providers = { ...sourceTeamConfig.providers } as Record<string, ProviderConfig>;
-    }
+    if (copyOptions.channels) baseConfig.channels = [...sourceTeam.channels];
+    if (copyOptions.tools) baseConfig.tools = { ...sourceTeam.tools };
+    if (copyOptions.policies) baseConfig.policies = { ...sourceTeam.config.policies };
 
-    if (copyOptions.agents && Array.isArray(sourceTeamConfig.agents)) {
-      baseConfig.agents = [...sourceTeamConfig.agents];
+    if (copyOptions.roles || copyOptions.agents) {
+      const channelNames = new Set(baseConfig.channels.map((channel) => channel.name));
+      const toolNames = new Set(Object.keys(baseConfig.tools));
+      baseConfig.roles = sourceTeam.roles.map((role) =>
+        sanitizeCopiedRole(
+          role,
+          channelNames,
+          toolNames,
+          providerNames,
+          sourceTeam.workspace.root,
+        ),
+      );
     }
+    if (copyOptions.agents) baseConfig.agents = [...sourceTeam.agents];
 
-    if (copyOptions.roles && Array.isArray(sourceTeamConfig.roles)) {
-      baseConfig.roles = [...sourceTeamConfig.roles];
+    const copiedAgentIds = new Set(baseConfig.agents.map((agent) => agent.name));
+    const sourceOwnerIds = new Set(
+      this.repo
+        .listMembers(sourceOrganizationId)
+        .filter((member) => member.kind === 'human' && member.roleName === 'owner')
+        .map((member) => member.id),
+    );
+    const reportsTo: Record<string, string> = {};
+    if (copyOptions.orgChart) {
+      for (const [child, parent] of Object.entries(sourceOrg.organizationChart.reportsTo)) {
+        if (!copiedAgentIds.has(child)) continue;
+        if (copiedAgentIds.has(parent)) reportsTo[child] = parent;
+        else if (sourceOwnerIds.has(parent)) reportsTo[child] = WORKSPACE_OWNER_MEMBER_ID;
+      }
     }
-
-    if (copyOptions.channels && Array.isArray(sourceTeamConfig.channels)) {
-      baseConfig.channels = [...sourceTeamConfig.channels];
+    for (const agentId of copiedAgentIds) {
+      reportsTo[agentId] ??= WORKSPACE_OWNER_MEMBER_ID;
     }
-
-    if (copyOptions.tools && sourceTeamConfig.tools) {
-      baseConfig.tools = { ...sourceTeamConfig.tools };
-    }
-
-    if (copyOptions.policies && sourceTeamConfig.policies) {
-      baseConfig.policies = { ...baseConfig.policies, ...sourceTeamConfig.policies } as typeof baseConfig.policies;
-    }
-
-    if (copyOptions.orgChart && sourceTeamConfig.organizationChart) {
-      baseConfig.organizationChart = { ...baseConfig.organizationChart, ...sourceTeamConfig.organizationChart } as typeof baseConfig.organizationChart;
-    }
+    baseConfig.organizationChart = {
+      reportsTo: Object.fromEntries(
+        Object.entries(reportsTo).filter(([, parent]) => copiedAgentIds.has(parent)),
+      ),
+    };
 
     const team = loadAgentTeam(baseConfig);
 
@@ -302,8 +358,9 @@ export class WorkspaceService {
         templateOrganizationId: ownerOrganizationId,
         templateMemberId: ownerMemberId,
       },
-      credentialSourceOrganizationId: sourceOrganizationId,
-      copyProviderKeys: copyOptions.providerKeys,
+      organizationChart: { reportsTo },
+      credentialSourceOrganizationId: ownerOrganizationId,
+      copyProviderKeys: providerKeys,
     });
 
     const workspaceId = orgWorkspaceId(organization.id);

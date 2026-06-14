@@ -2,13 +2,12 @@ import { memo, useState } from "react";
 import { CheckCircle2, X, ChevronDown, ChevronRight, Pencil, Search, Terminal, Brain, Target, HelpCircle, BookOpen } from "lucide-react";
 import {Markdown} from "../markdown";
 import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
-import {Avatar} from "./primitives";
 import {TerminalPane} from "./terminal-pane";
 import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
 import {GrepToolPane} from "./grep-tool-pane";
 import {WebSearchToolPane} from "./web-search-tool-pane";
-import { UnifiedDiffView } from "./unified-diff-view";
+import { UnifiedDiffView, looksLikeUnifiedDiff } from "./unified-diff-view";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 interface AggregatedOperation {
@@ -491,7 +490,7 @@ export const TraceStep = memo(function TraceStep({
       results={step.webSearch.results}
     />
   ) : step.detail.trim() ? (
-    <Markdown content={step.detail} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-0! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5" />
+    <Markdown content={step.detail} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-0! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5 [&_h1]:!text-[11px] [&_h2]:!text-[11px] [&_h3]:!text-[11px] [&_h4]:!text-[11px] [&_h5]:!text-[11px] [&_h6]:!text-[11px]" />
   ) : null;
 
   return (
@@ -537,7 +536,7 @@ export const TraceStep = memo(function TraceStep({
             <summary className="cursor-pointer list-none text-[11px] leading-snug text-foreground/45">
               Thinking
             </summary>
-            <Markdown content={step.reasoning} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-1! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5" />
+            <Markdown content={step.reasoning} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-1! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5 [&_h1]:!text-[11px] [&_h2]:!text-[11px] [&_h3]:!text-[11px] [&_h4]:!text-[11px] [&_h5]:!text-[11px] [&_h6]:!text-[11px]" />
           </details>
         ) : null}
         {body ? <div className="mt-2">{body}</div> : null}
@@ -671,10 +670,6 @@ export function BoundaryCard({label, scope}: {label: string; scope: string}) {
 
 /* ── Full details sidebar ──────────────────────────────────────────── */
 export interface DetailsSidebarProps {
-  agentName: string;
-  agentColorIndex?: number;
-  statusLabel: string;
-  timeLabel: string;
   tabs: string[];
   activeTab: string;
   onTabChange: (tab: string) => void;
@@ -683,71 +678,24 @@ export interface DetailsSidebarProps {
 }
 
 export function DetailsSidebar({
-  agentName,
-  agentColorIndex = 0,
-  statusLabel,
-  timeLabel,
   tabs,
   activeTab,
   onTabChange,
   onClose,
   children,
 }: DetailsSidebarProps) {
-  const isOffline = statusLabel.toLowerCase() === "offline";
-
   return (
-    <aside className="flex h-full animate-slide-in-right flex-col bg-background/60 dark:bg-background/40">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-violet-500/[0.06] bg-violet-500/[0.015] px-4 dark:border-white/10 dark:bg-white/5">
-        <div className="flex flex-col">
-          <h2 className="text-xs font-semibold text-foreground leading-none">
-            Message details
-          </h2>
-        </div>
-        <button
-          onClick={onClose}
-          className="rounded-full p-1 text-foreground/45 transition hover:bg-foreground/5 hover:text-foreground/70"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </header>
-
-      <div className="flex min-h-0 flex-1 flex-col px-3 py-3">
-        <div className="flex shrink-0 items-center gap-3">
-          <Avatar name={agentName} colorIndex={agentColorIndex} size="lg" />
-          <div className="flex-1">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-foreground">
-                {agentName}
-              </p>
-              <span
-                className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
-                  isOffline
-                    ? "bg-foreground/5 text-foreground/55 dark:bg-white/5 dark:text-white/45"
-                    : "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400/90"
-                }`}
-              >
-                <div
-                  className={`h-1 w-1 rounded-full ${
-                    isOffline
-                      ? "bg-foreground/30 dark:bg-white/30"
-                      : "bg-emerald-600 dark:bg-emerald-400"
-                  }`}
-                />
-                {statusLabel}
-              </span>
-            </div>
-            <p className="text-[10px] text-foreground/50">{timeLabel}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex shrink-0">
+    <aside className="flex h-full min-h-0 animate-slide-in-right flex-col overflow-hidden bg-background/60 dark:bg-background/40">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-foreground/10 px-3 py-3">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map((t) => (
             <button
               key={t}
+              type="button"
               onClick={() => onTabChange(t)}
-              className={`px-2.5 py-1.5 text-[10px] font-semibold transition ${
+              className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-[10px] font-semibold transition ${
                 activeTab === t
-                  ? "border-b-2 border-violet-600 text-violet-700 dark:border-violet-400 dark:text-violet-300"
+                  ? "bg-foreground/[0.06] text-foreground dark:bg-foreground/[0.08]"
                   : "text-foreground/50 hover:text-foreground/80"
               }`}
             >
@@ -755,9 +703,114 @@ export function DetailsSidebar({
             </button>
           ))}
         </div>
-
-        <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="shrink-0 rounded-full p-1 text-foreground/45 transition hover:bg-foreground/5 hover:text-foreground/70"
+          aria-label="Close details sidebar"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 overscroll-contain">
+        {children}
       </div>
     </aside>
+  );
+}
+
+/* ── Changes tab (aggregated file diffs from a run) ────────────────── */
+
+interface FileChange {
+  id: string;
+  file: string;
+  additions: number;
+  deletions: number;
+  body: string;
+  stepTitle: string;
+}
+
+function collectFileChanges(steps: TraceStepData[]): FileChange[] {
+  const seen = new Set<string>();
+  const changes: FileChange[] = [];
+  const fileCounts = new Map<string, number>();
+
+  const pushChange = (change: Omit<FileChange, "id">) => {
+    const index = fileCounts.get(change.file) ?? 0;
+    fileCounts.set(change.file, index + 1);
+    changes.push({ ...change, id: `${change.file}:${change.stepTitle}:${index}` });
+  };
+
+  for (const step of steps) {
+    // Collect aggregated edit operations
+    if (step.aggregatedOperations) {
+      for (const op of step.aggregatedOperations) {
+        if ((op.type === "edit" || op.type === "delete") && op.body && op.file) {
+          const key = `${op.file}:${op.body.slice(0, 80)}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            pushChange({
+              file: op.file,
+              additions: op.additions,
+              deletions: op.deletions,
+              body: op.body,
+              stepTitle: step.title,
+            });
+          }
+        }
+      }
+    }
+
+    // Collect individual filesystem write operations that contain diffs
+    if (step.filesystem?.action === "write" && step.filesystem.body && looksLikeUnifiedDiff(step.filesystem.body)) {
+      const key = `${step.filesystem.resourcePath}:${step.filesystem.body.slice(0, 80)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        pushChange({
+          file: step.filesystem.resourcePath,
+          additions: 0,
+          deletions: 0,
+          body: step.filesystem.body,
+          stepTitle: step.title,
+        });
+      }
+    }
+  }
+
+  // Sort by file path
+  changes.sort((a, b) => a.file.localeCompare(b.file));
+  return changes;
+}
+
+export function ChangesTab({ steps }: { steps: TraceStepData[] }) {
+  const changes = collectFileChanges(steps);
+
+  if (changes.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">No file changes yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {changes.map((change) => (
+        <div key={change.id} className="overflow-hidden rounded-lg border border-foreground/10">
+          <div className="flex items-center justify-between border-b border-foreground/[0.06] bg-foreground/[0.015] px-3 py-2">
+            <span className="text-xs font-semibold text-foreground/90 truncate">
+              {change.file}
+            </span>
+            <span className="shrink-0 flex items-center gap-1.5 font-medium tabular-nums text-[11px]">
+              <span className="text-emerald-600 dark:text-emerald-450 font-semibold">+{change.additions}</span>
+              <span className="text-red-500 dark:text-red-400 font-semibold">-{change.deletions}</span>
+            </span>
+          </div>
+          <div className="max-h-96 overflow-y-auto p-3 select-text">
+            <UnifiedDiffView text={change.body} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

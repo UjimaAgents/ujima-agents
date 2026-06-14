@@ -3,9 +3,9 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useChatScrollToBottom } from "../hooks/use-chat-scroll-to-bottom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Square, SquarePen, Terminal } from "lucide-react";
+import { File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Loader2, Square, Terminal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import type { BootstrapResponse, SkillInvocationResponse } from "@ujima/api-schema";
+import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
@@ -15,12 +15,13 @@ import {
   ChatTabs,
   ChatMessageList,
   ChatInput,
+  ChangesTab,
+  CollapsibleHeaderActions,
   DetailsSidebar,
   ChatMessage,
   ApprovalCard,
   type ChatTab,
   type ChatMessageData,
-  toSlashSkillCommands,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
@@ -32,7 +33,6 @@ import {
   type RunState,
   type ActivityEvent,
 } from "@ujima/shared/browser";
-import { settingsFetch } from "@/features/settings/shared/settings-api";
 import {
   isAgentOnlyThread,
   selectActiveAgentChats,
@@ -54,8 +54,6 @@ import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
-import { ChannelChatHeaderControls } from "./chat/channel-chat-header-controls";
-import { FontSizeControl } from "./chat/font-size-control";
 import {
   buildTabCounts,
   collectConversationAttachments,
@@ -63,7 +61,6 @@ import {
   countSemanticActivityEvents,
   isLiveRun,
 } from "../feed-selectors";
-import { AgentChatHeaderControls } from "./chat/agent-chat-header-controls";
 import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
 
 const CHANNEL_TABS: ChatTab[] = [
@@ -337,10 +334,7 @@ export function ChannelView({
     }
     return conversation.id;
   }, [bootstrap.auth.member?.id, conversation.id, conversation.type]);
-  const skillCommands = useMemo(
-    () => toSlashSkillCommands(bootstrap.skills ?? []),
-    [bootstrap.skills],
-  );
+
   const isReadOnly = useMemo(() => {
     const currentMemberId = bootstrap.auth.member?.id;
     if (!currentMemberId) return false;
@@ -388,7 +382,7 @@ export function ChannelView({
       })),
     [members],
   );
-  const reasoningTraceVisible = showDetails && detailsTab === "Thinking trace";
+  const reasoningTraceVisible = showDetails;
   const reasoningTraceSteps = useReasoningTrace({
     currentThreadId,
     reasoningTraceVisible,
@@ -572,10 +566,10 @@ export function ChannelView({
     () => Math.max(memberIndexById.get(typingMember?.id ?? "") ?? 0, 0),
     [memberIndexById, typingMember?.id],
   );
-  const mentionSuggestions = useMemo(() => {
-    const currentMemberId = bootstrap.auth.member?.id;
-    return members
-      .filter((member) => member.id !== currentMemberId)
+  const organizationId = bootstrap.organization?.id;
+  const mentionSuggestions = useMemo(() => (
+    members
+      .filter((member) => member.id !== bootstrap.auth.member?.id)
       .sort((a, b) => {
         if (a.kind === b.kind) return a.name.localeCompare(b.name);
         return a.kind === "agent" ? -1 : 1;
@@ -584,9 +578,8 @@ export function ChannelView({
         id: member.id,
         name: member.name,
         detail: member.roleName,
-      }));
-  }, [bootstrap.auth.member?.id, members]);
-  const organizationId = bootstrap.organization?.id;
+      }))
+  ), [bootstrap.auth.member?.id, members]);
   useEffect(() => {
     let cancelled = false;
     if (!organizationId || !currentThreadId) {
@@ -746,6 +739,19 @@ export function ChannelView({
     [setActiveTab],
   );
 
+  const handleOpenTasksTab = useCallback(() => {
+    handleTabChange("tasks");
+  }, [handleTabChange]);
+
+  const handleNavigateChannel = useCallback(
+    (channelId: string) => {
+      const channel = channelById.get(channelId);
+      if (!channel) return;
+      onSelectConversation?.({ type: "channel", id: channel.id, name: channel.name });
+    },
+    [channelById, onSelectConversation],
+  );
+
   const feedRef = useRef(feed);
   feedRef.current = feed;
   const replyToRef = useRef(replyTo);
@@ -754,21 +760,6 @@ export function ChannelView({
   const handleCancelReply = useCallback(() => {
     setReplyTo(null);
   }, []);
-
-  const handleSkillCommand = useCallback(
-    async (skillId: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
-      if (!organizationId) throw new Error("Missing organization context.");
-      const { content: skillContent } = await settingsFetch<SkillInvocationResponse>(
-        `/api/settings/skills/${encodeURIComponent(skillId)}?organizationId=${encodeURIComponent(organizationId)}&arguments=${encodeURIComponent(content ?? "")}`,
-        undefined,
-        "Unable to load skill.",
-      );
-      await feedRef.current.sendMessage(skillContent, undefined, undefined, metadata);
-      setReplyTo(null);
-      scrollToLatest("auto");
-    },
-    [organizationId, scrollToLatest],
-  );
 
   const handleComposerCommand = useCallback(
     async (command: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
@@ -899,33 +890,36 @@ export function ChannelView({
           status={selectedStatus.variant}
           statusLabel={selectedStatus.label}
           actions={
-            <div className="flex items-center gap-2">
-              <FontSizeControl value={chatFontSize} onChange={setChatFontSize} />
-              {isAgent && agentMember && onMemberUpdated ? (
-                <>
-                  <AgentChatHeaderControls
-                    orgId={bootstrap.organization?.id ?? ""}
-                    member={agentMember}
-                    providers={bootstrap.providers}
-                    orgShellApprovalMode={orgShellApprovalMode}
-                    goalMode={goalMode}
-                    onMemberUpdated={onMemberUpdated}
-                  />
-                  {onOpenAgentEditor ? (
-                    <button
-                      type="button"
-                      onClick={onOpenAgentEditor}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                    >
-                      <SquarePen className="h-3.5 w-3.5" />
-                      Edit
-                    </button>
-                  ) : null}
-                </>
-              ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
-                <ChannelChatHeaderControls value={orgShellApprovalMode} onChange={onOrgShellApprovalModeChange} />
-              ) : undefined}
-            </div>
+            isAgent && agentMember && onMemberUpdated ? (
+              <CollapsibleHeaderActions
+                kind="agent"
+                chatFontSize={chatFontSize}
+                onChatFontSizeChange={setChatFontSize}
+                orgId={bootstrap.organization?.id ?? ""}
+                agentMember={agentMember}
+                providers={bootstrap.providers}
+                orgShellApprovalMode={orgShellApprovalMode}
+                goalMode={goalMode}
+                onMemberUpdated={onMemberUpdated}
+                onOpenAgentEditor={onOpenAgentEditor}
+              />
+            ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
+              <CollapsibleHeaderActions
+                kind="channel"
+                chatFontSize={chatFontSize}
+                onChatFontSizeChange={setChatFontSize}
+                channelValue={orgShellApprovalMode}
+                onChannelChange={onOrgShellApprovalModeChange}
+              />
+            ) : (
+              <CollapsibleHeaderActions
+                kind="channel"
+                chatFontSize={chatFontSize}
+                onChatFontSizeChange={setChatFontSize}
+                channelValue={"never" as ShellApprovalMode}
+                onChannelChange={async () => {}}
+              />
+            )
           }
           showDetails={showDetails}
           onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
@@ -937,6 +931,14 @@ export function ChannelView({
         />
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
+            {feed.archiving ? (
+              <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-white/70 backdrop-blur-[1px] dark:bg-zinc-950/70">
+                <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                  <Loader2 className="h-4 w-4 animate-spin text-violet-600 dark:text-violet-400" />
+                  {feed.archiving === "clear" ? "Clearing conversation…" : "Summarizing…"}
+                </div>
+              </div>
+            ) : null}
             <ChatMessageList ref={listRef} onScroll={handleScroll}>
             {feed.loading && feed.messages.length === 0 ? (
               <ConversationSkeleton />
@@ -962,6 +964,9 @@ export function ChannelView({
                           <ChatMessage
                             message={message}
                             organizationId={organizationId}
+                            members={members}
+                            onOpenTasksTab={handleOpenTasksTab}
+                            onNavigateChannel={handleNavigateChannel}
                             colorIndex={Math.max(memberIndexById.get(message.senderId ?? "") ?? 0, 0)}
                             onReply={setReplyTo}
                           />
@@ -1201,8 +1206,6 @@ export function ChannelView({
                 readOnly={isReadOnly}
                 reasoningProvider={reasoningModelSelection?.provider}
                 reasoningModelValue={reasoningModelSelection?.model}
-                skillCommands={skillCommands}
-                onSkillCommand={handleSkillCommand}
                 onCommand={handleComposerCommand}
               placeholder={
                 isAgent
@@ -1228,11 +1231,7 @@ export function ChannelView({
         <DragHandle side="right" onResize={setDetailsWidth} />
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <DetailsSidebar
-            agentName={conversation.name}
-            agentColorIndex={conversationColorIndex}
-            statusLabel={selectedStatus.label}
-            timeLabel="—"
-            tabs={["Thinking trace", "Changes", "Metadata"]}
+            tabs={["Thinking trace", "Changes"]}
             activeTab={detailsTab}
             onTabChange={(tab) => setDetailsTab(tab as typeof detailsTab)}
             onClose={() => setShowDetails(false, { userIntent: true })}
@@ -1249,10 +1248,8 @@ export function ChannelView({
                 autoScroll={traceAutoScroll}
                 startedAt={traceStartedAt}
               />
-            ) : detailsTab === "Changes" ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">Diffs unavailable.</p>
             ) : (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">No metadata.</p>
+              <ChangesTab steps={reasoningTraceSteps} />
             )}
           </DetailsSidebar>
         </div>

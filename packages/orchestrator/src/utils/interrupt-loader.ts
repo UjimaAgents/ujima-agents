@@ -1,4 +1,5 @@
 import type { Message } from '@ujima/shared';
+import { encodeCursor } from '@ujima/shared';
 import type { ModelMessage } from 'ai';
 import type { RepositoryReader } from '../services/repository-reader.js';
 import { filterVisibleMessages } from './message-visibility.js';
@@ -7,6 +8,7 @@ import {
   createMessageCursor,
   type MessageCursor,
 } from './message-interrupts.js';
+import { recordRunInterruptCursor } from './interrupt-run-state.js';
 import { toModelMessages } from './to-model-messages.js';
 
 export function loadInterruptModelMessages(input: {
@@ -15,12 +17,20 @@ export function loadInterruptModelMessages(input: {
   threadId: string;
   agentId: string;
   cursor: MessageCursor;
+  runId?: string;
   limit?: number;
 }): ModelMessage[] {
   const page = filterVisibleMessages(
-    input.repo.listMessages(input.organizationId, input.threadId, undefined, input.limit ?? 100).data,
+    input.repo.listMessages(
+      input.organizationId,
+      input.threadId,
+      input.cursor.createdAt ? encodeCursor(input.cursor.createdAt, input.cursor.id) : undefined,
+      input.limit ?? 100,
+    ).data,
   );
-  return toModelMessages(collectInterruptMessages(page, input.cursor, input.agentId), input.agentId);
+  const interrupts = collectInterruptMessages(page, input.cursor, input.agentId);
+  if (input.runId) recordRunInterruptCursor(input.runId, input.cursor);
+  return toModelMessages(interrupts, input.agentId);
 }
 
 export function loadChannelInterruptModelMessages(input: {
@@ -28,21 +38,25 @@ export function loadChannelInterruptModelMessages(input: {
     listChannelMessages(
       organizationId: string,
       channelId: string,
-      options?: { limit?: number },
+      options?: { cursor?: string; limit?: number },
     ): { data: Message[] };
   };
   organizationId: string;
   channelId: string;
   agentId: string;
   cursor: MessageCursor;
+  runId?: string;
   limit?: number;
 }): ModelMessage[] {
   const page = filterVisibleMessages(
     input.repo.listChannelMessages(input.organizationId, input.channelId, {
+      cursor: input.cursor.createdAt ? encodeCursor(input.cursor.createdAt, input.cursor.id) : undefined,
       limit: input.limit ?? 100,
     }).data,
   );
-  return toModelMessages(collectInterruptMessages(page, input.cursor, input.agentId), input.agentId);
+  const interrupts = collectInterruptMessages(page, input.cursor, input.agentId);
+  if (input.runId) recordRunInterruptCursor(input.runId, input.cursor);
+  return toModelMessages(interrupts, input.agentId);
 }
 
 export { createMessageCursor };

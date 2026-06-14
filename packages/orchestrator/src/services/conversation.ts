@@ -24,7 +24,7 @@ import {
 import type { RealtimeService } from './context.js';
 import { selfChannelId } from './member-channels.js';
 import { buildMessage, buildSystemMessage } from './message-factory.js';
-import { formatTimestampedContent } from './conversation-summary.js';
+import { formatTimestampedContent, isCompactionSummarySystemMessage } from './conversation-summary.js';
 import type {
   ConversationRepository,
   PaginatedMessages,
@@ -35,6 +35,7 @@ import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
 import {
   compactSelfNotesIfNeeded,
   compactConversationIfNeeded,
+  conversationNeedsCompaction,
   archiveConversation,
   shouldHideCompactedMessage,
   type CompactionContext,
@@ -97,18 +98,26 @@ export interface ConversationServiceOptions {
   mentionFanoutCap?: number;
   mentionWindowMs?: number;
   onMessagePublished?: (message: Message) => void | Promise<void>;
+  summarizeConversation?: (
+    messages: Message[],
+    mode: 'summary' | 'archive',
+  ) => Promise<string>;
+  contextWindowTokens?: (organizationId: string, threadId: string) => number;
 }
 
 export class ConversationService {
   private readonly archiveStore?: ArchivedChannelMessageStore;
   private readonly onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
+  private readonly summarizeConversation?: ConversationServiceOptions['summarizeConversation'];
+  private readonly contextWindowTokens: NonNullable<ConversationServiceOptions['contextWindowTokens']>;
   private readonly mentionFanoutCap: number;
   private readonly mentionWindowMs: number;
   private readonly mentionQuota: MentionQuota;
   private readonly channelReadQuota: ChannelReadQuota;
   private readonly pairMentionTracker: PairMentionTracker;
   private readonly lastMessageCreatedAtByThread = new Map<string, number>();
+  private readonly compactingThreads = new Set<string>();
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -118,6 +127,8 @@ export class ConversationService {
     this.archiveStore = options.archiveStore;
     this.onMemberAlerted = options.onMemberAlerted;
     this.onMessagePublished = options.onMessagePublished;
+    this.summarizeConversation = options.summarizeConversation;
+    this.contextWindowTokens = options.contextWindowTokens ?? (() => 128_000);
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.mentionQuota = new MentionQuota(this.mentionFanoutCap, this.mentionWindowMs);
@@ -416,6 +427,18 @@ export class ConversationService {
         this.fanout('onMessagePublished', Promise.resolve(this.onMessagePublished(emittedMessage)));
       }
     }
+    if (!isCompactionSummarySystemMessage(emittedMessage)) {
+      if (channel?.kind === 'self') {
+        compactSelfNotesIfNeeded(
+          this.compactionContext(),
+          emittedMessage.organizationId,
+          emittedMessage.senderId,
+          emittedMessage.channelId ?? emittedMessage.threadId,
+        );
+      } else {
+        this.scheduleConversationCompaction(emittedMessage);
+      }
+    }
     return emittedMessage;
   }
 
@@ -424,7 +447,42 @@ export class ConversationService {
       repo: this.repo,
       publishMessage: (message, mentions, attachmentIds, options) =>
         this.publishMessage(message, mentions as never[], attachmentIds, options),
+      summarizeConversation: async (messages, mode) => {
+        if (!this.summarizeConversation) {
+          throw new Error('AI conversation summarizer is not configured.');
+        }
+        return this.summarizeConversation(messages, mode);
+      },
+      contextWindowTokens: this.contextWindowTokens,
     };
+  }
+
+  private scheduleConversationCompaction(message: Message): void {
+    if (!this.summarizeConversation) return;
+    const key = `${message.organizationId}:${message.threadId}`;
+    if (
+      this.compactingThreads.has(key) ||
+      !conversationNeedsCompaction(
+        this.repo,
+        message.organizationId,
+        message.threadId,
+        this.contextWindowTokens(message.organizationId, message.threadId),
+      )
+    ) return;
+    this.compactingThreads.add(key);
+    void compactConversationIfNeeded(
+      this.compactionContext(),
+      message.organizationId,
+      message.threadId,
+      message.senderId,
+    ).catch((error) => {
+      console.error(
+        'conversation: AI compaction failed',
+        error instanceof Error ? error.stack ?? error.message : String(error),
+      );
+    }).finally(() => {
+      this.compactingThreads.delete(key);
+    });
   }
 
   // Fire-and-forget alert fanout: the message is already published and
@@ -855,9 +913,7 @@ export class ConversationService {
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     });
 
-    const published = this.publishMessage(message, undefined, input.attachmentIds);
-    compactConversationIfNeeded(this.compactionContext(), input.organizationId, input.threadId, input.senderId);
-    return published;
+    return this.publishMessage(message, undefined, input.attachmentIds);
   }
 
   postToChannel(input: {
@@ -1012,14 +1068,12 @@ export class ConversationService {
       createdAt: now,
     });
 
-    const published = this.publishMessage(
+    return this.publishMessage(
       message,
       undefined,
       input.attachmentIds,
       input.ignore ? { suppressDmAlerts: true } : undefined,
     );
-    compactConversationIfNeeded(this.compactionContext(), input.organizationId, threadId, input.senderId);
-    return published;
   }
 
   /** Persisted DM with `kind: system` (e.g. approval relay to owner). */
@@ -1141,12 +1195,10 @@ export class ConversationService {
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     });
 
-    const published = this.publishMessage(message, [], input.attachmentIds);
-    compactSelfNotesIfNeeded(this.compactionContext(), input.organizationId, member.id, channelId);
-    return published;
+    return this.publishMessage(message, [], input.attachmentIds);
   }
 
-  archiveConversation(input: {
+  async archiveConversation(input: {
     organizationId: string;
     threadId: string;
     memberId: string;
@@ -1154,11 +1206,6 @@ export class ConversationService {
   }) {
     requireOrganization(this.repo, input.organizationId);
     this.requireThreadAccess(input.organizationId, input.threadId, input.memberId);
-
-    const thread = this.repo.getThread(input.organizationId, input.threadId);
-    if (!thread) {
-      throw new Error(`Thread not found: ${input.threadId}`);
-    }
 
     return archiveConversation(this.compactionContext(), input.organizationId, input.threadId, input.memberId, input.mode);
   }

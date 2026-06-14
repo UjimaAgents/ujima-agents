@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { Goal, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima/shared';
+import { goalTaskColumnLabel } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import { evictStaleTimestamps } from '../utils/ttl-map.js';
 
+export type GoalTaskUpdateResult = GoalTask & { previousStatus?: GoalTaskStatus };
+
 export const QUESTION_RECOMMENDED_SUFFIX = '(Recommended)';
 export const IMPLEMENT_QUESTION_TEXT = 'Do you want me to implement?';
 export const IMPLEMENT_QUESTION_OPTION = `Yes, implement ${QUESTION_RECOMMENDED_SUFFIX}`;
+export const IMPLEMENT_QUESTION_REJECT_OPTION = 'No, stop';
 
 export interface ParsedPlanTask {
   title: string;
@@ -51,6 +55,7 @@ function validateQuestionOptions(options: string[]): string[] {
 export type ResumeInputRun = (
   organizationId: string,
   runId: string,
+  allowRun?: boolean,
 ) => Promise<unknown> | unknown;
 
 // Dedup window for goal-task nudges. A task gets nudged at most
@@ -163,83 +168,78 @@ export class GoalSystemService {
     description?: string;
     assigneeId?: string;
     callerMemberId?: string;
-  }): GoalTask {
+  }): GoalTaskUpdateResult {
     const editsPlan =
       input.title !== undefined ||
       input.description !== undefined ||
       input.assigneeId !== undefined;
-    return this.repo.transaction((): GoalTask => {
-      // Fetch existing task once — needed by plan-edit auth,
-      // status-change notifications, and the handover-only path.
+
+    return this.repo.transaction((): GoalTaskUpdateResult => {
       const existing = this.repo.getGoalTask(input.organizationId, input.taskId);
       if (!existing) throw new Error(`Goal task not found: ${input.taskId}`);
       const oldStatus = existing.status;
-    if (editsPlan) {
-      // Authorization is MANDATORY for plan edits — supervisor only.
-      // Pre-fix this was opt-in: missing callerMemberId short-circuited
-      // the check and any caller could rewrite another user's plan.
-      // Require the field and assert exact-match against supervisorId.
-      if (!input.callerMemberId) {
-        throw new Error(
-          'callerMemberId is required when editing task title / description / assignee.',
+
+      if (editsPlan) {
+        if (!input.callerMemberId) {
+          throw new Error(
+            'callerMemberId is required when editing task title / description / assignee.',
+          );
+        }
+        const goal = this.repo.getGoal(input.organizationId, existing.goalId);
+        if (!goal) throw new Error(`Goal not found for task: ${input.taskId}`);
+        if (input.callerMemberId !== goal.supervisorId) {
+          throw new Error(
+            `Only the goal supervisor (${goal.supervisorId}) can edit task title / description / assignee.`,
+          );
+        }
+        this.repo.saveGoalTask({
+          ...existing,
+          title: input.title ?? existing.title,
+          description: input.description ?? existing.description,
+          assigneeId: input.assigneeId ?? existing.assigneeId,
+          handoverSummary: input.handoverSummary ?? existing.handoverSummary,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      if (input.status !== undefined) {
+        this.lastNudgedAt.delete(input.taskId);
+        const task = this.repo.updateGoalTaskStatus(
+          input.organizationId,
+          input.taskId,
+          input.status,
+          { handoverSummary: input.handoverSummary },
         );
+        if (!task) throw new Error(`Goal task not found: ${input.taskId}`);
+        this.syncGoalStatus(input.organizationId, task.goalId);
+        if (
+          task.assigneeId &&
+          input.callerMemberId &&
+          input.callerMemberId !== task.assigneeId &&
+          oldStatus !== input.status
+        ) {
+          this.notifyTaskMoved(input.organizationId, task, oldStatus, input.callerMemberId);
+        }
+        if (input.status === 'completed') {
+          this.notifyDependentsUnblocked(input.organizationId, task);
+        }
+        return {
+          ...task,
+          ...(oldStatus !== input.status ? { previousStatus: oldStatus } : {}),
+        };
       }
-      const goal = this.repo.getGoal(input.organizationId, existing.goalId);
-      if (!goal) throw new Error(`Goal not found for task: ${input.taskId}`);
-      if (input.callerMemberId !== goal.supervisorId) {
-        throw new Error(
-          `Only the goal supervisor (${goal.supervisorId}) can edit task title / description / assignee.`,
-        );
+
+      if (input.handoverSummary !== undefined && !editsPlan) {
+        this.repo.saveGoalTask({
+          ...existing,
+          handoverSummary: input.handoverSummary,
+          updatedAt: new Date().toISOString(),
+        });
       }
-      // Merge handoverSummary into the same save when present —
-      // a single call combining plan + handover used to silently
-      // drop the note because the second branch was gated on
-      // !editsPlan.
-      this.repo.saveGoalTask({
-        ...existing,
-        title: input.title ?? existing.title,
-        description: input.description ?? existing.description,
-        assigneeId: input.assigneeId ?? existing.assigneeId,
-        handoverSummary: input.handoverSummary ?? existing.handoverSummary,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-    if (input.status !== undefined) {
-      this.lastNudgedAt.delete(input.taskId);
-      const task = this.repo.updateGoalTaskStatus(input.organizationId, input.taskId, input.status, {
-        handoverSummary: input.handoverSummary,
-      });
-      if (!task) throw new Error(`Goal task not found: ${input.taskId}`);
-      this.syncGoalStatus(input.organizationId, task.goalId);
-      // Notify assignee if someone else moved their task on the board
-      if (
-        task.assigneeId &&
-        input.callerMemberId &&
-        input.callerMemberId !== task.assigneeId &&
-        oldStatus !== input.status
-      ) {
-        this.notifyTaskMoved(input.organizationId, task, oldStatus, input.callerMemberId);
-      }
-      if (input.status === 'completed') {
-        this.notifyDependentsUnblocked(input.organizationId, task);
-      }
-      return task;
-    }
-    // handoverSummary-only path: when there's no status AND no plan
-    // edits, persist the note on its own. (When plan edits are
-    // present we already folded handoverSummary into that save
-    // above; when status is set we route through
-    // updateGoalTaskStatus which carries it natively.)
-    if (input.handoverSummary !== undefined && !editsPlan) {
-      this.repo.saveGoalTask({
-        ...existing,
-        handoverSummary: input.handoverSummary,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-    const refreshed = this.repo.getGoalTask(input.organizationId, input.taskId);
-    if (!refreshed) throw new Error(`Goal task not found: ${input.taskId}`);
-    return refreshed;
+
+      const refreshed = this.repo.getGoalTask(input.organizationId, input.taskId);
+      if (!refreshed) throw new Error(`Goal task not found: ${input.taskId}`);
+      return refreshed;
     });
   }
 
@@ -276,17 +276,8 @@ export class GoalSystemService {
     if (last && now - last < NUDGE_DEDUP_WINDOW_MS) return;
     const goal = this.repo.getGoal(organizationId, task.goalId);
     if (!goal) return;
-    const columnLabels: Record<string, string> = {
-      pending: 'To Do',
-      blocked: 'Blocked',
-      in_progress: 'In Progress',
-      completed: 'Done',
-      blocked_by_failure: 'Blocked',
-      failed: 'Blocked',
-      cancelled: 'Blocked',
-    };
-    const fromLabel = columnLabels[oldStatus] || oldStatus;
-    const toLabel = columnLabels[task.status] || task.status;
+    const fromLabel = goalTaskColumnLabel(oldStatus);
+    const toLabel = goalTaskColumnLabel(task.status);
     // Include mover identity so the assignee knows who made the change
     try {
       this.postNotificationToAssignee({
@@ -294,6 +285,7 @@ export class GoalSystemService {
         goal,
         task,
         body: `@${task.assigneeId} task "${task.title}" was moved from [${fromLabel}] → [${toLabel}]. (task_id: ${task.id})`,
+        skipChannelCopy: true,
       });
       this.lastNudgedAt.set(dedupKey, now);
     } catch {
@@ -363,6 +355,7 @@ export class GoalSystemService {
     goal: Goal;
     task: GoalTask;
     body: string;
+    skipChannelCopy?: boolean;
   }): void {
     if (!this.conversations) return;
     const { organizationId, goal, task, body } = input;
@@ -386,16 +379,18 @@ export class GoalSystemService {
     // if the assignee is a member (otherwise the message would refer
     // to an agent the channel readers can't even see). No @mention
     // here — the DM already handles the wake.
-    const channel = this.repo.getChannel(organizationId, goal.channelId);
-    if (channel && channel.memberIds.includes(task.assigneeId)) {
-      this.conversations.postToChannel({
-        organizationId,
-        senderId: goal.supervisorId,
-        channelId: goal.channelId,
-        body,
-        mentions: [],
-        metadata: {},
-      });
+    if (!input.skipChannelCopy) {
+      const channel = this.repo.getChannel(organizationId, goal.channelId);
+      if (channel && channel.memberIds.includes(task.assigneeId)) {
+        this.conversations.postToChannel({
+          organizationId,
+          senderId: goal.supervisorId,
+          channelId: goal.channelId,
+          body,
+          mentions: [],
+          metadata: {},
+        });
+      }
     }
   }
 
@@ -510,7 +505,11 @@ export class GoalSystemService {
       }
     }
 
-    if (question.goalId && selectedOption === IMPLEMENT_QUESTION_OPTION) {
+    const isImplementQuestion = question.questionText === IMPLEMENT_QUESTION_TEXT && !!question.goalId;
+    const implementApproved = isImplementQuestion && selectedOption === IMPLEMENT_QUESTION_OPTION;
+    const implementRejected = isImplementQuestion && selectedOption === IMPLEMENT_QUESTION_REJECT_OPTION;
+
+    if (question.goalId && implementApproved) {
       try {
         this.implement(organizationId, question.goalId);
       } catch {
@@ -523,6 +522,12 @@ export class GoalSystemService {
     const runId = question.runId;
     if (runId && this.resumeRun) {
       const run = this.repo.getRun(organizationId, runId);
+      if (implementRejected) {
+        for (const pending of this.repo.listInteractiveQuestionsByRunId(organizationId, runId)) {
+          if (pending.status !== 'pending') continue;
+          this.repo.saveInteractiveQuestion({ ...pending, status: 'superseded', updatedAt: now });
+        }
+      }
       // Only resume once *every* question this run posted has been
       // resolved. A run that asked two questions must not get its
       // execution back after just one answer — the agent would
@@ -531,7 +536,7 @@ export class GoalSystemService {
         this.repo.listInteractiveQuestionsByRunId?.(organizationId, runId) ?? []
       ).some((q) => q.status === 'pending');
       if (run && run.status === 'waiting_for_input' && !stillPending) {
-        void Promise.resolve(this.resumeRun(organizationId, runId)).catch((error) => {
+        void Promise.resolve(this.resumeRun(organizationId, runId, !implementRejected)).catch((error) => {
           const current = this.repo.getRun(organizationId, runId);
           if (!current || current.status !== 'waiting_for_input') return;
           const message = error instanceof Error ? error.message : String(error);
@@ -557,45 +562,6 @@ export class GoalSystemService {
       ...question,
       status: 'superseded',
       updatedAt: new Date().toISOString(),
-    });
-  }
-
-  /**
-   * Auto-prompt the user after a planning-mode run completes:
-   * once the agent has finished proposing the plan, ask whether
-   * to implement it (or redirect). No-op unless:
-   *   1. the just-completed run actually called `goal.start` (so
-   *      unrelated chat replies in the channel don't keep spamming
-   *      the prompt),
-   *   2. the channel has a goal in `planning`,
-   *   3. and no other question is pending.
-   */
-  maybePromptImplement(input: {
-    organizationId: string;
-    channelId: string;
-    agentName: string;
-    runId?: string;
-  }): InteractiveQuestion | null {
-    if (input.runId) {
-      const ranGoalStart = this.repo
-        .listRunSteps(input.organizationId, input.runId)
-        .some((step) => step.toolId === 'goal.start' && step.status === 'ok');
-      if (!ranGoalStart) return null;
-    }
-    const pending = this.repo.listPendingInteractiveQuestions(input.organizationId, input.channelId);
-    const goal = this.repo
-      .listGoalsByChannel(input.organizationId, input.channelId)
-      .find((candidate) => (
-        candidate.status === 'planning' &&
-        !pending.some((question) => question.goalId === candidate.id)
-      ));
-    if (!goal || goal.status !== 'planning') return null;
-    return this.ask({
-      organizationId: input.organizationId,
-      channelId: input.channelId,
-      goalId: goal.id,
-      questionText: IMPLEMENT_QUESTION_TEXT,
-      options: [IMPLEMENT_QUESTION_OPTION, `Tell ${input.agentName} to do something different`],
     });
   }
 

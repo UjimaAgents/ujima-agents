@@ -3,6 +3,7 @@ import {
   TERMINAL_PANEL,
   TERMINAL_SECTION,
 } from "./terminal-chrome";
+import { extractTruncatedJsonString } from "@ujima/shared";
 import { looksLikeUnifiedDiff, UnifiedDiffView } from "./unified-diff-view";
 import { ExpandableOutput } from "./expandable-output";
 
@@ -39,23 +40,6 @@ function extractStringField(text: string, field: string): string | undefined {
   }
 }
 
-function extractTruncatedStringField(text: string, field: string): string | undefined {
-  const marker = `"${field}"`;
-  const keyIndex = text.indexOf(marker);
-  if (keyIndex === -1) return undefined;
-  const colonIndex = text.indexOf(":", keyIndex + marker.length);
-  if (colonIndex === -1) return undefined;
-  const quoteIndex = text.indexOf('"', colonIndex + 1);
-  if (quoteIndex === -1) return undefined;
-  const raw = text.slice(quoteIndex + 1).replace(/"\s*[},]?\s*$/, "");
-  if (!raw.trim()) return undefined;
-  try {
-    return JSON.parse(`"${raw.replace(/\\$/, "")}"`) as string;
-  } catch {
-    return raw.replace(/\\n/g, "\n").replace(/\\"/g, '"');
-  }
-}
-
 function looksLikeWrappedResult(text: string): boolean {
   return /"(content|body|text|output|result|data|matches|stdout|stderr|diff)"\s*:/.test(text);
 }
@@ -76,11 +60,11 @@ function extractFileContent(text: string): string {
       extractStringField(trimmed, "text") ??
       extractStringField(trimmed, "output") ??
       extractStringField(trimmed, "diff") ??
-      extractTruncatedStringField(trimmed, "content") ??
-      extractTruncatedStringField(trimmed, "body") ??
-      extractTruncatedStringField(trimmed, "text") ??
-      extractTruncatedStringField(trimmed, "output") ??
-      extractTruncatedStringField(trimmed, "diff") ??
+      extractTruncatedJsonString(trimmed, "content") ??
+      extractTruncatedJsonString(trimmed, "body") ??
+      extractTruncatedJsonString(trimmed, "text") ??
+      extractTruncatedJsonString(trimmed, "output") ??
+      extractTruncatedJsonString(trimmed, "diff") ??
       text
     );
   }

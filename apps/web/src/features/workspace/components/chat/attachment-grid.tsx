@@ -126,7 +126,7 @@ function AttachmentCard({
 }) {
   const url = attachmentUrl(organizationId, attachment.id);
 
-  if (attachment.category === "audio") {
+  if (attachment.category === "audio" || attachment.category === "video") {
     return (
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div className="mb-2 flex items-center gap-2">
@@ -140,30 +140,15 @@ function AttachmentCard({
             </p>
           </div>
         </div>
-        <audio controls className="w-full">
-          <source src={url} type={attachment.mimeType} />
-        </audio>
-      </div>
-    );
-  }
-
-  if (attachment.category === "video") {
-    return (
-      <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <div className="mb-2 flex items-center gap-2">
-          <AttachmentIcon category={attachment.category} className="h-4 w-4 text-violet-600 dark:text-violet-300" />
-          <div className="min-w-0">
-            <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-              {attachment.filename}
-            </p>
-            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-              {formatBytes(attachment.sizeBytes)}
-            </p>
-          </div>
-        </div>
-        <video controls className="w-full rounded-md bg-black" playsInline>
-          <source src={url} type={attachment.mimeType} />
-        </video>
+        {attachment.category === "audio" ? (
+          <audio controls className="w-full">
+            <source src={url} type={attachment.mimeType} />
+          </audio>
+        ) : (
+          <video controls className="w-full rounded-md bg-black" playsInline>
+            <source src={url} type={attachment.mimeType} />
+          </video>
+        )}
       </div>
     );
   }

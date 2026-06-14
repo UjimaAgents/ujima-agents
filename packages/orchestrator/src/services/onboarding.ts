@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
 import { normalizeProviderKey } from '@ujima/framework';
 import {
   AGENT_KIND,
@@ -14,8 +13,12 @@ import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
-import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
-import { normalizeProjectFolderPath, upsertWorkspaceMemberScopes } from './workspace-root.js';
+import { addMemberToDefaultChannels, ensureDirectMessageConversation, ensureMemberSelfChannel } from './member-channels.js';
+import {
+  assertWorkspaceRootPathExists,
+  normalizeProjectFolderPath,
+  upsertWorkspaceMemberScopes,
+} from './workspace-root.js';
 import { reclaimOrphanOrganizationsAtPath } from './workspace-path-claim.js';
 import { persistTeamConfig } from './config-sync.js';
 import { visibleChannelsFromRepo } from './settings.js';
@@ -99,6 +102,10 @@ export class OnboardingService {
     // back in with the value resolved to `ownerId`.
     const ownerId = randomUUID();
     const ownerNameTrimmed = input.ownerName.trim();
+    const organizationName = input.organizationName.trim();
+    if (!organizationName || !ownerNameTrimmed) {
+      throw new Error('Organization and owner names are required');
+    }
     // Accepted owner-manager refs in the inbound chart, in priority order:
     //   * `@owner`             — the stable sentinel emitted by the web
     //                            onboarding form. Survives owner renames.
@@ -136,10 +143,8 @@ export class OnboardingService {
       }
     }
 
-    const workspaceRoot = resolve(input.workspaceRoot);
+    const workspaceRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
     const normalizedNewRoot = normalizeProjectFolderPath(workspaceRoot);
-    const emptyCatalog = { get: () => undefined };
-    reclaimOrphanOrganizationsAtPath(this.repo, emptyCatalog, normalizedNewRoot);
 
     const existingOrgs = this.repo.listOrganizationsWithSignIn();
     for (const org of existingOrgs) {
@@ -150,7 +155,7 @@ export class OnboardingService {
     }
 
     const team: AgentTeamHandle = loadAgentTeam({
-      name: input.team.name ?? input.organizationName,
+      name: input.team.name?.trim() || organizationName,
       workspace: { root: workspaceRoot },
       agents: input.team.agents ?? [],
       roles: input.team.roles ?? [],
@@ -161,7 +166,10 @@ export class OnboardingService {
     } as Record<string, unknown>);
 
     const normalizedProviderKeys = Object.fromEntries(
-      Object.entries(input.providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
+      Object.entries(input.providerKeys).map(([name, apiKey]) => [
+        normalizeProviderKey(name),
+        apiKey.trim(),
+      ]),
     );
     const { unknownProviders, missingProviders } = validateProviderKeys(
       team,
@@ -173,6 +181,9 @@ export class OnboardingService {
     if (missingProviders.length > 0) {
       throw new Error(`Missing provider keys: ${missingProviders.join(', ')}`);
     }
+
+    const emptyCatalog = { get: () => undefined };
+    reclaimOrphanOrganizationsAtPath(this.repo, emptyCatalog, normalizedNewRoot);
 
     const organizationId = randomUUID();
     // Owner-targeting edges win over the framework's normalised set —
@@ -189,20 +200,15 @@ export class OnboardingService {
 
     const organization = OrganizationSchema.parse({
       id: organizationId,
-      name: input.organizationName,
+      name: organizationName,
       workspace: team.workspace,
       organizationChart,
     });
-    this.repo.saveOrganization(organization);
-
-    for (const [providerName, apiKey] of Object.entries(normalizedProviderKeys)) {
-      this.repo.saveProviderCredential(organizationId, providerName, apiKey);
-    }
 
     const owner = MemberSchema.parse({
       id: ownerId,
       organizationId,
-      name: input.ownerName,
+      name: ownerNameTrimmed,
       kind: 'human',
       roleName: 'owner',
       presence: 'offline',
@@ -224,18 +230,6 @@ export class OnboardingService {
       ),
     ];
 
-    for (const member of members) {
-      this.repo.saveMember(member);
-      const role = team.getRole(member.roleName);
-      upsertWorkspaceMemberScopes(
-        this.repo,
-        organizationId,
-        member.id,
-        role?.workspaceScopes ?? [],
-      );
-      ensureMemberSelfChannel(this.repo, organizationId, member);
-    }
-
     const channels: Channel[] = team.channels.map((config) =>
       ChannelSchema.parse({
         id: channelId(config),
@@ -246,10 +240,6 @@ export class OnboardingService {
         memberIds: config.memberIds ?? [],
       }),
     );
-
-    for (const channel of channels) {
-      this.repo.saveChannel(channel);
-    }
 
     const channelsByName = new Map(channels.map((channel) => [channel.name, channel]));
     const channelMemberships = new Map<string, Set<string>>(
@@ -277,22 +267,45 @@ export class OnboardingService {
       }
     }
 
-    for (const [id, ids] of channelMemberships) {
-      this.repo.setChannelMembers(organizationId, id, [...ids]);
-    }
+    const result = this.repo.transaction(() => {
+      this.repo.saveOrganization(organization);
+      for (const [providerName, apiKey] of Object.entries(normalizedProviderKeys)) {
+        this.repo.saveProviderCredential(organizationId, providerName, apiKey);
+      }
+      for (const member of members) {
+        this.repo.saveMember(member);
+        const role = team.getRole(member.roleName);
+        upsertWorkspaceMemberScopes(
+          this.repo,
+          organizationId,
+          member.id,
+          role?.workspaceScopes ?? [],
+        );
+        ensureMemberSelfChannel(this.repo, organizationId, member);
+      }
 
-    for (const member of members) {
-      addMemberToDefaultChannels(this.repo, team, organizationId, member);
-    }
+      const starterAgent = members.find((member) => member.kind === AGENT_KIND);
+      if (starterAgent) {
+        ensureDirectMessageConversation(this.repo, organizationId, owner, starterAgent);
+      }
+      for (const channel of channels) this.repo.saveChannel(channel);
+      for (const [id, ids] of channelMemberships) {
+        this.repo.setChannelMembers(organizationId, id, [...ids]);
+      }
+      for (const member of members) {
+        addMemberToDefaultChannels(this.repo, team, organizationId, member);
+      }
+      persistTeamConfig(this.repo, organizationId, team);
+
+      return {
+        organization,
+        members,
+        channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, organizationId)),
+        team: summarizeTeam(team),
+      };
+    });
 
     this.teamStore.setTeam(team, organizationId);
-    persistTeamConfig(this.repo, organizationId, team);
-
-    return {
-      organization,
-      members,
-      channels: visiblePublicChannels(visibleChannelsFromRepo(this.repo, organizationId)),
-      team: summarizeTeam(team),
-    };
+    return result;
   }
 }

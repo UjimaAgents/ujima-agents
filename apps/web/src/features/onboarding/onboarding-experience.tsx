@@ -5,10 +5,10 @@ import { normalizeOrgShellApprovalMode } from "@ujima/shared";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { Home, Sparkles } from "lucide-react";
-import { normalizeProviderName } from "./api-contract";
+import { isProviderDraftComplete, normalizeProviderName } from "./api-contract";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MIN_TEAM_AGENTS, buildOnboardingRequest } from "./api-contract";
-import { OnboardingForm } from "./components/onboarding-form";
+import { ActivationOnboardingForm } from "./components/activation-onboarding-form";
 import { OnboardingStepper, OnboardingStepProgress } from "./components/onboarding-stepper";
 import {
   INITIAL_DRAFT,
@@ -22,7 +22,7 @@ import {
 } from "./types";
 
 const TEAM_TABS: TeamTabId[] = ["agents", "channels", "org-chart", "policies", "providers"];
-const ONBOARDING_STORAGE_KEY = "ujima-web-onboarding-session-v2";
+const ONBOARDING_STORAGE_KEY = "ujima-web-onboarding-session-v3";
 
 interface PersistedOnboardingState {
   activeStep: OnboardingStepId;
@@ -50,7 +50,8 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
     workspaceRoot: typeof source.workspaceRoot === "string" ? source.workspaceRoot : baseline.workspaceRoot,
     ownerName: typeof source.ownerName === "string" ? source.ownerName : baseline.ownerName,
     ownerEmail: typeof source.ownerEmail === "string" ? source.ownerEmail : baseline.ownerEmail,
-    ownerPassword: typeof source.ownerPassword === "string" ? source.ownerPassword : baseline.ownerPassword,
+    ownerPassword: "",
+    ownerPasswordConfirmation: "",
     roles: Array.isArray(source.roles)
       ? source.roles.map((role, index) => {
           const item = typeof role === "object" && role !== null ? role : {};
@@ -138,10 +139,7 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
               (item as { name: string }).name.trim()
                 ? normalizeProviderName((item as { name: string }).name)
                 : "",
-            apiKey:
-              typeof (item as { apiKey?: unknown }).apiKey === "string"
-                ? (item as { apiKey: string }).apiKey
-                : "",
+            apiKey: "",
           };
         })
       : baseline.providers,
@@ -165,7 +163,7 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
 
 function getDefaultSession(baseline: OnboardingDraft = INITIAL_DRAFT): PersistedOnboardingState {
   return {
-    activeStep: "organization",
+    activeStep: "owner",
     activeTeamTab: "agents",
     draft: baseline,
   };
@@ -203,7 +201,8 @@ function isOwnerStepComplete(draft: OnboardingDraft) {
   return Boolean(
     draft.ownerName.trim() &&
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.ownerEmail.trim()) &&
-      draft.ownerPassword.trim().length >= 8,
+      draft.ownerPassword.trim().length >= 8 &&
+      draft.ownerPassword === draft.ownerPasswordConfirmation,
   );
 }
 
@@ -228,7 +227,7 @@ function isTeamStepComplete(draft: OnboardingDraft) {
   const hasReports = draft.organizationReports.every(
     (report) => report.subjectName.trim() && report.managerName.trim(),
   );
-  const hasProviders = draft.providers.every((provider) => provider.name.trim() && provider.apiKey.trim());
+  const hasProviders = draft.providers.every(isProviderDraftComplete);
 
   return hasRoles && hasChannels && hasReports && hasProviders;
 }
@@ -244,14 +243,26 @@ export function OnboardingExperience({
   const [session, setSession] = useState<PersistedOnboardingState>(() => readPersistedSession(starterDraft));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const { activeStep, activeTeamTab, draft } = session;
+  const [attemptId] = useState(() => crypto.randomUUID());
+  const { activeStep, draft } = session;
 
   useEffect(() => {
     if (!isHydrated) {
       return;
     }
 
-    window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(session));
+    window.localStorage.setItem(
+      ONBOARDING_STORAGE_KEY,
+      JSON.stringify({
+        ...session,
+        draft: {
+          ...session.draft,
+          ownerPassword: "",
+          ownerPasswordConfirmation: "",
+          providers: session.draft.providers.map((provider) => ({ ...provider, apiKey: "" })),
+        },
+      }),
+    );
   }, [isHydrated, session]);
 
   const stepIndex = useMemo(
@@ -266,42 +277,32 @@ export function OnboardingExperience({
     setSession((current) => ({
       ...current,
       activeStep: nextStepId,
-      activeTeamTab: nextStepId === "team" ? "agents" : current.activeTeamTab,
+      activeTeamTab: current.activeTeamTab,
     }));
   };
 
   const handleNext = () => {
-    if (activeStep === "team") {
-      const activeTabIndex = TEAM_TABS.indexOf(activeTeamTab);
-
-      if (activeTabIndex < TEAM_TABS.length - 1) {
-        setSession((current) => ({ ...current, activeTeamTab: TEAM_TABS[activeTabIndex + 1] }));
-        return;
-      }
-    }
-
     navigateStep(1);
   };
 
   const handleBack = () => {
-    if (activeStep === "team") {
-      const activeTabIndex = TEAM_TABS.indexOf(activeTeamTab);
-
-      if (activeTabIndex > 0) {
-        setSession((current) => ({ ...current, activeTeamTab: TEAM_TABS[activeTabIndex - 1] }));
-        return;
-      }
-    }
-
     navigateStep(-1);
   };
 
   const accessibleSteps = useMemo(() => {
     const accessMap: Record<OnboardingStepId, boolean> = {
-      organization: true,
-      owner: isOrganizationStepComplete(draft),
-      team: isOrganizationStepComplete(draft) && isOwnerStepComplete(draft),
-      review: isOrganizationStepComplete(draft) && isOwnerStepComplete(draft) && isTeamStepComplete(draft),
+      owner: true,
+      organization: isOwnerStepComplete(draft),
+      provider: isOwnerStepComplete(draft) && isOrganizationStepComplete(draft),
+      agent:
+        isOwnerStepComplete(draft) &&
+        isOrganizationStepComplete(draft) &&
+        draft.providers.every(isProviderDraftComplete),
+      review:
+        isOwnerStepComplete(draft) &&
+        isOrganizationStepComplete(draft) &&
+        draft.providers.every(isProviderDraftComplete) &&
+        isTeamStepComplete(draft),
     };
 
     return accessMap;
@@ -309,11 +310,6 @@ export function OnboardingExperience({
 
   const handleStepClick = (stepId: OnboardingStepId) => {
     if (!accessibleSteps[stepId]) {
-      return;
-    }
-
-    if (stepId === "team") {
-      setSession((current) => ({ ...current, activeStep: stepId, activeTeamTab: "agents" }));
       return;
     }
 
@@ -332,7 +328,7 @@ export function OnboardingExperience({
       const response = await fetch("/api/onboarding", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(buildOnboardingRequest(currentDraft)),
+        body: JSON.stringify(buildOnboardingRequest(currentDraft, attemptId)),
       });
       const body = (await response.json().catch(() => null)) as ApiError | null;
 
@@ -360,7 +356,10 @@ export function OnboardingExperience({
 
       window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
       // Full navigation ensures the session cookie from Set-Cookie is sent on the next request.
-      window.location.replace("/workspace");
+      const agentId = currentDraft.roles[0]?.agentName.trim();
+      const query = new URLSearchParams({ onboarding: "complete" });
+      if (agentId) query.set("agent", agentId);
+      window.location.replace(`/workspace?${query.toString()}`);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to complete onboarding right now.");
     } finally {
@@ -412,21 +411,16 @@ export function OnboardingExperience({
           </div>
 
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white dark:bg-zinc-950">
-            <OnboardingForm
+            <ActivationOnboardingForm
               key={activeStepConfig.id}
               step={activeStepConfig}
-              stepIndex={stepIndex}
-              totalSteps={ONBOARDING_STEPS.length}
               draft={draft}
-              suggestedRoles={roleTemplates}
-              onDraftChange={(nextDraft) => setSession((current) => ({ ...current, draft: nextDraft }))}
+              roleTemplates={roleTemplates}
+              onChange={(nextDraft) => setSession((current) => ({ ...current, draft: nextDraft }))}
               canGoBack={stepIndex > 0}
-              isLastStep={stepIndex === ONBOARDING_STEPS.length - 1}
-              activeTeamTab={activeTeamTab}
-              onTeamTabChange={(nextTab) => setSession((current) => ({ ...current, activeTeamTab: nextTab }))}
               onBack={handleBack}
               onNext={handleNext}
-              onSubmit={handleSubmit}
+              onSubmit={() => void handleSubmit(draft)}
               isSubmitting={isSubmitting}
               submitError={submitError}
             />

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   CatalogAgentView,
   McpCatalogServer,
@@ -11,6 +11,7 @@ import type { McpAttachmentTier, Member, ToolRiskClass } from "@ujima/shared";
 import type { CatalogRole, UseMcpCatalog } from "./use-mcp-catalog";
 import { CurationSuggestionsPanel } from "./curation-suggestions-panel";
 import { McpEffectiveChip } from "./mcp-effective-chip";
+import { SegmentedRadio } from "./segmented-radio";
 
 interface Props {
   orgId: string;
@@ -24,73 +25,10 @@ const RISK_DOT: Record<ToolRiskClass, string> = {
   destructive: "bg-rose-500",
 };
 
-/**
- * Per-server attachment tier toggle. Shows only when the active agent
- * actually has the server attached (catalog populates `agentTier` only
- * for the agent perspective). The label uses non-MCP-jargon copy
- * ("Always on" / "On demand") so admins don't need to know the
- * underlying §17.5 vocabulary to set it correctly.
- *
- * Built on native <input type="radio"> rather than a custom
- * role="radiogroup" so the browser provides the ARIA radio
- * keyboard pattern (arrow-key navigation, single tab stop, screen
- * reader semantics) for free. An earlier custom-button version
- * disabled the currently-selected option, which removed the only
- * focusable control in the group and left keyboard users unable to
- * change tiers.
- *
- * Rendered as a sibling of the row's expand button (not nested) so
- * the markup stays valid HTML (no <button> inside another <button>).
- */
-function TierToggle({
-  tier,
-  disabled,
-  onChange,
-}: {
-  tier: McpAttachmentTier;
-  disabled: boolean;
-  onChange: (next: McpAttachmentTier) => void;
-}) {
-  // Unique `name` per instance so multiple toggles on the same page
-  // don't share a radio group (which would let one row's selection
-  // deselect another's).
-  const groupName = useId();
-  const options: { value: McpAttachmentTier; label: string }[] = [
-    { value: "native", label: "Always on" },
-    { value: "dispatch", label: "On demand" },
-  ];
-  return (
-    <fieldset
-      aria-label="Attachment tier"
-      disabled={disabled}
-      className="m-0 inline-flex overflow-hidden rounded-full border border-zinc-200 p-0 text-[11px] dark:border-zinc-800"
-    >
-      {options.map((opt) => {
-        const selected = opt.value === tier;
-        return (
-          <label
-            key={opt.value}
-            className={`cursor-pointer px-2 py-0.5 transition focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-0 ${
-              selected
-                ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
-                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
-          >
-            <input
-              type="radio"
-              name={groupName}
-              value={opt.value}
-              checked={selected}
-              onChange={() => onChange(opt.value)}
-              className="sr-only"
-            />
-            {opt.label}
-          </label>
-        );
-      })}
-    </fieldset>
-  );
-}
+const TIER_OPTIONS = [
+  { value: "native", label: "Always on" },
+  { value: "dispatch", label: "On demand" },
+] as const;
 
 export function AgentsSubtab({ orgId, agents, catalog }: Props) {
   const [activeAgentId, setActiveAgentId] = useState<string>(agents[0]?.id ?? "");
@@ -318,8 +256,10 @@ export function AgentsSubtab({ orgId, agents, catalog }: Props) {
                   </button>
                   <div className="flex shrink-0 items-center gap-2 text-[11px]">
                     {server.agentTier ? (
-                      <TierToggle
-                        tier={server.agentTier}
+                      <SegmentedRadio
+                        ariaLabel="Attachment tier"
+                        value={server.agentTier}
+                        options={TIER_OPTIONS}
                         disabled={busy === `tier:${server.id}`}
                         onChange={(next) =>
                           void handleTierChange(server.id, next)

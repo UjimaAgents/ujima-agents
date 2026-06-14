@@ -15,17 +15,18 @@ import type {
 } from "@ujima/api-schema";
 import type { McpServerPublic, Member, Channel } from "@ujima/shared";
 
-type SettingsPageSnapshot = {
+interface SettingsPageSnapshot {
   orgSettings: OrganizationSettingsResponse | null;
   teamSettings: TeamSettingsResponse | null;
   members: Member[];
   channels: Channel[];
   providers: ProviderStatus[];
   mcpServers: McpServerPublic[];
-};
+}
 
 type SettingsPageContextValue = SettingsPageSnapshot & {
   setOrgSettings: Dispatch<SetStateAction<OrganizationSettingsResponse | null>>;
+  setTeamSettings: Dispatch<SetStateAction<TeamSettingsResponse | null>>;
   setMembers: Dispatch<SetStateAction<Member[]>>;
   setChannels: Dispatch<SetStateAction<Channel[]>>;
   setProviders: Dispatch<SetStateAction<ProviderStatus[]>>;
@@ -50,7 +51,7 @@ export function SettingsPageProvider({
   children: ReactNode;
 }) {
   const [orgSettings, setOrgSettings] = useState(initial.orgSettings);
-  const [teamSettings] = useState(initial.teamSettings);
+  const [teamSettings, setTeamSettings] = useState(initial.teamSettings);
   const [members, setMembers] = useState(initial.members);
   const [channels, setChannels] = useState(initial.channels);
   const [providers, setProviders] = useState(initial.providers);
@@ -64,6 +65,7 @@ export function SettingsPageProvider({
     providers,
     mcpServers,
     setOrgSettings,
+    setTeamSettings,
     setMembers,
     setChannels,
     setProviders,

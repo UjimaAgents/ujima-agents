@@ -91,6 +91,7 @@ export const WakeReasonSchema = z.enum([
   'channel-read',
   'handoff',
   'parent-thread',
+  'delegate_complete',
 ]);
 export type WakeReason = z.infer<typeof WakeReasonSchema>;
 

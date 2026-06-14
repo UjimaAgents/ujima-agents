@@ -148,55 +148,26 @@ describe('agent delegation', () => {
     });
   });
 
-  it('allows delegating to itself through a real agent-only DM thread', async () => {
+  it('rejects self-delegation', async () => {
     const { repo, conversations, createRun } = repoFixture();
     repo.listMembers.mockReturnValue([caller]);
-    repo.listThreadRuns.mockReturnValue({
-      data: [{
-        id: 'delegate-run-1',
+
+    await expect(
+      runAgentDelegateTurn({
+        repo: repo as unknown as ApiRepository,
+        conversations: conversations as unknown as ConversationService,
+        wakeMember: vi.fn(),
+        createRun,
         organizationId: orgId,
-        agentId: caller.id,
-        threadId: 'dm:agent-1:agent-1',
-        status: 'completed',
-        step: 'completed',
-        summary: 'completed',
-        startedAt: '2026-05-31T10:00:00.000Z',
-        endedAt: '2026-05-31T10:00:01.000Z',
-        sourceMessageId: 'delegate-1',
-      } as RunState],
-      hasMore: false,
-    });
-    const wakeMember = vi.fn();
+        fromMemberId: caller.id,
+        to: caller.id,
+        message: 'split this into another turn',
+        runId: 'run-1',
+      }),
+    ).rejects.toThrow(/cannot delegate to yourself/i);
 
-    const result = await runAgentDelegateTurn({
-      repo: repo as unknown as ApiRepository,
-      conversations: conversations as unknown as ConversationService,
-      wakeMember,
-      createRun,
-      organizationId: orgId,
-      fromMemberId: caller.id,
-      to: caller.id,
-      message: 'split this into another turn',
-      runId: 'run-1',
-    });
-
-    expect(conversations.sendDirectMessage).toHaveBeenCalledWith(expect.objectContaining({
-      senderId: caller.id,
-      recipientId: caller.id,
-      ignore: true,
-    }));
-    expect(wakeMember).toHaveBeenCalledWith(expect.objectContaining({
-      memberId: caller.id,
-      threadId: 'dm:agent-1:agent-1',
-      messageId: 'delegate-1',
-      wakeReason: 'dm',
-    }));
+    expect(conversations.sendDirectMessage).not.toHaveBeenCalled();
     expect(createRun).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      status: 'no_reply',
-      agent_id: caller.id,
-      thread_id: 'dm:agent-1:agent-1',
-    });
   });
 
   it('queues interrupts through wake routing when the target is already active', async () => {
@@ -234,7 +205,7 @@ describe('agent delegation', () => {
     expect(result.status).toBe('no_reply');
   });
 
-  it('routes self-delegation through wake serialization when the caller already has an active run', async () => {
+  it('rejects self-delegation even when the caller already has an active run', async () => {
     const activeRun = {
       id: 'run-1',
       organizationId: orgId,
@@ -247,40 +218,22 @@ describe('agent delegation', () => {
     } as RunState;
     const { repo, conversations, createRun } = repoFixture({ activeRun });
     repo.listMembers.mockReturnValue([caller]);
-    repo.listThreadRuns.mockReturnValue({
-      data: [{
-        id: 'delegate-run-1',
+
+    await expect(
+      runAgentDelegateTurn({
+        repo: repo as unknown as ApiRepository,
+        conversations: conversations as unknown as ConversationService,
+        wakeMember: vi.fn(),
+        createRun,
         organizationId: orgId,
-        agentId: caller.id,
-        threadId: 'dm:agent-1:agent-1',
-        status: 'completed',
-        step: 'completed',
-        summary: 'completed',
-        startedAt: '2026-05-31T10:00:00.000Z',
-        endedAt: '2026-05-31T10:00:01.000Z',
-        sourceMessageId: 'delegate-1',
-      } as RunState],
-      hasMore: false,
-    });
+        fromMemberId: caller.id,
+        to: caller.id,
+        message: 'parallel self work',
+        runId: 'run-1',
+      }),
+    ).rejects.toThrow(/cannot delegate to yourself/i);
 
-    const wakeMember = vi.fn();
-    await runAgentDelegateTurn({
-      repo: repo as unknown as ApiRepository,
-      conversations: conversations as unknown as ConversationService,
-      wakeMember,
-      createRun,
-      organizationId: orgId,
-      fromMemberId: caller.id,
-      to: caller.id,
-      message: 'parallel self work',
-      runId: 'run-1',
-    });
-
-    expect(wakeMember).toHaveBeenCalledWith(expect.objectContaining({
-      memberId: caller.id,
-      threadId: 'dm:agent-1:agent-1',
-      messageId: 'delegate-1',
-    }));
+    expect(conversations.sendDirectMessage).not.toHaveBeenCalled();
     expect(createRun).not.toHaveBeenCalled();
   });
 

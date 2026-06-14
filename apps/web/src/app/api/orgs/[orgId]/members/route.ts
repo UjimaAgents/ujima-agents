@@ -3,6 +3,7 @@ import { MemberSchema } from "@ujima/shared";
 import { parseApiError, upstreamUnavailable } from "@/server/api-response";
 import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
 import { requireProxyOrgAccess } from "@/server/route-guards";
+import { MemberRoleInputSchema } from "@/server/member-schemas";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -15,22 +16,7 @@ const AddMemberRequestSchema = z.object({
   llm: z.string().optional(),
   model: z.string().optional(),
   personalityName: z.string().optional(),
-  role: z
-    .object({
-      id: z.string().min(1).optional(),
-      name: z.string().min(1),
-      title: z.string().min(1),
-      description: z.string().default(""),
-      instructions: z.string().min(1),
-      kind: z.enum(["human", "agent"]).default("agent"),
-      provider: z.string().min(1).optional(),
-      model: z.string().min(1).optional(),
-      workspaceScopes: z.array(z.string().min(1)).default([]),
-      tools: z.array(z.string().min(1)).default([]),
-      channels: z.array(z.string().min(1)).default(["general"]),
-      skills: z.array(z.string().min(1)).default([]),
-    })
-    .optional(),
+  role: MemberRoleInputSchema.optional(),
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ orgId: string }> }) {

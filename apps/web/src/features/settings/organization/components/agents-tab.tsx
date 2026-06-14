@@ -38,6 +38,7 @@ export function AgentsTab({
   channels,
   providers,
   rolePresets,
+  onTeamSettingsChange,
   onMemberUpdated,
   onMemberCreated,
 }: {
@@ -47,6 +48,7 @@ export function AgentsTab({
   channels: BootstrapResponse["channels"];
   providers: ProviderStatus[];
   rolePresets: RolePresetTemplate[];
+  onTeamSettingsChange: (settings: TeamSettingsResponse) => void;
   onMemberUpdated: (member: Member) => void;
   onMemberCreated: (member: Member) => void;
 }) {
@@ -63,6 +65,15 @@ export function AgentsTab({
     const configured = providers.find((p) => p.hasKey);
     return configured ? normalizeProviderKey(configured.name) : "openai";
   }, [providers]);
+  const refreshTeamSettings = useCallback(
+    () =>
+      settingsFetch<TeamSettingsResponse>(
+        `/api/settings/team?organizationId=${encodeURIComponent(orgId)}`,
+        undefined,
+        "Failed to refresh team settings.",
+      ).then(onTeamSettingsChange, () => undefined),
+    [onTeamSettingsChange, orgId],
+  );
 
   const onUpdateAgent: UpdateAgentHandler = useCallback(
     async (input) => {
@@ -85,9 +96,10 @@ export function AgentsTab({
         "Failed to update agent.",
       );
       onMemberUpdated(member);
+      await refreshTeamSettings();
       return member;
     },
-    [orgId, onMemberUpdated],
+    [orgId, onMemberUpdated, refreshTeamSettings],
   );
 
   const onCreateAgent: CreateAgentHandler = useCallback(
@@ -106,9 +118,10 @@ export function AgentsTab({
         "Failed to create agent.",
       );
       onMemberCreated(member);
+      await refreshTeamSettings();
       return { type: "agent" as const, id: member.id, name: member.name };
     },
-    [orgId, onMemberCreated],
+    [orgId, onMemberCreated, refreshTeamSettings],
   );
 
   const deleteAgent = async () => {
@@ -125,6 +138,7 @@ export function AgentsTab({
         ...deleteTarget,
         retiredAt: new Date().toISOString(),
       });
+      await refreshTeamSettings();
       setDeleteTarget(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete agent.");

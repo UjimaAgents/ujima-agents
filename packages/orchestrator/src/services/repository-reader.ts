@@ -132,6 +132,7 @@ export interface RepositoryReader {
     threadId: string,
     input?: { since?: string; excludeSenderId?: string },
   ): number;
+  countUncompactedMessageChars?(organizationId: string, threadId: string): number;
   getConversationRead(
     organizationId: string,
     memberId: string,
@@ -544,6 +545,7 @@ export interface ApiRepository extends ConversationRepository {
   deleteGoalTasks(organizationId: string, goalId: string): void;
   getGoalTask(organizationId: string, taskId: string): GoalTask | null;
   listGoalTasks(organizationId: string, goalId: string): GoalTask[];
+  listGoalTasksByOrganization(organizationId: string): GoalTask[];
   setGoalTaskLastNudgedAt?(
     organizationId: string,
     taskId: string,

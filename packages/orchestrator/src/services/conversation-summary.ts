@@ -10,6 +10,28 @@ export const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V2]]";
 export const CONVERSATION_SUMMARY_MARKER_V1 = "[[CONVERSATION_SUMMARY_V1]]";
 export const CONVERSATION_COMPACTED_MARKER = "[[CONVERSATION_COMPACTED_V1]]";
 export const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
+
+/** Markers on rolling compaction / archive summary rows (not compacted sources). */
+export const CONVERSATION_ROLLING_SUMMARY_MARKERS = [
+  CONVERSATION_SUMMARY_MARKER,
+  CONVERSATION_SUMMARY_MARKER_V1,
+  CONVERSATION_ARCHIVE_MARKER,
+] as const;
+
+/** Markers on messages that should never be re-compacted as ordinary chat turns. */
+export const CONVERSATION_COMPACTED_SOURCE_MARKERS = [
+  CONVERSATION_COMPACTED_MARKER,
+  CONVERSATION_ARCHIVE_MARKER,
+] as const;
+
+export const CONVERSATION_SUMMARIZATION_CHUNK_SIZE = 35;
+
+export interface ConversationSummaryFacts {
+  context: string[];
+  decisions: string[];
+  openQuestions: string[];
+  nextActions: string[];
+}
 const README_SUMMARY_GUIDANCE = [
   "> README-style compact summary -- your durable context from earlier in the conversation.",
   "> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.",
@@ -145,56 +167,10 @@ export function buildSelfNoteSummary(messages: Message[]): string {
   });
 }
 
-export function buildConversationSummary(messages: Message[]): string {
-  const facts = summarizeActionableConversation(messages);
-  return buildStructuredConversationSummary({
-    marker: CONVERSATION_SUMMARY_MARKER,
-    title: `Compacted ${messages.length} earlier messages.`,
-    messages,
-    sections: [
-      {
-        heading: "Current discussion",
-        bullets: facts.context,
-      },
-      {
-        heading: "Decisions",
-        bullets: facts.decisions,
-      },
-      {
-        heading: "Open questions",
-        bullets: facts.openQuestions,
-      },
-      {
-        heading: "Next actions",
-        bullets: facts.nextActions,
-      },
-    ],
-  });
-}
-
-/**
- * Bet 3 — LLM-driven L1 summariser with regex fallback.
- *
- * The regex extractor at `summarizeActionableConversation` picks
- * *literal sentences* containing keywords. For non-trivial channels
- * (multi-decision threads, paraphrased disagreements, non-English)
- * this degrades fast and produces noise. Hermes Agent's
- * `agent/context_compressor.py` proves the alternative: a cheap
- * auxiliary model produces structured `{context, decisions,
- * openQuestions, nextActions}` output, costs fractions of a cent,
- * and (critically) doesn't drift if we version the marker and run
- * gated by token threshold rather than turn count.
- *
- * This function is best-effort: any LLM error falls back to the
- * regex extractor so compaction never blocks the publish path.
- * The summary marker bumps to V2 when the LLM runs; readers
- * recognise V1 too, so historical rows still parse.
- */
-
 export interface LlmSummarizerInput {
   messages: Message[];
   model: LanguageModel;
-  /** Optional override of the per-section bullet cap. */
+  mode?: "summary" | "archive";
   maxBullets?: number;
 }
 
@@ -202,25 +178,72 @@ export async function buildConversationSummaryViaLlm(
   input: LlmSummarizerInput,
 ): Promise<string> {
   const maxBullets = input.maxBullets ?? 6;
-  const filtered = input.messages.filter((m) => m.kind !== "system");
-  if (filtered.length === 0) return buildConversationSummary(input.messages);
-  // Inline import keeps `ai` out of test-only paths that don't use
-  // the LLM extractor.
+  const mode = input.mode ?? "summary";
+  const filtered = input.messages.filter(
+    (message) =>
+      message.kind !== "system" || isCompactionSummarySystemMessage(message),
+  );
+  if (filtered.length === 0) {
+    throw new Error("Cannot summarize a conversation with no user or agent messages.");
+  }
+  const chunks = chunk(filtered, CONVERSATION_SUMMARIZATION_CHUNK_SIZE);
+  console.warn("[conversation-summary] starting LLM compaction", {
+    mode,
+    sourceCount: input.messages.length,
+    filteredCount: filtered.length,
+    chunkCount: chunks.length,
+  });
+  const partials: ConversationSummaryFacts[] = [];
+  for (const [index, messages] of chunks.entries()) {
+    const transcript = transcriptFor(messages);
+    partials.push(
+      await extractSummary(input.model, transcript, maxBullets, {
+        mode,
+        chunkIndex: index,
+        chunkCount: chunks.length,
+        messageCount: messages.length,
+      }),
+    );
+  }
+  const first = partials[0];
+  if (!first) throw new Error("Conversation summarization produced no result.");
+  const facts = partials.length === 1 ? first : mergeSummaryPartials(partials, maxBullets);
+  const archive = mode === "archive";
+  return buildStructuredConversationSummary({
+    marker: archive ? CONVERSATION_ARCHIVE_MARKER : CONVERSATION_SUMMARY_MARKER,
+    title: `${archive ? "Archived" : "Compacted"} ${input.messages.length} earlier messages.`,
+    messages: [],
+    sections: [
+      {heading: "Current discussion", bullets: nonEmpty(facts.context, "No durable context extracted from the compacted window.")},
+      {heading: "Decisions", bullets: nonEmpty(facts.decisions, "No explicit decisions found in the compacted window.")},
+      {heading: "Open questions", bullets: nonEmpty(facts.openQuestions, "No open questions found in the compacted window.")},
+      {heading: "Next actions", bullets: nonEmpty(facts.nextActions, "No explicit next actions found in the compacted window.")},
+    ],
+  });
+}
+
+async function extractSummary(
+  model: LanguageModel,
+  transcript: string,
+  maxBullets: number,
+  context?: {
+    mode: "summary" | "archive";
+    chunkIndex: number;
+    chunkCount: number;
+    messageCount: number;
+  },
+) {
   const { generateObject } = await import("ai");
   const { z } = await import("zod");
   const summarySchema = z.object({
-    context: z.array(z.string().min(2)).max(maxBullets),
-    decisions: z.array(z.string().min(2)).max(maxBullets),
-    openQuestions: z.array(z.string().min(2)).max(maxBullets),
-    nextActions: z.array(z.string().min(2)).max(maxBullets),
+    context: z.array(z.string().max(200)).max(maxBullets),
+    decisions: z.array(z.string().max(200)).max(maxBullets),
+    openQuestions: z.array(z.string().max(200)).max(maxBullets),
+    nextActions: z.array(z.string().max(200)).max(maxBullets),
   });
-  const transcript = filtered
-    .slice(-200)
-    .map((m) => `[${m.senderId}] ${oneLine(m.content)}`)
-    .join("\n");
   try {
     const result = await generateObject({
-      model: input.model,
+      model,
       schema: summarySchema,
       system:
         "You are a conversation summariser. Read the transcript and emit a structured JSON summary. " +
@@ -229,114 +252,103 @@ export async function buildConversationSummaryViaLlm(
         "decisions: explicit choices made (NOT proposals). " +
         "openQuestions: unresolved questions. " +
         "nextActions: imminent next steps with a verb. " +
-        "Keep each bullet ≤ 120 chars. No fluff.",
+        "Keep each bullet at least 2 characters and ≤ 120 chars. No fluff. " +
+        "Return only valid JSON matching the schema.",
       prompt: transcript,
-      maxOutputTokens: 800,
+      maxOutputTokens: 2_048,
     });
-    const facts = result.object;
-    return buildStructuredConversationSummary({
-      marker: CONVERSATION_SUMMARY_MARKER,
-      title: `Compacted ${input.messages.length} earlier messages.`,
-      messages: input.messages,
-      sections: [
-        {heading: "Current discussion", bullets: nonEmpty(facts.context, "No durable context extracted from the compacted window.")},
-        {heading: "Decisions", bullets: nonEmpty(facts.decisions, "No explicit decisions found in the compacted window.")},
-        {heading: "Open questions", bullets: nonEmpty(facts.openQuestions, "No open questions found in the compacted window.")},
-        {heading: "Next actions", bullets: nonEmpty(facts.nextActions, "No explicit next actions found in the compacted window.")},
-      ],
-    });
-  } catch {
-    // Regex fallback — never block the publish path on a summariser
-    // error. The marker stays V2 because the SHAPE of the output is
-    // identical; only the source differs.
-    return buildConversationSummary(input.messages);
+    return {
+      context: sanitizeBullets(result.object.context, maxBullets),
+      decisions: sanitizeBullets(result.object.decisions, maxBullets),
+      openQuestions: sanitizeBullets(result.object.openQuestions, maxBullets),
+      nextActions: sanitizeBullets(result.object.nextActions, maxBullets),
+    };
+  } catch (error) {
+    const detail = {
+      mode: context?.mode ?? "summary",
+      chunkIndex: context?.chunkIndex ?? 0,
+      chunkCount: context?.chunkCount ?? 1,
+      messageCount: context?.messageCount ?? 0,
+      transcriptChars: transcript.length,
+    };
+    console.warn("[conversation-summary] generateObject failed", detail, error);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Conversation summarization failed (${detail.mode}, chunk ${detail.chunkIndex + 1}/${detail.chunkCount}, ${detail.messageCount} messages, ${detail.transcriptChars} transcript chars): ${message}`,
+      { cause: error },
+    );
   }
+}
+
+export function transcriptFor(messages: Message[]): string {
+  return messages
+    .map((message) => `[${message.senderId}] ${transcriptBodyFor(message)}`)
+    .join("\n");
+}
+
+function transcriptBodyFor(message: Message): string {
+  if (isCompactionSummarySystemMessage(message)) {
+    return compactionSummaryExcerpt(message.content);
+  }
+  return oneLine(message.content);
+}
+
+export function compactionSummaryExcerpt(content: string): string {
+  const lines = content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- ") || line.startsWith("## "));
+  if (lines.length === 0) {
+    return oneLine(content);
+  }
+  return lines.join(" ").slice(0, 1_200);
+}
+
+function chunk<T>(values: T[], size: number): T[][] {
+  return Array.from(
+    { length: Math.ceil(values.length / size) },
+    (_, index) => values.slice(index * size, (index + 1) * size),
+  );
 }
 
 function nonEmpty(arr: string[], fallback: string): string[] {
   return arr.length > 0 ? arr : [fallback];
 }
 
-export function buildConversationArchiveSummary(messages: Message[]): string {
-  return buildStructuredConversationSummary({
-    marker: CONVERSATION_ARCHIVE_MARKER,
-    title: `Archived ${messages.length} earlier messages.`,
-    messages,
-    sections: [
-      {
-        heading: "Current discussion",
-        bullets: [
-          "The visible conversation was cleared and rolled into archive form.",
-        ],
-      },
-      {
-        heading: "Decisions",
-        bullets: ["This archive remains recoverable in the message store."],
-      },
-      {
-        heading: "Open questions",
-        bullets: ["Start a fresh thread if you want a clean surface."],
-      },
-      {
-        heading: "Stale or superseded items",
-        bullets: [
-          "Source messages in this batch are marked as compacted or archived.",
-        ],
-      },
-    ],
-  });
+function sanitizeBullets(values: string[], maxBullets: number): string[] {
+  return values
+    .map((value) => value.replace(/\s+/g, " ").trim().slice(0, 120))
+    .filter((value) => value.length >= 2)
+    .slice(0, maxBullets);
+}
+
+export function mergeSummaryPartials(
+  partials: ConversationSummaryFacts[],
+  maxBullets: number,
+): ConversationSummaryFacts {
+  return {
+    context: dedupeBullets(partials.flatMap((partial) => partial.context), maxBullets),
+    decisions: dedupeBullets(partials.flatMap((partial) => partial.decisions), maxBullets),
+    openQuestions: dedupeBullets(partials.flatMap((partial) => partial.openQuestions), maxBullets),
+    nextActions: dedupeBullets(partials.flatMap((partial) => partial.nextActions), maxBullets),
+  };
+}
+
+function dedupeBullets(values: string[], maxBullets: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = value.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (normalized.length < 2) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+    if (out.length >= maxBullets) break;
+  }
+  return out;
 }
 
 function oneLine(content: string): string {
   return content.replace(/\s+/g, " ").trim().slice(0, 280);
-}
-
-function summarizeActionableConversation(messages: Message[]): {
-  context: string[];
-  decisions: string[];
-  openQuestions: string[];
-  nextActions: string[];
-} {
-  const humanOrAgent = messages.filter((message) => message.kind !== "system");
-  return {
-    context: firstDistinct(
-      humanOrAgent.map((message) => `${message.senderId}: ${oneLine(message.content)}`),
-      5,
-      "No durable context extracted from the compacted window.",
-    ),
-    decisions: firstDistinct(
-      humanOrAgent
-        .map((message) => oneLine(message.content))
-        .filter((line) => /\b(decided|decision|ship|use|keep|remove|rename|must|should|don't|do not|prefer)\b/i.test(line)),
-      6,
-      "No explicit decisions found in the compacted window.",
-    ),
-    openQuestions: firstDistinct(
-      humanOrAgent
-        .map((message) => oneLine(message.content))
-        .filter((line) => line.includes("?") || /\b(blocked|unclear|todo|still|need|needs|fix|missing|verify)\b/i.test(line)),
-      6,
-      "No open questions found in the compacted window.",
-    ),
-    nextActions: firstDistinct(
-      humanOrAgent
-        .map((message) => oneLine(message.content))
-        .filter((line) => /\b(next|todo|fix|implement|run|verify|test|build|push|update|check)\b/i.test(line)),
-      6,
-      "No explicit next actions found in the compacted window.",
-    ),
-  };
-}
-
-function firstDistinct(lines: string[], limit: number, fallback: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const line of lines) {
-    const clean = line.trim();
-    if (!clean || seen.has(clean)) continue;
-    seen.add(clean);
-    out.push(clean);
-    if (out.length >= limit) break;
-  }
-  return out.length ? out : [fallback];
 }

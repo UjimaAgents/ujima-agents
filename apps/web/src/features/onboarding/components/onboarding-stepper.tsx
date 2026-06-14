@@ -43,7 +43,6 @@ export function OnboardingStepProgress({
   onStepClick,
 }: OnboardingStepperProps) {
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
-  const activeStepConfig = steps[activeIndex] ?? steps[0];
 
   return (
     <nav className="shrink-0 border-b border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950 sm:px-4" aria-label="Onboarding progress">
@@ -75,9 +74,6 @@ export function OnboardingStepProgress({
           );
         })}
       </ol>
-      {activeStepConfig ? (
-        <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400">{activeStepConfig.description}</p>
-      ) : null}
     </nav>
   );
 }

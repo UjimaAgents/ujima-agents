@@ -1,5 +1,5 @@
 import type { AgentTeamHandle } from '@ujima/framework';
-import { AGENT_KIND, ChannelSchema, getDirectMessageThreadId, type Channel, type Member } from '@ujima/shared';
+import { ChannelSchema, getDirectMessageThreadId, type Channel, type Member } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 
 type MemberRef = Pick<Member, 'id' | 'name'>;
@@ -102,9 +102,9 @@ export function addMemberToDefaultChannels(
   organizationId: string,
   member: Pick<Member, 'id' | 'kind' | 'roleName'>,
 ): void {
-  if (member.kind !== AGENT_KIND) {
-    return;
-  }
+  // Add both agents and humans to default channels.
+  // Previously only agents were added, leaving human owners out
+  // of the general channel after onboarding.
 
   const channelIds = new Set<string>();
   const general = team.getChannel('general');

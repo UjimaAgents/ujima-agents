@@ -177,6 +177,12 @@ export function listGoalTasks(db: DbHandle, organizationId: string, goalId: stri
     .all(organizationId, goalId) as Row[]).map(toTask);
 }
 
+export function listGoalTasksByOrganization(db: DbHandle, organizationId: string): GoalTask[] {
+  return (db
+    .prepare('SELECT * FROM goal_tasks WHERE organization_id = ? ORDER BY created_at ASC')
+    .all(organizationId) as Row[]).map(toTask);
+}
+
 export function getGoalTask(
   db: DbHandle,
   organizationId: string,

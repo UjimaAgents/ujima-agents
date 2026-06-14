@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
 import { CheckCircle2, ChevronDown, Copy, Loader2, Maximize2, Sparkles } from "lucide-react";
 import { type AttachmentCategory } from "@ujima/shared/browser";
+import type { BootstrapResponse } from "@ujima/api-schema";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 import { MessageActions } from "../message-actions";
 import { Markdown, MarkdownInline } from "../markdown";
@@ -10,6 +11,15 @@ import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { TokenCount } from "./chat-token-count";
 import { Modal } from "@/components/ui/modal";
 import { UnifiedDiffView } from "./unified-diff-view";
+import { MessageCardsView } from "./goal-task-cards";
+import {
+  getArtifactFileCard,
+  getMessageCards,
+  isBoilerplateStepContent,
+  type ArtifactFileView,
+} from "./message-cards";
+
+export { getArtifactFileCard } from "./message-cards";
 
 const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
 const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
@@ -65,6 +75,9 @@ export const ChatMessage = memo(function ChatMessage({
   colorIndex = 0,
   onReply,
   organizationId,
+  members = [],
+  onOpenTasksTab,
+  onNavigateChannel,
 }: {
   message: ChatMessageData;
   active?: boolean;
@@ -72,6 +85,9 @@ export const ChatMessage = memo(function ChatMessage({
   colorIndex?: number;
   onReply?: (message: ChatMessageData) => void;
   organizationId?: string;
+  members?: BootstrapResponse["members"];
+  onOpenTasksTab?: () => void;
+  onNavigateChannel?: (channelId: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
@@ -128,7 +144,21 @@ export const ChatMessage = memo(function ChatMessage({
       ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
       : null;
   const artifactFile = getArtifactFileCard(message.toolCalls);
-  const showBody = message.content.trim().length > 0 && !(artifactFile && isInternalMarkerContent(message.content));
+  const inlineCards = getMessageCards(message.toolCalls).filter(
+    (card) =>
+      card.kind !== "artifact.file" &&
+      card.kind !== "approval" &&
+      card.kind !== "tool.call" &&
+      card.kind !== "task.promotion-confirm",
+  );
+  const cardActions = { members, onOpenTasksTab, onNavigateChannel };
+  const showBody =
+    message.content.trim().length > 0 &&
+    !(artifactFile && isInternalMarkerContent(message.content)) &&
+    !(
+      inlineCards.length > 0 &&
+      (isBoilerplateStepContent(message.content) || message.kind === "system")
+    );
 
   return (
     <>
@@ -160,6 +190,9 @@ export const ChatMessage = memo(function ChatMessage({
                 <p className="shrink-0 text-[11px] text-zinc-400">{message.time}</p>
               </div>
               {artifactFile ? <ArtifactFilePreview artifact={artifactFile} /> : null}
+              {inlineCards.length > 0 ? (
+                <MessageCardsView cards={inlineCards} {...cardActions} />
+              ) : null}
               {approvalShellTerminal ? (
                 <TerminalPane
                   className="mt-1.5"
@@ -175,7 +208,7 @@ export const ChatMessage = memo(function ChatMessage({
                   body={approvalFsTerminal.body}
                 />
               ) : systemBodyMarkdown !== null ? (
-                <div className={`${artifactFile ? "mt-3" : "mt-1"} chat-message-content`}>
+                <div className={`${artifactFile || inlineCards.length > 0 ? "mt-3" : "mt-1"} chat-message-content`}>
                   <Markdown
                     content={systemBodyMarkdown}
                     mentionNames={message.mentionNames}
@@ -210,7 +243,10 @@ export const ChatMessage = memo(function ChatMessage({
                 </div>
               )}
               {artifactFile ? <ArtifactFilePreview artifact={artifactFile} /> : null}
-              <div className={`${artifactFile ? "mt-3" : "mt-1"} chat-message-content`}>
+              {inlineCards.length > 0 ? (
+                <MessageCardsView cards={inlineCards} {...cardActions} />
+              ) : null}
+              <div className={`${artifactFile || inlineCards.length > 0 ? "mt-3" : "mt-1"} chat-message-content`}>
                 {showBody ? (
                   <Markdown
                     content={message.content}
@@ -342,48 +378,12 @@ function parseRelayFilesystemBody(
   return { action, resourcePath, meta, body: patchBody };
 }
 
-interface ArtifactFileView {
-  name: string;
-  filePath: string;
-  content: string;
-  diff?: string;
-  artifactFormat: "html" | "markdown";
-  status: string;
-}
-
 function formatArtifactStatus(status: string): string {
   return status
     .trim()
     .toLowerCase()
     .replaceAll("_", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-export function getArtifactFileCard(toolCalls?: ChatMessageData["toolCalls"]): ArtifactFileView | null {
-  const card = toolCalls?.find(
-    (entry) => entry.toolName === "card.artifact.file" || entry.toolName === "card.goal.file",
-  );
-  if (!card) return null;
-  const name = stringArg(card.args, "name") ?? stringArg(card.args, "goalName");
-  const filePath = stringArg(card.args, "filePath") ?? stringArg(card.args, "goalFilePath");
-  const html = stringArg(card.args, "html");
-  const diff = stringArg(card.args, "diff");
-  const artifactFormat = card.args.artifactFormat;
-  const status = stringArg(card.args, "status");
-  if (!name || !filePath || !html || !status) return null;
-  return {
-    name,
-    filePath,
-    content: html,
-    diff,
-    artifactFormat: artifactFormat === "html" ? "html" : "markdown",
-    status,
-  };
-}
-
-function stringArg(args: Record<string, unknown>, key: string): string | undefined {
-  const value = args[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 type ArtifactViewMode = "preview" | "markdown";
