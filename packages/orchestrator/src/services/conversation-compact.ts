@@ -266,7 +266,11 @@ export function listUncompactedConversationMessages(
   },
 ): Message[] {
   const excluded = uncompactedExclusionMarkers(plan);
-  return messages.filter((message) => !isMessageWithAnyMarker(message, excluded));
+  return messages.filter(
+    (message) =>
+      !isCompactedSourceMessage(message) &&
+      !isMessageWithAnyMarker(message, excluded),
+  );
 }
 
 export function selectCompactionBatch(input: {

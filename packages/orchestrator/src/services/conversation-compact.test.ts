@@ -133,6 +133,25 @@ describe('conversation-compact selection', () => {
 
     expect(uncompacted.map((message) => message.id)).toEqual(['msg-visible']);
   });
+
+  it('excludes raw messages already marked with metadata.compactedInto', () => {
+    const compactedRaw = makeMessage('hello', {
+      id: 'msg-compacted',
+      metadata: { compactedInto: 'archive-summary-1' },
+    });
+    const fresh = makeMessage('still visible', { id: 'msg-fresh' });
+
+    const uncompacted = listUncompactedConversationMessages(
+      [compactedRaw, fresh],
+      {
+        summaryMarker: CONVERSATION_ARCHIVE_MARKER,
+        compactedMarker: CONVERSATION_ARCHIVE_MARKER,
+        mode: 'archive',
+      },
+    );
+
+    expect(uncompacted.map((message) => message.id)).toEqual(['msg-fresh']);
+  });
 });
 
 describe('conversation-summary transcript', () => {
