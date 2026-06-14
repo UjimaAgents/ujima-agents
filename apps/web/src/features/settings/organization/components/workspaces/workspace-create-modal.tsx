@@ -7,7 +7,7 @@ import { SettingsPrimaryButton } from "@/features/settings/shared/settings-butto
 import { Select } from "@/components/ui/select";
 import { normalizeProviderKey } from "@/features/providers/catalog";
 
-export type DuplicateCopyOptions = {
+export interface DuplicateCopyOptions {
   providerKeys: string[];
   providerConfigs: boolean;
   agents: boolean;
@@ -16,15 +16,15 @@ export type DuplicateCopyOptions = {
   tools: boolean;
   policies: boolean;
   orgChart: boolean;
-};
+}
 
-export type WorkspaceCreateSubmitInput = {
+export interface WorkspaceCreateSubmitInput {
   name: string;
   rootPath: string;
   sourceWorkspaceId?: string;
   copyProviders?: string[];
   copyOptions?: DuplicateCopyOptions;
-};
+}
 
 interface SourceWorkspace {
   id: string;
@@ -43,9 +43,9 @@ interface WorkspaceRow {
 
 const COPY_OPTIONS_LIST = [
   ["agents", "Agents", true],
-  ["roles", "Roles (tools, channels, skills, scopes)", true],
+  ["roles", "Role definitions, skills, and scopes", true],
   ["channels", "Channels (includes memberships)", false],
-  ["tools", "Tools", false],
+  ["tools", "Tool catalog", false],
   ["policies", "Policies", false],
   ["providerConfigs", "Provider configs (baseUrl, models)", false],
   ["orgChart", "Organization chart", false],
@@ -334,7 +334,19 @@ function WorkspaceCreateModalActive({
                       type="checkbox"
                       checked={copyOptions[key] as boolean}
                       onChange={(e) =>
-                        setCopyOptions((prev) => ({ ...prev, [key]: e.target.checked }))
+                        setCopyOptions((prev) => {
+                          const next = { ...prev, [key]: e.target.checked };
+                          if (key === "agents" && e.target.checked) next.roles = true;
+                          if (key === "roles" && !e.target.checked) {
+                            next.agents = false;
+                            next.orgChart = false;
+                          }
+                          if (key === "orgChart" && e.target.checked) {
+                            next.agents = true;
+                            next.roles = true;
+                          }
+                          return next;
+                        })
                       }
                       className="rounded border-zinc-300"
                     />

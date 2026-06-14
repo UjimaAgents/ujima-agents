@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { ASSET_REF_PATTERN } from "@ujima/shared";
+import { ASSET_REF_PATTERN, decodeAssetReference } from "@ujima/shared";
 import { marked } from "marked";
 import { markdownTerminalCodeBlockHtml } from "./chat/terminal-chrome";
 
@@ -18,6 +18,14 @@ export function sanitizeUrl(href: unknown): string {
 
 const EMPTY_MENTION_NAMES: string[] = [];
 const MAX_CACHE_SIZE = 50;
+const ASSET_REFERENCE_ICONS: Record<string, string> = {
+  folder: '<svg class="inline h-3.5 w-3.5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
+  file: '<svg class="inline h-3.5 w-3.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  mcp: '<svg class="inline h-3.5 w-3.5 shrink-0 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>',
+  skill: '<svg class="inline h-3.5 w-3.5 shrink-0 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
+  task: '<svg class="inline h-3.5 w-3.5 shrink-0 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>',
+  culture: '<svg class="inline h-3.5 w-3.5 shrink-0 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>',
+};
 
 function getFromCache<K, V>(cache: Map<K, V>, key: K): V | undefined {
   const val = cache.get(key);
@@ -91,13 +99,13 @@ function createRenderer(mentionNames: string[]) {
 }
 
 export function highlightFileReferences(text: string): string {
-  return text.replace(ASSET_REF_PATTERN, (_match, kind, path) => {
-    const icon =
-      kind === 'folder'
-        ? '<svg class="inline h-3.5 w-3.5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>'
-        : '<svg class="inline h-3.5 w-3.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+  return text.replace(ASSET_REF_PATTERN, (_match, kind, encodedPath) => {
+    const path = decodeAssetReference(encodedPath);
+    const icon = ASSET_REFERENCE_ICONS[kind] ?? '';
     const name = path.split('/').pop() ?? path;
-    return `<span class="inline-flex cursor-pointer items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700" data-file-ref="${h(kind)}:${h(path)}" title="${h(path)}">${icon}<span>${h(name)}</span></span>`;
+    const reference = `${h(kind)}:${h(path)}`;
+    const fileRef = kind === 'file' || kind === 'folder' ? ` data-file-ref="${reference}"` : '';
+    return `<span class="inline-flex cursor-pointer items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"${fileRef} data-asset-ref="${reference}" title="${h(path)}">${icon}<span>${h(name)}</span></span>`;
   });
 }
 

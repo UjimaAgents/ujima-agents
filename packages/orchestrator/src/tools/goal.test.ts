@@ -22,6 +22,8 @@ describe('goal.start', () => {
       } as never,
       repo: {
         getThread: () => ({ channelId: 'dm:carter-jordan:owner' }),
+        getChannel: () => ({ kind: 'dm' }),
+        getGoalByChannel: () => null,
         listInteractiveQuestionsByRunId: () => [],
         listRunSteps: () => [],
         getMember: () => ({ name: 'Carter Jordan' }),
@@ -66,7 +68,7 @@ describe('goal.start', () => {
         organizationId: 'org-1',
         runId: 'run-1',
         memberId: 'carter-jordan',
-        toolCallId: 'call-1',
+        toolCallId: 'call-2',
         toolId: 'goal.start',
         action: 'create',
         resourceType: 'goal',
@@ -84,6 +86,7 @@ describe('goal.start', () => {
             status: 'answered',
             selectedOption: 'Yes, implement (Recommended)',
             toolCallId: 'call-1',
+            questionText: 'Do you want me to implement?',
           },
         ],
         listRunSteps: () => [
@@ -111,6 +114,56 @@ describe('goal.start', () => {
     // input" and hallucinated an "interactive user input required"
     // error in chat (see goal.ts:70-94 for the fix rationale).
     expect((result as Record<string, unknown>).questionId).toBeUndefined();
+  });
+
+  it('reuses an already-running DM goal without asking again', () => {
+    let starts = 0;
+    let questions = 0;
+    const result = goalStartTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId: 'run-2',
+        memberId: 'carter-jordan',
+        toolCallId: 'call-2',
+        toolId: 'goal.start',
+        action: 'create',
+        resourceType: 'goal',
+        input: {
+          title: 'Plan',
+          plan_markdown: '## Plan',
+          tasks: [{ title: 'Task one', assignee_id: 'carter-jordan' }],
+        },
+        threadId: 'thread-1',
+      } as never,
+      repo: {
+        getThread: () => ({ channelId: 'dm:carter-jordan:owner' }),
+        getChannel: () => ({ kind: 'dm' }),
+        getGoalByChannel: () => ({
+          id: 'goal-1',
+          status: 'running',
+          channelId: 'dm:carter-jordan:owner',
+        }),
+        listGoalTasks: () => [{ id: 'task-1', title: 'Task one' }],
+        listInteractiveQuestionsByRunId: () => [],
+      } as never,
+      goals: {
+        start: () => {
+          starts += 1;
+        },
+        ask: () => {
+          questions += 1;
+        },
+      } as never,
+    } as never);
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      selectedOption: 'Yes, implement (Recommended)',
+      goal: { id: 'goal-1' },
+      tasks: [{ id: 'task-1' }],
+    });
+    expect(starts).toBe(0);
+    expect(questions).toBe(0);
   });
 
   it('replays an answered question with the selected option', () => {

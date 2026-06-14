@@ -12,18 +12,25 @@ export interface CreatedWorkspace {
 export async function createWorkspaceApi(
   input: WorkspaceCreateSubmitInput,
 ): Promise<CreatedWorkspace> {
-  const isDuplicate = !!input.sourceWorkspaceId && !!input.copyOptions;
-
   const res = await fetch("/api/workspaces", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
-      isDuplicate
+      input.sourceWorkspaceId && input.copyOptions
         ? {
             source_workspace_id: input.sourceWorkspaceId,
             root_path: input.rootPath,
             label: input.name,
-            copy_options: input.copyOptions,
+            copy_options: {
+              provider_keys: input.copyOptions.providerKeys,
+              provider_configs: input.copyOptions.providerConfigs,
+              agents: input.copyOptions.agents,
+              roles: input.copyOptions.roles,
+              channels: input.copyOptions.channels,
+              tools: input.copyOptions.tools,
+              policies: input.copyOptions.policies,
+              org_chart: input.copyOptions.orgChart,
+            },
           }
         : {
             root_path: input.rootPath,

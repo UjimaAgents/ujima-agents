@@ -181,6 +181,7 @@ import {
   getGoalTask as readGoalTask,
   getInteractiveQuestion as readInteractiveQuestion,
   listGoalTasks as readGoalTasks,
+  listGoalTasksByOrganization as readAllGoalTasks,
   listGoalsByChannel as readGoalsByChannel,
   listGoals as readGoals,
   listPendingInteractiveQuestions as readPendingInteractiveQuestions,
@@ -700,6 +701,8 @@ export class Repository {
     readGoalTask(this.db, organizationId, taskId);
   listGoalTasks = (organizationId: string, goalId: string): GoalTask[] =>
     readGoalTasks(this.db, organizationId, goalId);
+  listGoalTasksByOrganization = (organizationId: string): GoalTask[] =>
+    readAllGoalTasks(this.db, organizationId);
   setGoalTaskLastNudgedAt = (
     organizationId: string,
     taskId: string,

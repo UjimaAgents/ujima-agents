@@ -17,6 +17,7 @@ import {
   type AuthService,
   type WorkspaceService,
   type McpRegistryService,
+  listProceduresByScope,
 } from '@ujima/orchestrator';
 import {
   isSensitiveWorkspacePath,
@@ -30,6 +31,14 @@ const workspaceAuthResponses = {
   403: ApiErrorSchema,
   503: ApiErrorSchema,
 };
+const assetSuggestionSchema = z.object({
+  kind: z.enum(['task', 'culture', 'mcp', 'skill']),
+  name: z.string(),
+  id: z.string(),
+  detail: z.string(),
+});
+const newestFirst = <T extends { createdAt: string }>(items: readonly T[]) =>
+  [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
 export interface WorkspaceRoutesOptions {
   host: RuntimeHost;
@@ -46,11 +55,15 @@ export function registerWorkspaceRoutes(
   const { host, auth, workspaces, mcpRegistry, repo } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  function getWorkspaceRootOrThrow(sessionToken: string | null | undefined): string {
+  function getOrganizationIdOrThrow(sessionToken: string | null | undefined): string {
     if (!auth) throw new Error('Auth service not configured');
     const authState = auth.getAuthState(sessionToken);
     if (!authState.authenticated || !authState.user) throw new Error('session required');
-    const org = repo?.getOrganization(authState.user.organizationId);
+    return authState.user.organizationId;
+  }
+
+  function getWorkspaceRootOrThrow(sessionToken: string | null | undefined): string {
+    const org = repo?.getOrganization(getOrganizationIdOrThrow(sessionToken));
     if (!org?.workspace?.root?.trim()) throw new Error('ERR_NO_WORKSPACE_ROOT');
     return org.workspace.root.trim();
   }
@@ -372,7 +385,7 @@ export function registerWorkspaceRoutes(
 
     try {
       const root = getWorkspaceRootOrThrow(readSessionToken(req));
-      const query = (req.query.q ?? '').trim().replace(/^(file|folder):/i, '').trim();
+      const query = (req.query.q ?? '').trim().replace(/^(file|folder|mcp|skill|task|culture):/i, '').trim();
       if (!query) {
         return listWorkspaceRootFolders(root);
       }
@@ -386,6 +399,44 @@ export function registerWorkspaceRoutes(
         return apiError(reply, 400, message);
       }
       return apiError(reply, 400, message);
+    }
+  });
+
+  app.get('/workspaces/assets', {
+    schema: {
+      description: 'List named assets for autocomplete',
+      tags: ['Workspaces'],
+      response: { 200: z.array(assetSuggestionSchema), ...workspaceAuthResponses },
+    },
+  }, async (req, reply) => {
+    if (!auth || !repo) {
+      return reply.status(503).send({
+        code: 'ERR_SHUTTING_DOWN',
+        message: 'Workspace routes are not configured',
+      });
+    }
+    try {
+      const token = readSessionToken(req);
+      const orgId = getOrganizationIdOrThrow(token);
+      const goals = new Map(repo.listGoals(orgId).map((goal) => [goal.id, goal.title]));
+      const procedures = await listProceduresByScope(getWorkspaceRootOrThrow(token), 'org', '');
+      return [
+        ...repo.listGoalTasksByOrganization(orgId).map((task) => ({
+          kind: 'task' as const, name: task.title, id: task.id, detail: goals.get(task.goalId) ?? '',
+        })),
+        ...procedures.map((procedure) => ({
+          kind: 'culture' as const, name: procedure.name, id: procedure.name, detail: procedure.description,
+        })),
+        ...newestFirst(mcpRegistry?.list(orgId) ?? []).map((mcp) => ({
+          kind: 'mcp' as const, name: mcp.name, id: mcp.id, detail: mcp.name,
+        })),
+        ...newestFirst(repo.listOrganizationSkillInstalls(orgId)).map((skill) => ({
+          kind: 'skill' as const, name: skill.skillName, id: skill.id, detail: skill.pluginName,
+        })),
+      ];
+    } catch (err) {
+      const message = errorMessage(err);
+      return apiError(reply, /session required/i.test(message) ? 401 : 400, message);
     }
   });
 }

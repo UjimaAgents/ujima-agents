@@ -5,6 +5,7 @@ import { Repository } from '@ujima/runtime-core';
 import {
   GoalSystemService,
   IMPLEMENT_QUESTION_OPTION,
+  IMPLEMENT_QUESTION_REJECT_OPTION,
   IMPLEMENT_QUESTION_TEXT,
 } from '@ujima/orchestrator';
 
@@ -30,6 +31,25 @@ function startPlan(goals: GoalSystemService, organizationId: string, channelId: 
     title: 'Ship the thing',
     planMarkdown: '## Plan',
     tasks: [{ title: 'Step 1', assigneeId: 'agent-1' }],
+  });
+}
+
+function askImplement(
+  goals: GoalSystemService,
+  organizationId: string,
+  channelId: string,
+  goalId: string,
+  runId?: string,
+  toolCallId?: string,
+) {
+  return goals.ask({
+    organizationId,
+    channelId,
+    goalId,
+    runId,
+    toolCallId,
+    questionText: IMPLEMENT_QUESTION_TEXT,
+    options: [IMPLEMENT_QUESTION_OPTION, IMPLEMENT_QUESTION_REJECT_OPTION],
   });
 }
 
@@ -70,11 +90,12 @@ describe('GoalSystemService.start', () => {
     }));
 
     const first = startPlan(goals, orgId, 'dm:agent-1:agent-2');
-    const oldPrompt = goals.maybePromptImplement({
-      organizationId: orgId,
-      channelId: 'dm:agent-1:agent-2',
-      agentName: 'planner',
-    })!;
+    const oldPrompt = askImplement(
+      goals,
+      orgId,
+      'dm:agent-1:agent-2',
+      first.goal.id,
+    );
     const second = goals.start({
       organizationId: orgId,
       channelId: 'dm:agent-1:agent-2',
@@ -89,35 +110,6 @@ describe('GoalSystemService.start', () => {
     expect(repo.listGoalsByChannel(orgId, 'dm:agent-1:agent-2')).toHaveLength(1);
     expect(repo.listGoalTasks(orgId, first.goal.id).map((task) => task.title)).toEqual(['Replacement step']);
     expect(repo.getInteractiveQuestion(orgId, oldPrompt.id)?.status).toBe('superseded');
-  });
-});
-
-describe('GoalSystemService.maybePromptImplement', () => {
-  it('prompts for each planning goal in a channel without superseding the others', () => {
-    const { repo, orgId } = bootstrap();
-    const goals = new GoalSystemService(repo);
-    const first = startPlan(goals, orgId, 'channel-many-prompts');
-    const second = goals.start({
-      organizationId: orgId,
-      channelId: 'channel-many-prompts',
-      supervisorId: 'supervisor-2',
-      title: 'Ship the other thing',
-      planMarkdown: '## Plan 2',
-      tasks: [{ title: 'Step 2', assigneeId: 'agent-2' }],
-    });
-
-    const prompt1 = goals.maybePromptImplement({
-      organizationId: orgId,
-      channelId: 'channel-many-prompts',
-      agentName: 'planner',
-    });
-    const prompt2 = goals.maybePromptImplement({
-      organizationId: orgId,
-      channelId: 'channel-many-prompts',
-      agentName: 'planner',
-    });
-
-    expect([prompt1?.goalId, prompt2?.goalId].sort()).toEqual([first.goal.id, second.goal.id].sort());
   });
 });
 
@@ -167,11 +159,7 @@ describe('GoalSystemService.answer', () => {
     const goals = new GoalSystemService(repo);
     const { goal } = startPlan(goals, orgId, 'channel-impl');
 
-    const question = goals.maybePromptImplement({
-      organizationId: orgId,
-      channelId: 'channel-impl',
-      agentName: 'planner',
-    });
+    const question = askImplement(goals, orgId, 'channel-impl', goal.id);
     expect(question?.questionText).toBe(IMPLEMENT_QUESTION_TEXT);
     expect(question?.runId).toBeUndefined();
     expect(question?.goalId).toBe(goal.id);
@@ -194,15 +182,14 @@ describe('GoalSystemService.answer', () => {
       toolId: 'goal.start',
       status: 'waiting_for_input',
     });
-    const question = goals.ask({
-      organizationId: orgId,
-      channelId: 'channel-run-impl',
-      goalId: goal.id,
+    const question = askImplement(
+      goals,
+      orgId,
+      'channel-run-impl',
+      goal.id,
       runId,
       toolCallId,
-      questionText: IMPLEMENT_QUESTION_TEXT,
-      options: [IMPLEMENT_QUESTION_OPTION, 'Tell planner to do something different'],
-    });
+    );
 
     goals.answer(orgId, question.id, IMPLEMENT_QUESTION_OPTION);
     await new Promise((resolve) => setImmediate(resolve));
@@ -211,18 +198,43 @@ describe('GoalSystemService.answer', () => {
     expect(resumeCalls).toBe(1);
   });
 
-  it('does not start the goal when the user chooses "do something different"', () => {
+  it('does not start the goal when implementation is rejected', () => {
     const { repo, orgId } = bootstrap();
     const goals = new GoalSystemService(repo);
     const { goal } = startPlan(goals, orgId, 'channel-redirect');
-    const question = goals.maybePromptImplement({
-      organizationId: orgId,
-      channelId: 'channel-redirect',
-      agentName: 'planner',
+    const question = askImplement(goals, orgId, 'channel-redirect', goal.id);
+
+    goals.answer(orgId, question.id, IMPLEMENT_QUESTION_REJECT_OPTION);
+
+    expect(repo.getGoal(orgId, goal.id)?.status).toBe('planning');
+  });
+
+  it('rejecting implementation stops the paused run instead of resuming it', async () => {
+    const { repo, orgId } = bootstrap();
+    const resumeCalls: boolean[] = [];
+    const goals = new GoalSystemService(repo, async (_organizationId, _runId, allowRun = true) => {
+      resumeCalls.push(allowRun);
     });
+    const { goal } = startPlan(goals, orgId, 'channel-reject');
+    const runId = 'run-reject';
+    const toolCallId = saveRunStep(repo, orgId, {
+      runId,
+      toolId: 'goal.start',
+      status: 'waiting_for_input',
+    });
+    const question = askImplement(
+      goals,
+      orgId,
+      'channel-reject',
+      goal.id,
+      runId,
+      toolCallId,
+    );
 
-    goals.answer(orgId, question!.id, `Tell planner to do something different`);
+    goals.answer(orgId, question.id, IMPLEMENT_QUESTION_REJECT_OPTION);
+    await new Promise((resolve) => setImmediate(resolve));
 
+    expect(resumeCalls).toEqual([false]);
     expect(repo.getGoal(orgId, goal.id)?.status).toBe('planning');
   });
 
@@ -287,7 +299,7 @@ describe('GoalSystemService.answer', () => {
       runId,
       toolCallId,
       questionText: IMPLEMENT_QUESTION_TEXT,
-      options: [IMPLEMENT_QUESTION_OPTION, 'Tell planner to do something different'],
+      options: [IMPLEMENT_QUESTION_OPTION, IMPLEMENT_QUESTION_REJECT_OPTION],
     });
 
     goals.answer(orgId, question.id, IMPLEMENT_QUESTION_OPTION);
@@ -635,41 +647,5 @@ describe('GoalSystemService.updateTask', () => {
       handoverSummary: 'Step 1 done; Step 2 inputs ready.',
     });
     expect(posts).toHaveLength(1);
-  });
-});
-
-describe('GoalSystemService.maybePromptImplement', () => {
-  it('does nothing when the just-completed run did not call goal.start', () => {
-    const { repo, orgId } = bootstrap();
-    const goals = new GoalSystemService(repo);
-    startPlan(goals, orgId, 'channel-gate');
-    const runId = 'run-unrelated';
-    saveRunStep(repo, orgId, { runId, toolId: 'message.post' });
-
-    const question = goals.maybePromptImplement({
-      organizationId: orgId,
-      channelId: 'channel-gate',
-      agentName: 'planner',
-      runId,
-    });
-
-    expect(question).toBeNull();
-  });
-
-  it('prompts when the just-completed run actually authored the plan', () => {
-    const { repo, orgId } = bootstrap();
-    const goals = new GoalSystemService(repo);
-    startPlan(goals, orgId, 'channel-author');
-    const runId = 'run-author';
-    saveRunStep(repo, orgId, { runId, toolId: 'goal.start' });
-
-    const question = goals.maybePromptImplement({
-      organizationId: orgId,
-      channelId: 'channel-author',
-      agentName: 'planner',
-      runId,
-    });
-
-    expect(question?.questionText).toBe(IMPLEMENT_QUESTION_TEXT);
   });
 });

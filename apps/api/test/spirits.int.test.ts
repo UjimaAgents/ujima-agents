@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -1009,11 +1009,13 @@ describe('TaskSessionService.create — audit fix regressions', () => {
 
     // Two completely independent organisations on the same DB.
     const onboardOrg = async (name: string, agentName: string): Promise<string> => {
+      const workspaceRoot = join(archiveRoot, name);
+      await mkdir(workspaceRoot, { recursive: true });
       const onboarding = new OnboardingService(repo, teamStore);
       await onboarding.onboard({
         organizationName: name,
         ownerName: `${name} Owner`,
-        workspaceRoot: join(archiveRoot, name),
+        workspaceRoot,
         providerKeys: { local: 'k' },
         team: {
           channels: [{ name: 'general', kind: 'general', topic: '' }],

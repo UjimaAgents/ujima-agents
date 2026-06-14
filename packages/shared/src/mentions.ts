@@ -52,7 +52,15 @@ export function scanMentionsInContent(
   }
 }
 
-export const ASSET_REF_PATTERN = /@(file|folder):([^\s)}\]">]+)/g;
+export const ASSET_REF_PATTERN = /@(file|folder|mcp|skill|task|culture):([^\s)}\]">]+)/g;
+
+export function decodeAssetReference(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 
 export function scanAssetReferences(
   content: string,
@@ -64,7 +72,7 @@ export function scanAssetReferences(
     const kind = match[1];
     const path = match[2];
     if (!kind || !path) continue;
-    refs.push({ kind, path });
+    refs.push({ kind, path: decodeAssetReference(path) });
   }
   return refs;
 }

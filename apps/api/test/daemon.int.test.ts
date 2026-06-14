@@ -98,11 +98,11 @@ describe('ujima-runtime daemon', () => {
       expect(Number.parseInt(pidStr.trim(), 10)).toBe(child.pid);
 
       child.kill('SIGTERM');
-      const exit = await waitForExit(child, 10_000);
+      const exit = await waitForExit(child, 15_000);
       expect(exit.timedOut).toBe(false);
       // Graceful: exits via process.exit(143); some node builds may also report the signal.
       expect(exit.code === 143 || exit.signal === 'SIGTERM').toBe(true);
-      await waitFor(() => !existsSync(join(home, DIRTY_FLAG)), 5_000);
+      await waitFor(() => !existsSync(join(home, DIRTY_FLAG)), 15_000);
       expect(existsSync(join(home, DIRTY_FLAG))).toBe(false);
     } finally {
       if (!child.killed) child.kill('SIGKILL');

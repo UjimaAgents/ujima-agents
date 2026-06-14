@@ -84,8 +84,8 @@ describe('goal-task-card', () => {
   it('appends cards for goal tool calls in a step', () => {
     const cards = appendGoalTaskToolCalls(
       [
-        { toolCallId: 'call-1', toolName: 'goal.start', args: {} },
-        { toolCallId: 'call-2', toolName: 'goal.task.update', args: {} },
+        { toolCallId: 'call-1', toolName: 'goal_start', args: {} },
+        { toolCallId: 'call-2', toolName: 'goal_task_update', args: {} },
       ],
       [
         {

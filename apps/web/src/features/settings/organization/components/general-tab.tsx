@@ -57,6 +57,12 @@ export const GeneralTab = memo(function GeneralTab({
 
   const handleSave = useCallback(async () => {
     if (!name.trim() || !root.trim() || !orgId || !isDirty) return;
+    const nextName = name.trim();
+    const nextRoot = root.trim();
+    const patch = {
+      ...(nextName !== organizationName ? { organizationName: nextName } : {}),
+      ...(nextRoot !== workspaceRoot ? { workspaceRoot: nextRoot } : {}),
+    };
     setError(null);
     setSuccess(false);
     setSaving(true);
@@ -68,20 +74,22 @@ export const GeneralTab = memo(function GeneralTab({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             organizationId: orgId,
-            organizationName: name.trim(),
-            workspaceRoot: root.trim(),
+            ...patch,
           }),
         },
         "Failed to update workspace settings.",
       );
-      onUpdate({ name: name.trim(), workspaceRoot: root.trim() });
+      onUpdate({
+        ...(patch.organizationName ? { name: patch.organizationName } : {}),
+        ...(patch.workspaceRoot ? { workspaceRoot: patch.workspaceRoot } : {}),
+      });
       setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
       setSaving(false);
     }
-  }, [name, root, orgId, isDirty, onUpdate]);
+  }, [name, root, orgId, isDirty, onUpdate, organizationName, workspaceRoot]);
 
   return (
     <div className="space-y-8">

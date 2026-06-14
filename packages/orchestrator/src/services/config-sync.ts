@@ -243,6 +243,16 @@ export class ConfigSyncService {
     );
     const organizationId =
       existingOrganization?.id ?? input.organizationId ?? randomUUID();
+    const configManaged = Boolean(input.configPath);
+    const markOwned = (
+      entityType: ConfigFieldOwnership['entityType'],
+      entityId: string,
+      fieldNames: readonly string[],
+    ) => {
+      if (configManaged) {
+        markConfigOwnership(this.repo, organizationId, entityType, entityId, fieldNames);
+      }
+    };
 
     const organization = OrganizationSchema.parse({
       id: organizationId,
@@ -251,13 +261,7 @@ export class ConfigSyncService {
       organizationChart: input.team.organizationChart,
     });
     this.repo.saveOrganization(organization);
-    markConfigOwnership(
-      this.repo,
-      organizationId,
-      'organization',
-      organizationId,
-      ORGANIZATION_CONFIG_FIELDS,
-    );
+    markOwned('organization', organizationId, ORGANIZATION_CONFIG_FIELDS);
 
     const existingMembers = this.repo.listMembers(organizationId);
     const existingMembersById = new Map(existingMembers.map((member) => [member.id, member]));
@@ -308,7 +312,7 @@ export class ConfigSyncService {
         id: agent.name,
         name: agent.name,
       });
-      markConfigOwnership(this.repo, organizationId, 'member', agent.name, MEMBER_CONFIG_FIELDS);
+      markOwned('member', agent.name, MEMBER_CONFIG_FIELDS);
       stats.membersUpserted += 1;
     }
 
@@ -349,7 +353,7 @@ export class ConfigSyncService {
       channelsByName.set(channel.name, channel);
       channelMemberships.set(channel.id, new Set(channel.memberIds));
       this.repo.saveChannel(channel);
-      markConfigOwnership(this.repo, organizationId, 'channel', channel.id, CHANNEL_CONFIG_FIELDS);
+      markOwned('channel', channel.id, CHANNEL_CONFIG_FIELDS);
       stats.channelsUpserted += 1;
     }
 
@@ -395,24 +399,12 @@ export class ConfigSyncService {
     }
 
     for (const role of input.team.roles) {
-      markConfigOwnership(
-        this.repo,
-        organizationId,
-        'role',
-        role.id ?? role.name,
-        ROLE_CONFIG_FIELDS,
-      );
+      markOwned('role', role.id ?? role.name, ROLE_CONFIG_FIELDS);
     }
 
     const activeProviderNames = new Set(Object.keys(input.team.providers));
     for (const providerName of activeProviderNames) {
-      markConfigOwnership(
-        this.repo,
-        organizationId,
-        'provider',
-        providerName,
-        PROVIDER_CONFIG_FIELDS,
-      );
+      markOwned('provider', providerName, PROVIDER_CONFIG_FIELDS);
     }
     for (const providerName of configManagedProviderNames) {
       if (activeProviderNames.has(providerName)) continue;

@@ -25,8 +25,10 @@ import {
 } from './member-channels.js';
 import {
   assertWorkspaceRootPathExists,
+  normalizeProjectFolderPath,
   upsertWorkspaceMemberScopes,
 } from './workspace-root.js';
+import { assertProjectFolderAvailable } from './workspace-path-claim.js';
 import {
   deleteDashboardTeamOverride,
   stripAgentFromPersistedTeamConfig,
@@ -212,10 +214,11 @@ export class SettingsService {
 
   getTeamSettings(organizationId: string): TeamSettingsResponse {
     const team = this.loadTeamForOrganization(organizationId);
+    const organization = requireOrganization(this.repo, organizationId);
     return {
       name: team.config.name,
       workspace: team.workspace,
-      organizationChart: team.organizationChart,
+      organizationChart: organization.organizationChart,
       agents: team.agents,
       roles: team.roles,
       channels: team.channels,
@@ -298,10 +301,6 @@ export class SettingsService {
     return { provider: providerKey, ok: true, message: 'Key present' };
   }
 
-  listOrganizations(): Organization[] {
-    return this.repo.listOrganizations();
-  }
-
   addMember(input: AddMemberInput): Member {
     requireOrganization(this.repo, input.organizationId);
     const team = this.loadTeamForOrganization(input.organizationId);
@@ -344,17 +343,14 @@ export class SettingsService {
         agent: createAgent(saved.id, saved.roleName, input.personalityName ?? 'direct'),
       });
     }
-    const activeRole = team.getRole(input.roleName);
     upsertWorkspaceMemberScopes(
       this.repo,
       input.organizationId,
       saved.id,
-      activeRole?.workspaceScopes ?? [],
+      role?.workspaceScopes ?? [],
     );
     ensureMemberSelfChannel(this.repo, input.organizationId, saved);
-    if (team) {
-      addMemberToDefaultChannels(this.repo, team, input.organizationId, saved);
-    }
+    addMemberToDefaultChannels(this.repo, team, input.organizationId, saved);
     for (const channelId of input.channelIds ?? []) {
       const channel = this.repo.getChannel(input.organizationId, channelId);
       if (!channel) continue;
@@ -717,10 +713,19 @@ export class SettingsService {
     }
 
     const nextName = input.organizationName ?? organization.name;
-    const nextRoot =
-      input.workspaceRoot !== undefined
-        ? assertWorkspaceRootPathExists(input.workspaceRoot)
-        : organization.workspace.root;
+    let nextRoot = organization.workspace.root;
+    if (input.workspaceRoot !== undefined) {
+      nextRoot = assertWorkspaceRootPathExists(input.workspaceRoot);
+      const normalizedRoot = normalizeProjectFolderPath(nextRoot);
+      if (normalizedRoot !== normalizeProjectFolderPath(organization.workspace.root)) {
+        assertProjectFolderAvailable(
+          this.repo,
+          this.repo.listOrganizations(),
+          normalizedRoot,
+          input.organizationId,
+        );
+      }
+    }
     const updated = this.repo.saveOrganization({
       ...organization,
       name: nextName,

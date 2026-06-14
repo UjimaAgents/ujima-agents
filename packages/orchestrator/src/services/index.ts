@@ -92,6 +92,7 @@ export { ConversationService } from './conversation.js';
 export {
   GoalSystemService,
   IMPLEMENT_QUESTION_OPTION,
+  IMPLEMENT_QUESTION_REJECT_OPTION,
   IMPLEMENT_QUESTION_TEXT,
 } from './goal-system.js';
 export type { ParsedPlanTask, GoalTaskUpdateResult } from './goal-system.js';
@@ -928,6 +929,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   let resumeInputRun: (
     organizationId: string,
     runId: string,
+    allowRun?: boolean,
   ) => Promise<unknown> | unknown = () => {
     throw new Error('resumeInputRun not wired');
   };
@@ -970,7 +972,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   };
   const goals = new GoalSystemService(
     context.repo,
-    (orgId, runId) => resumeInputRun(orgId, runId),
+    (orgId, runId, allowRun) => resumeInputRun(orgId, runId, allowRun),
     conversations,
   );
 
@@ -1054,8 +1056,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const runs = spirits;
   resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
     spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
-  resumeInputRun = async (orgId, runId) =>
-    spirits.resumeAfterInput(orgId, runId);
+  resumeInputRun = async (orgId, runId, allowRun = true) =>
+    spirits.resumeAfterInput(orgId, runId, allowRun);
   // Hydrate the in-memory registry from persisted spirits BEFORE alert
   // handling begins. Without this, a daemon restart would see an empty
   // registry and fall through to regular wake runs for already-active work.
