@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   File as FileIcon,
   FileArchive,
@@ -9,6 +9,7 @@ import {
   FileText,
   FileVideo,
   Loader2,
+  Mic,
   Paperclip,
   Plus,
   Send,
@@ -32,6 +33,8 @@ import {
 } from "@/lib/list-item-styles";
 import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
+import { useComposerVoiceInput } from "./use-composer-voice-input";
+import { VoiceInputWaves } from "./voice-input-waves";
 
 export interface MentionSuggestion {
   id: string;
@@ -214,6 +217,7 @@ function ChatInputComponent({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const contentRef = useRef(content);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
   const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
@@ -232,6 +236,23 @@ function ChatInputComponent({
   );
   const showReasoningSelect = reasoningOptions.length > 1;
   const reasoningDisabled = readOnly;
+
+  const getDraft = useCallback(() => contentRef.current, []);
+  const voice = useComposerVoiceInput({
+    enabled: !readOnly && !uploading,
+    getDraft,
+    onTranscript: setContent,
+    onError: (message) => setError(message),
+  });
+  const stopVoiceListening = voice.stopListening;
+
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    if (readOnly || uploading) stopVoiceListening();
+  }, [readOnly, uploading, stopVoiceListening]);
 
   function revokePreviewUrl(attachment: UploadedAttachment) {
     if (attachment.previewUrl?.startsWith("blob:")) {
@@ -306,7 +327,11 @@ function ChatInputComponent({
     !hasDraft &&
     !uploading &&
     !isSending &&
-    !isCommanding;
+    !isCommanding &&
+    !voice.isListening;
+  const canSend = hasDraft || Boolean(exactSlashCommand);
+  const showVoiceInsteadOfSend =
+    !readOnly && voice.support.supported && !canSend && !voice.isListening;
   const mentionTrigger = findMentionTrigger(content, selection.start);
   const filteredMentionSuggestions = useMemo(() => {
     if (!mentionTrigger) return [];
@@ -422,6 +447,7 @@ function ChatInputComponent({
     if (files.length === 0) return;
 
     setError(null);
+    voice.stopListening();
     setUploading(true);
     setUploadProgress(0);
     let processed = 0;
@@ -523,6 +549,7 @@ function ChatInputComponent({
     const next = content.trim();
     if (isSending || uploading || (next.length === 0 && attachments.length === 0)) return;
 
+    voice.stopListening();
     setError(null);
     setIsSending(true);
     try {
@@ -565,6 +592,7 @@ function ChatInputComponent({
 
     setError(null);
     setIsCommanding(true);
+    voice.stopListening();
     try {
       const currentContent = content;
       if (command.kind === "skill") {
@@ -592,6 +620,7 @@ function ChatInputComponent({
 
   const confirmClear = async () => {
     setIsCommanding(true);
+    voice.stopListening();
     try {
       const currentContent = content;
       await onCommand("clear", currentContent);
@@ -846,7 +875,7 @@ function ChatInputComponent({
                 type="button"
                 aria-label="Attach file"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={readOnly || uploading}
+                disabled={readOnly || uploading || voice.isListening}
                 className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-zinc-300"
               >
                 <Paperclip className="h-4 w-4" />
@@ -1032,6 +1061,9 @@ function ChatInputComponent({
                   )}
                 </button>
               )}
+              {voice.isListening ? (
+                <VoiceInputWaves levels={voice.audioLevels} className="mr-0.5" />
+              ) : null}
               {showStopInsteadOfSend ? (
                 <button
                   type="button"
@@ -1047,10 +1079,45 @@ function ChatInputComponent({
                     <Square className="h-3 w-3 fill-current" />
                   )}
                 </button>
+              ) : voice.isListening && canSend ? (
+                <button
+                  type="button"
+                  disabled={working}
+                  onClick={() => void submitComposer()}
+                  aria-label="Send message"
+                  title="Send message"
+                  className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                </button>
+              ) : null}
+              {showStopInsteadOfSend ? null : voice.isListening ? (
+                <button
+                  type="button"
+                  aria-label="Stop listening"
+                  aria-pressed
+                  title="Stop listening"
+                  disabled={working}
+                  onClick={voice.stopListening}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-600 text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Square className="h-3 w-3 fill-current" />
+                </button>
+              ) : showVoiceInsteadOfSend ? (
+                <button
+                  type="button"
+                  aria-label="Voice message"
+                  title="Voice message"
+                  disabled={working}
+                  onClick={voice.toggleListening}
+                  className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Mic className="h-3.5 w-3.5" />
+                </button>
               ) : (
                 <button
                   type="button"
-                  disabled={working || (!hasDraft && !exactSlashCommand)}
+                  disabled={working || (!canSend && !voice.support.supported)}
                   onClick={() => void submitComposer()}
                   aria-label={
                     exactSlashCommand?.command === "clear"
