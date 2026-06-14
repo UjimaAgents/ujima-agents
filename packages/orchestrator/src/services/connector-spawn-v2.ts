@@ -90,18 +90,32 @@ export interface ConnectorSpawnV2Services {
    * round-tripping bytes through its tool input. Absent → identity
    * no-op; the original tool result reaches the agent verbatim.
    */
-  attachmentCapture?: (input: {
-    organizationId: string;
-    runId: string;
-    memberId: string;
-    serverId: string;
-    toolName: string;
-    toolCallId: string;
-    toolResult: unknown;
-  }) => {
-    attachmentRefs: { ref: string; category: string; filename: string; byteSize: number }[];
-  };
+  attachmentCapture?: AttachmentCaptureClosure;
 }
+
+/**
+ * Public named type for the attachment-capture closure. Bot Round 5
+ * (high) — services/index.ts used to derive this via
+ * `Parameters<typeof buildMcpToolDefinitionsV2>[0]['attachmentCapture']`
+ * with a type-only import of `buildMcpToolDefinitionsV2`. That
+ * works today (verbatimModuleSyntax is off) but is fragile: turn
+ * the flag on and the `typeof` query against a type-only binding
+ * fails. The lint also bans `typeof import('...')`. Exporting an
+ * explicit closure type sidesteps both — consumers depend on a
+ * named interface, not on a function signature reflected through
+ * Parameters<>.
+ */
+export type AttachmentCaptureClosure = (input: {
+  organizationId: string;
+  runId: string;
+  memberId: string;
+  serverId: string;
+  toolName: string;
+  toolCallId: string;
+  toolResult: unknown;
+}) => {
+  attachmentRefs: { ref: string; category: string; filename: string; byteSize: number }[];
+};
 
 export interface ConnectorSpawnV2Ctx {
   organizationId: string;

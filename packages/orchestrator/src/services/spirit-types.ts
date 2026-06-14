@@ -10,6 +10,7 @@ import type {
   WakeReason,
 } from '@ujima/shared';
 import type { ActiveSpiritRegistry } from './active-spirit-registry.js';
+import type { AttachmentCaptureClosure } from './connector-spawn-v2.js';
 import type { ConversationService } from './conversation.js';
 import type { AiService } from '../ai-service.js';
 import type { McpRuntimePool } from './mcp-runtime.js';
@@ -57,19 +58,12 @@ export interface SpiritServiceOptions {
    * (agent_attachments_plan.md). Runs after each successful native
    * MCP invoke. Returns refs the V2 spawn injects into the tool
    * result so the agent can pass them to channel.reply. Optional —
-   * absent → tool results pass through unchanged.
+   * absent → tool results pass through unchanged. Shape is the
+   * same `AttachmentCaptureClosure` the V2 spawn declares, reused
+   * here so both modules agree on the closure contract without
+   * duplicating the structural type.
    */
-  attachmentCapture?: (input: {
-    organizationId: string;
-    runId: string;
-    memberId: string;
-    serverId: string;
-    toolName: string;
-    toolCallId: string;
-    toolResult: unknown;
-  }) => {
-    attachmentRefs: { ref: string; category: string; filename: string; byteSize: number }[];
-  };
+  attachmentCapture?: AttachmentCaptureClosure;
 }
 
 export type SpiritMcpPool = McpRuntimePool;

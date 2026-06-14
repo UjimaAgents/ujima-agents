@@ -29,7 +29,7 @@ import { findRegistryEntry } from '@ujima/mcp-client';
 import { join } from 'node:path';
 import { findRegistryMatch } from './connector-catalog.js';
 import { captureToolResultAttachments, cleanupExpiredAgentAttachments } from './agent-attachment-capture.js';
-import type { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
+import type { AttachmentCaptureClosure } from './connector-spawn-v2.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
@@ -793,9 +793,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // captures aggressively and fetch is skipped. Uses the same
   // `agentAttachmentRoot` constant the channel-tool resolver does
   // (computed above for the ToolServiceImpl wire-in).
-  const attachmentCaptureClosure: NonNullable<
-    Parameters<typeof buildMcpToolDefinitionsV2>[0]['attachmentCapture']
-  > = (input) => {
+  const attachmentCaptureClosure: AttachmentCaptureClosure = (input) => {
     const server = context.repo.getMcpServer(input.organizationId, input.serverId);
     const registryHint = server ? findRegistryMatch(server)?.capturesAttachments : undefined;
     return captureToolResultAttachments(
