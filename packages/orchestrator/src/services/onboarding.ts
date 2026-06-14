@@ -14,7 +14,7 @@ import { loadAgentTeam, type AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { summarizeTeam, validateProviderKeys, type TeamSummary } from './team.js';
-import { addMemberToDefaultChannels, ensureMemberSelfChannel } from './member-channels.js';
+import { addMemberToDefaultChannels, ensureDirectMessageConversation, ensureMemberSelfChannel } from './member-channels.js';
 import { normalizeProjectFolderPath, upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { reclaimOrphanOrganizationsAtPath } from './workspace-path-claim.js';
 import { persistTeamConfig } from './config-sync.js';
@@ -235,6 +235,11 @@ export class OnboardingService {
         role?.workspaceScopes ?? [],
       );
       ensureMemberSelfChannel(this.repo, organizationId, member);
+    }
+
+    const starterAgent = members.find((member) => member.kind === AGENT_KIND);
+    if (starterAgent) {
+      ensureDirectMessageConversation(this.repo, organizationId, owner, starterAgent);
     }
 
     const channels: Channel[] = team.channels.map((config) =>

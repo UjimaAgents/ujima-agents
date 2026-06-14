@@ -6,7 +6,7 @@ import {
   type TeamProviderDraft,
 } from "./types";
 
-export const MIN_TEAM_AGENTS = 2;
+export const MIN_TEAM_AGENTS = 1;
 
 const PROVIDER_NAME_MAP: Record<string, string> = {
   anthropic: "anthropic",
@@ -41,7 +41,7 @@ function toRoleTitle(name: string) {
     .join(" ");
 }
 
-export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingRequest {
+export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: string): OnboardingRequest {
   const channelsById = new Map(draft.channels.map((channel) => [channel.id, channel]));
   const ownerManagerLabels = new Set([OWNER_MANAGER_SENTINEL, "owner", normalizeProviderToken(draft.ownerName)]);
   const agentNameByRoleName = new Map(
@@ -107,6 +107,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft): OnboardingReques
   );
 
   return {
+    attemptId,
     organizationName: draft.organizationName.trim(),
     ownerName: draft.ownerName.trim(),
     ownerEmail: draft.ownerEmail.trim(),

@@ -1,6 +1,6 @@
 import { defaultModelForProvider, type ShellApprovalMode } from "@ujima/shared/browser";
 
-export type OnboardingStepId = "organization" | "owner" | "team" | "review";
+export type OnboardingStepId = "owner" | "organization" | "provider" | "agent" | "review";
 export type TeamTabId = "agents" | "channels" | "org-chart" | "policies" | "providers";
 
 /**
@@ -63,6 +63,7 @@ export interface OnboardingDraft {
   ownerName: string;
   ownerEmail: string;
   ownerPassword: string;
+  ownerPasswordConfirmation: string;
   roles: TeamRoleDraft[];
   channels: TeamChannelDraft[];
   organizationReports: TeamReportDraft[];
@@ -94,26 +95,37 @@ export { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shar
 export function buildStarterDraft(): OnboardingDraft {
   return {
     ...INITIAL_DRAFT,
-    roles: [],
-    organizationReports: [],
+    roles: [INITIAL_DRAFT.roles[0]],
+    organizationReports: [
+      {
+        id: "report-starter",
+        subjectName: INITIAL_DRAFT.roles[0].agentName,
+        managerName: OWNER_MANAGER_SENTINEL,
+      },
+    ],
   };
 }
 
 export const ONBOARDING_STEPS: OnboardingStep[] = [
+  {
+    id: "owner",
+    title: "Your account",
+    description: "Create the owner account that controls agents, approvals, and workspace settings.",
+  },
   {
     id: "organization",
     title: "Workspace",
     description: "Name your workspace and choose the project folder on disk.",
   },
   {
-    id: "owner",
-    title: "Owner account",
-    description: "Create the first owner and admin account.",
+    id: "provider",
+    title: "Model provider",
+    description: "Connect the model provider your first agent will use.",
   },
   {
-    id: "team",
-    title: "Team configuration",
-    description: "Define agents, roles, channels, and policies.",
+    id: "agent",
+    title: "Starter agent",
+    description: "Choose one useful agent and start working immediately.",
   },
   {
     id: "review",
@@ -155,6 +167,7 @@ export const INITIAL_DRAFT: OnboardingDraft = {
   ownerName: "",
   ownerEmail: "",
   ownerPassword: "",
+  ownerPasswordConfirmation: "",
   roles: [
     {
       id: "role-senior-engineer",
