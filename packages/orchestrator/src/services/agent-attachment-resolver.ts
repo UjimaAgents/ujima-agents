@@ -259,15 +259,28 @@ function resolveToolCallRef(
       error: `tool_call ref "${ref.value}" resolves to no captured attachment (was the tool call successful, and did it return capturable bytes?)`,
     };
   }
-  // The row already lives on disk; we just promote a parallel
-  // message_attachments row pointing at the same storage_path. If
-  // saveAttachment throws, return a structured error so the outer
-  // resolveAttachmentRefs loop can roll back sibling refs uniformly.
-  // We do NOT delete the captured agent_attachments row on failure
-  // — it predates this resolver, the capture pass owns its
-  // lifecycle, and the LRU sweeper handles its eventual cleanup.
+  // Same atomic pattern commitBytes uses. The user-attachment row
+  // is the only resolver-owned side effect on this branch (the file
+  // and agent_attachments row belong to the capture pass). Register
+  // the delete BEFORE saveAttachment so a partial write inside
+  // saveAttachment still gets cleaned up — deleteAttachment is
+  // idempotent and returns 0 when there's no row.
+  const undoStack: (() => void)[] = [];
+  const runRollback = (): void => {
+    for (let i = undoStack.length - 1; i >= 0; i -= 1) {
+      try {
+        undoStack[i]?.();
+      } catch (e) {
+        console.warn('[agent-attachment-resolver] tool_call rollback step failed', e);
+      }
+    }
+  };
   const attachmentId = newAttId();
   if (deps.repo.saveAttachment) {
+    if (deps.repo.deleteAttachment) {
+      const del = deps.repo.deleteAttachment;
+      undoStack.push(() => del(deps.organizationId, attachmentId));
+    }
     try {
       deps.repo.saveAttachment({
         id: attachmentId,
@@ -281,6 +294,7 @@ function resolveToolCallRef(
         createdAt: newNow(),
       });
     } catch (err) {
+      runRollback();
       return {
         ok: false,
         error: `tool_call ref "${ref.value}" attachments insert failed: ${err instanceof Error ? err.message : String(err)}`,

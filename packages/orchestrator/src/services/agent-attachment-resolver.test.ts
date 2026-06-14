@@ -127,7 +127,7 @@ describe('resolveAttachmentRefs — tool_call', () => {
     }
   });
 
-  it('saveAttachment throwing returns a structured error instead of letting the exception bubble', async () => {
+  it('saveAttachment throwing returns a structured error and fires the rollback delete', async () => {
     const { agentRoot, workspaceRoot } = tempPair();
     try {
       const captured: AgentAttachment = {
@@ -147,12 +147,22 @@ describe('resolveAttachmentRefs — tool_call', () => {
         pinnedToMessageId: null,
       };
       const repo = fakeRepo([captured]);
+      // Track whether deleteAttachment ran on the rollback path —
+      // it MUST be called even though saveAttachment threw before
+      // returning, because the resolver registers the undo before
+      // attempting the write (so a partial write inside the DB
+      // call still gets cleaned up idempotently).
+      let deleteCalled = 0;
       const result = await resolveAttachmentRefs(
         {
           repo: {
             ...repo,
             saveAttachment: () => {
               throw new Error('synthetic DB error from saveAttachment');
+            },
+            deleteAttachment: () => {
+              deleteCalled += 1;
+              return 0;
             },
           } as never,
           agentAttachmentRoot: agentRoot,
@@ -166,8 +176,9 @@ describe('resolveAttachmentRefs — tool_call', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toContain('attachments insert failed');
-      // The captured agent_attachment row is preserved — its lifecycle
-      // belongs to the capture pass, not this resolver.
+      expect(deleteCalled).toBe(1);
+      // The captured agent_attachment row is preserved — its
+      // lifecycle belongs to the capture pass, not this resolver.
       expect(repo.agentAttachments).toHaveLength(1);
     } finally {
       rmSync(agentRoot, { recursive: true, force: true });
