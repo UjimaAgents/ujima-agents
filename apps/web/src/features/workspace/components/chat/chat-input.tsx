@@ -40,6 +40,8 @@ export interface MentionSuggestion {
   id: string;
   name: string;
   detail?: string;
+  kind?: 'member' | 'file' | 'folder';
+  path?: string;
 }
 
 export interface SlashSkillCommand {
@@ -160,6 +162,53 @@ function findMentionTrigger(value: string, caret: number): MentionTrigger | null
   const query = match[2] ?? "";
   const start = uptoCaret.length - full.length + (match[1]?.length ?? 0);
   return { start, end: caret, query };
+}
+
+function assetSearchQuery(raw: string): string {
+  return raw.trim().replace(/^(file|folder):/i, "").trim();
+}
+
+function assetKindHint(raw: string): "file" | "folder" | null {
+  if (/^folder:/i.test(raw)) return "folder";
+  if (/^file:/i.test(raw)) return "file";
+  return null;
+}
+
+type WorkspaceAssetHit = { kind: "file" | "folder"; name: string; path: string };
+
+function toAssetSuggestion(entry: WorkspaceAssetHit): MentionSuggestion {
+  return {
+    id: `${entry.kind}:${entry.path}`,
+    name: entry.name,
+    kind: entry.kind,
+    path: entry.path,
+    detail: entry.path,
+  };
+}
+
+const ROOT_FOLDERS_TTL_MS = 60_000;
+let cachedRootFolders: { at: number; items: MentionSuggestion[] } | null = null;
+
+async function loadWorkspaceAssetSuggestions(searchQuery: string): Promise<MentionSuggestion[]> {
+  const url = searchQuery
+    ? `/api/workspaces/search?q=${encodeURIComponent(searchQuery)}`
+    : "/api/workspaces/search";
+  if (!searchQuery) {
+    const now = Date.now();
+    if (cachedRootFolders && now - cachedRootFolders.at < ROOT_FOLDERS_TTL_MS) {
+      return cachedRootFolders.items;
+    }
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) return [];
+    const results = (await res.json()) as WorkspaceAssetHit[];
+    const items = results.map(toAssetSuggestion);
+    cachedRootFolders = { at: now, items };
+    return items;
+  }
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) return [];
+  const results = (await res.json()) as WorkspaceAssetHit[];
+  return results.map(toAssetSuggestion);
 }
 
 function ChatInputComponent({
@@ -329,21 +378,104 @@ function ChatInputComponent({
     !isSending &&
     !isCommanding &&
     !voice.isListening;
-  const canSend = hasDraft || Boolean(exactSlashCommand);
+  const canSend =
+    !readOnly &&
+    (content.trim().length > 0 || visibleAttachments.length > 0 || Boolean(exactSlashCommand));
   const showVoiceInsteadOfSend =
     !readOnly && voice.support.supported && !canSend && !voice.isListening;
   const mentionTrigger = findMentionTrigger(content, selection.start);
-  const filteredMentionSuggestions = useMemo(() => {
-    if (!mentionTrigger) return [];
-    const query = mentionTrigger.query.trim().toLowerCase();
-    return mentionSuggestions.filter((suggestion) =>
-      query
-        ? suggestion.name.toLowerCase().includes(query)
-        : true,
-    );
-  }, [mentionSuggestions, mentionTrigger]);
-  const mentionMenuOpen =
-    !!mentionTrigger && filteredMentionSuggestions.length > 0;
+  const mentionQuery = mentionTrigger?.query ?? "";
+  const mentionSearchQuery = assetSearchQuery(mentionQuery);
+  const mentionAssetKind = assetKindHint(mentionQuery);
+  const mentionOpen = mentionTrigger !== null;
+  const shouldFetchAssetSuggestions =
+    !readOnly && mentionOpen && !(mentionAssetKind === "file" && !mentionSearchQuery);
+  const [assetSuggestions, setAssetSuggestions] = useState<MentionSuggestion[]>([]);
+
+  const [prevMentionQuery, setPrevMentionQuery] = useState(mentionQuery);
+  if (mentionQuery !== prevMentionQuery) {
+    setPrevMentionQuery(mentionQuery);
+    setActiveMentionIndex(0);
+  }
+
+  const [prevShouldFetchAssetSuggestions, setPrevShouldFetchAssetSuggestions] = useState(
+    shouldFetchAssetSuggestions,
+  );
+  if (shouldFetchAssetSuggestions !== prevShouldFetchAssetSuggestions) {
+    setPrevShouldFetchAssetSuggestions(shouldFetchAssetSuggestions);
+    if (!shouldFetchAssetSuggestions) {
+      setAssetSuggestions([]);
+    }
+  }
+
+  useEffect(() => {
+    if (!shouldFetchAssetSuggestions) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void loadWorkspaceAssetSuggestions(mentionSearchQuery).then((items) => {
+        if (!cancelled) setAssetSuggestions(items);
+      });
+    }, mentionSearchQuery ? 200 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [mentionAssetKind, mentionSearchQuery, shouldFetchAssetSuggestions]);
+
+  const groupedMentionSuggestions = useMemo(() => {
+    if (!mentionTrigger) return null;
+    const searchQuery = mentionSearchQuery.toLowerCase();
+    const members =
+      mentionAssetKind === null
+        ? mentionSuggestions.filter((s) => {
+            if (s.kind === "file" || s.kind === "folder") return false;
+            if (!searchQuery) return true;
+            return (
+              s.name.toLowerCase().includes(searchQuery) ||
+              (s.detail ?? "").toLowerCase().includes(searchQuery)
+            );
+          })
+        : [];
+    const files =
+      mentionAssetKind !== "folder"
+        ? assetSuggestions.filter((s) => s.kind === "file")
+        : [];
+    const folders =
+      mentionAssetKind !== "file"
+        ? assetSuggestions.filter((s) => s.kind === "folder")
+        : [];
+    if (!members.length && !files.length && !folders.length) return null;
+    return { members, files, folders };
+  }, [assetSuggestions, mentionAssetKind, mentionSearchQuery, mentionSuggestions, mentionTrigger]);
+
+  const mentionMenuSections = useMemo(() => {
+    if (!groupedMentionSuggestions) return [];
+    const { members, folders, files } = groupedMentionSuggestions;
+    const sections: Array<{ label: string; items: MentionSuggestion[] }> = [];
+    if (members.length) sections.push({ label: "Members", items: members });
+    if (folders.length) sections.push({ label: "Folders", items: folders });
+    if (files.length) sections.push({ label: "Files", items: files });
+    return sections;
+  }, [groupedMentionSuggestions]);
+
+  const flatSuggestions = useMemo(() => {
+    const items: MentionSuggestion[] = [];
+    for (const section of mentionMenuSections) {
+      items.push(...section.items);
+    }
+    return items;
+  }, [mentionMenuSections]);
+
+  const mentionSectionOffsets = useMemo(() => {
+    const offsets: number[] = [];
+    let next = 0;
+    for (const section of mentionMenuSections) {
+      offsets.push(next);
+      next += section.items.length;
+    }
+    return offsets;
+  }, [mentionMenuSections]);
+  const mentionMenuOpen = mentionOpen && flatSuggestions.length > 0;
   const activeReplyTo = readOnly ? null : replyTo;
   const activeSlashSelection = Math.min(
     activeSlashIndex,
@@ -533,7 +665,14 @@ function ChatInputComponent({
     if (!mentionTrigger) return;
     const before = content.slice(0, mentionTrigger.start);
     const after = content.slice(mentionTrigger.end);
-    const mentionValue = `@${suggestion.name} `;
+    let mentionValue: string;
+    if (suggestion.kind === 'file') {
+      mentionValue = `@file:${suggestion.path ?? suggestion.name} `;
+    } else if (suggestion.kind === 'folder') {
+      mentionValue = `@folder:${suggestion.path ?? suggestion.name} `;
+    } else {
+      mentionValue = `@${suggestion.name} `;
+    }
     const next = `${before}${mentionValue}${after}`;
     const nextCaret = before.length + mentionValue.length;
     setContent(next);
@@ -953,23 +1092,23 @@ function ChatInputComponent({
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
                     setActiveMentionIndex((index) =>
-                      (index + 1) % filteredMentionSuggestions.length,
+                      (index + 1) % flatSuggestions.length,
                     );
                     return;
                   }
                   if (event.key === "ArrowUp") {
                     event.preventDefault();
                     setActiveMentionIndex((index) =>
-                      (index - 1 + filteredMentionSuggestions.length) %
-                      filteredMentionSuggestions.length,
+                      (index - 1 + flatSuggestions.length) %
+                      flatSuggestions.length,
                     );
                     return;
                   }
                   if (event.key === "Enter" || event.key === "Tab") {
                     event.preventDefault();
                     insertMention(
-                      filteredMentionSuggestions[activeMentionIndex] ??
-                        filteredMentionSuggestions[0],
+                      flatSuggestions[activeMentionIndex] ??
+                        flatSuggestions[0],
                     );
                     return;
                   }
@@ -988,31 +1127,58 @@ function ChatInputComponent({
             />
           {!readOnly && mentionMenuOpen ? (
             <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-              {filteredMentionSuggestions.map((suggestion, index) => (
-                <button
-                  key={suggestion.id}
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    insertMention(suggestion);
-                  }}
-                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                    index === activeMentionIndex ? listItemSelected : listItemIdle
-                  }`}
-                >
-                  <span className="font-semibold">@{suggestion.name}</span>
-                  {suggestion.detail ? (
-                    <span
-                      className={`ml-2 truncate text-[10px] ${
-                        index === activeMentionIndex
-                          ? listItemSubtitleSelected
-                          : listItemSubtitleIdle
-                      }`}
-                    >
-                      {suggestion.detail}
-                    </span>
-                  ) : null}
-                </button>
+              {mentionMenuSections.map((section, sectionIndex) => (
+                  <div key={section.label}>
+                    <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      {section.label}
+                    </div>
+                    {section.items.map((suggestion, itemIndex) => {
+                      const index = (mentionSectionOffsets[sectionIndex] ?? 0) + itemIndex;
+                      return (
+                        <button
+                          key={suggestion.id}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            insertMention(suggestion);
+                          }}
+                          onMouseEnter={() => setActiveMentionIndex(index)}
+                          className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                            index === activeMentionIndex ? listItemSelected : listItemIdle
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            {suggestion.kind === "folder" ? (
+                              <svg className="h-3.5 w-3.5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                              </svg>
+                            ) : suggestion.kind === "file" ? (
+                              <svg className="h-3.5 w-3.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                            ) : null}
+                            <span className="font-semibold">
+                              {suggestion.kind === "file" || suggestion.kind === "folder"
+                                ? suggestion.name
+                                : `@${suggestion.name}`}
+                            </span>
+                          </span>
+                          <span
+                            className={`ml-2 truncate text-[10px] ${
+                              index === activeMentionIndex
+                                ? listItemSubtitleSelected
+                                : listItemSubtitleIdle
+                            }`}
+                          >
+                            {suggestion.kind === "file" || suggestion.kind === "folder"
+                              ? suggestion.path
+                              : suggestion.detail}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
               ))}
             </div>
           ) : null}
@@ -1117,7 +1283,7 @@ function ChatInputComponent({
               ) : (
                 <button
                   type="button"
-                  disabled={working || (!canSend && !voice.support.supported)}
+                  disabled={working || !canSend}
                   onClick={() => void submitComposer()}
                   aria-label={
                     exactSlashCommand?.command === "clear"

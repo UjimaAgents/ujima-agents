@@ -43,6 +43,20 @@ const SENSITIVE_DIRS = new Set([
   'secrets',
 ]);
 
+export const WORKSPACE_TREE_SKIP_DIRECTORY_NAMES = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+]);
+
+export function shouldSkipWorkspaceTreeDirectory(name: string): boolean {
+  return WORKSPACE_TREE_SKIP_DIRECTORY_NAMES.has(name);
+}
+
 const SENSITIVE_SUFFIXES = [
   '.cer',
   '.crt',

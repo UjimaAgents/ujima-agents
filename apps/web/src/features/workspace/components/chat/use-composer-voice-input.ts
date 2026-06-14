@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   createSpeechRecognition,
   getVoiceInputSupport,
@@ -26,13 +26,23 @@ interface UseComposerVoiceInputResult {
   stopListening: () => void;
 }
 
+const SSR_VOICE_SUPPORT: VoiceInputSupport = { supported: false };
+
+function subscribeVoiceSupportNoop(): () => void {
+  return () => {};
+}
+
 export function useComposerVoiceInput({
   enabled,
   getDraft,
   onTranscript,
   onError,
 }: UseComposerVoiceInputOptions): UseComposerVoiceInputResult {
-  const support = useMemo(() => getVoiceInputSupport(), []);
+  const support = useSyncExternalStore(
+    subscribeVoiceSupportNoop,
+    getVoiceInputSupport,
+    () => SSR_VOICE_SUPPORT,
+  );
   const [isListening, setIsListening] = useState(false);
   const [audioLevels, setAudioLevels] = useState(idleVoiceLevels);
 

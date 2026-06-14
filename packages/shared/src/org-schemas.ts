@@ -657,6 +657,21 @@ export const WorkspaceFileSchema = z.object({
 });
 export type WorkspaceFile = z.infer<typeof WorkspaceFileSchema>;
 
+export const WorkspaceFileNodeSchema = z.lazy((): z.ZodType<WorkspaceFileNode> =>
+  z.object({
+    kind: z.enum(['file', 'folder']),
+    name: z.string().min(1),
+    path: z.string().min(1),
+    children: z.array(WorkspaceFileNodeSchema),
+  }),
+);
+export interface WorkspaceFileNode {
+  kind: 'file' | 'folder';
+  name: string;
+  path: string;
+  children: WorkspaceFileNode[];
+}
+
 // -----------------------------------------------------------------------
 // Decision log — Bet 6
 //

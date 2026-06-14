@@ -2,12 +2,11 @@ import { basename, join, relative, sep } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
-import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
+import { isSensitiveWorkspacePath, shouldSkipWorkspaceTreeDirectory } from '@ujima/shared/workspace-file-filters';
 import type { OrchestratorTool } from './types.js';
 import { readWindowValue } from './window-utils.js';
 
 const TREE_LIMIT = 1000;
-const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules']);
 
 const LsSchema = z.object({
   path: z.string().min(1).default('.'),
@@ -93,7 +92,7 @@ async function collectTreeEntries(input: {
   for (const dirent of dirents) {
     if (input.entries.length >= input.limit) return;
     if (dirent.name.startsWith('.')) continue;
-    if (dirent.isDirectory() && IGNORED_DIRECTORIES.has(dirent.name)) continue;
+    if (dirent.isDirectory() && shouldSkipWorkspaceTreeDirectory(dirent.name)) continue;
 
     const fullPath = join(input.current, dirent.name);
     if (isSensitiveWorkspacePath(fullPath)) continue;

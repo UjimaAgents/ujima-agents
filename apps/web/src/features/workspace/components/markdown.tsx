@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
+import { ASSET_REF_PATTERN } from "@ujima/shared";
 import { marked } from "marked";
 import { markdownTerminalCodeBlockHtml } from "./chat/terminal-chrome";
 
@@ -87,6 +88,17 @@ function createRenderer(mentionNames: string[]) {
   };
 
   return renderer;
+}
+
+export function highlightFileReferences(text: string): string {
+  return text.replace(ASSET_REF_PATTERN, (_match, kind, path) => {
+    const icon =
+      kind === 'folder'
+        ? '<svg class="inline h-3.5 w-3.5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>'
+        : '<svg class="inline h-3.5 w-3.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+    const name = path.split('/').pop() ?? path;
+    return `<span class="inline-flex cursor-pointer items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700" data-file-ref="${h(kind)}:${h(path)}" title="${h(path)}">${icon}<span>${h(name)}</span></span>`;
+  });
 }
 
 export function highlightMentions(text: string, mentionNames: string[]): string {
@@ -239,8 +251,16 @@ export function renderStreamingMarkdown(
   return trailHtml ? joinRenderedFragments(prefixHtml, trailHtml) : prefixHtml;
 }
 
+function highlightMentionsInHtmlMix(text: string, mentionNames: string[]): string {
+  return text
+    .split(/(<[^>]+>)/g)
+    .map((part) => (part.startsWith("<") ? part : highlightMentions(part, mentionNames)))
+    .join("");
+}
+
 function renderInlineMarkdown(text: string, mentionNames: string[]): string {
-  const withMentions = highlightMentions(text, mentionNames);
+  const withFileRefs = highlightFileReferences(text);
+  const withMentions = highlightMentionsInHtmlMix(withFileRefs, mentionNames);
   return withMentions
     .replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^\w])\*([^*\n]+?)\*(?=[^\w]|$)/g, "$1<em>$2</em>");
@@ -250,18 +270,35 @@ export function Markdown({
   content,
   mentionNames = EMPTY_MENTION_NAMES,
   className = "",
+  onFileRefClick,
 }: {
   content: string;
   mentionNames?: string[];
   className?: string;
+  onFileRefClick?: (kind: string, path: string) => void;
 }) {
   const html = useMemo(
     () => renderStreamingMarkdown(content, mentionNames),
     [content, mentionNames],
   );
 
+  const handleClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    const chip = target.closest('[data-file-ref]') as HTMLElement | null;
+    if (chip?.dataset.fileRef && onFileRefClick) {
+      const colonPos = chip.dataset.fileRef.indexOf(':');
+      if (colonPos > 0) {
+        onFileRefClick(
+          chip.dataset.fileRef.slice(0, colonPos),
+          chip.dataset.fileRef.slice(colonPos + 1),
+        );
+      }
+    }
+  }, [onFileRefClick]);
+
   return (
     <div
+      onClick={handleClick}
       className={`min-w-0 break-words text-sm leading-7 text-foreground [overflow-wrap:anywhere]
         [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0
         [&_h1]:mt-5 [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:leading-tight
