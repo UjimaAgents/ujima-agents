@@ -10,6 +10,7 @@ import {
   ToolCapabilitySchema,
   ToolPolicyState,
   WorkspaceConfigSchema,
+  PROVIDER_AUTH_MODES,
 } from '@ujima/shared';
 import { z } from 'zod';
 
@@ -63,12 +64,14 @@ export type TeamSettingsResponse = z.infer<typeof TeamSettingsResponseSchema>;
 export const ProviderStatusSchema = z.object({
   name: z.string(),
   hasKey: z.boolean(),
+  authMode: z.enum(PROVIDER_AUTH_MODES).optional(),
 });
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 
 export const ProviderSecretsUpsertSchema = z.object({
   organizationId: IdSchema,
   providerKeys: z.record(z.string().min(1)).default({}),
+  providerAuthModes: z.record(z.enum(PROVIDER_AUTH_MODES)).default({}),
 });
 export type ProviderSecretsUpsertRequest = z.infer<typeof ProviderSecretsUpsertSchema>;
 

@@ -21,6 +21,7 @@ export {
   getModelOptionsForProvider,
 } from "./model-catalog.js";
 export type {ProviderModelOption} from "./model-catalog.js";
+export type {ProviderAuthMode} from "./provider-kinds.js";
 export {
   clampReasoningEffortForProvider,
   getReasoningEffortsForProvider,

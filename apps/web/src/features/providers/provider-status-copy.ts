@@ -1,7 +1,13 @@
-import { isOAuthProvider } from "./constants";
+import { isCodexProvider, isOpenAIProvider, type OpenAIAuthMode } from "./catalog";
 
-export function credentialStatusLabel(providerName: string, hasKey: boolean) {
-  if (!hasKey) return "Not configured";
-  if (isOAuthProvider(providerName)) return "Signed in with OpenAI";
-  return "API key configured";
+type ProviderAuthMode = OpenAIAuthMode | "chatgpt";
+
+export function credentialStatusLabel(providerName: string, hasKey: boolean, authMode?: ProviderAuthMode) {
+  if (isCodexProvider(providerName) || authMode === "codex" || authMode === "chatgpt") {
+    return hasKey ? "Signed in with Codex" : "Needs local Codex login";
+  }
+  if (isOpenAIProvider(providerName)) {
+    return hasKey ? "API key configured" : "Not configured";
+  }
+  return hasKey ? "API key configured" : "Not configured";
 }

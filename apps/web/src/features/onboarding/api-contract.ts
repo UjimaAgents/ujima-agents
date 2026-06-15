@@ -1,5 +1,8 @@
 import type { OnboardingRequest } from "@ujima/api-schema";
-import { normalizeProviderKey, normalizeProviderToken } from "@/features/providers/catalog";
+import {
+  normalizeProviderKey,
+  normalizeProviderToken,
+} from "@/features/providers/catalog";
 import {
   OWNER_MANAGER_SENTINEL,
   type OnboardingDraft,
@@ -24,13 +27,19 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
 };
 
 export function normalizeProviderName(value: string) {
+  // provider.name already stores the internal token (openai / openai-codex / …)
   const normalized = normalizeProviderKey(value);
   return PROVIDER_NAME_MAP[normalized] ?? "openrouter";
 }
 
 export function isProviderDraftComplete(provider: TeamProviderDraft): boolean {
   const name = provider.name.trim();
-  return Boolean(name && (normalizeProviderName(name) === "ollama" || provider.apiKey.trim()));
+  return Boolean(
+    name &&
+      (normalizeProviderName(name) === "ollama" ||
+        normalizeProviderName(name) === "openai-codex" ||
+        provider.apiKey.trim()),
+  );
 }
 
 function toRoleTitle(name: string) {
@@ -54,6 +63,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: strin
       return {
         name,
         apiKey: provider.apiKey.trim(),
+        authMode: name === "openai-codex" ? ("chatgpt" as const) : undefined,
       };
     })
     .filter((provider) => provider.name.length > 0);
@@ -134,6 +144,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: strin
           provider.name,
           {
             kind: provider.name,
+            authMode: provider.authMode,
             models: [],
           },
         ]),

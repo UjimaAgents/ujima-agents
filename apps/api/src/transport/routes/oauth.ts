@@ -1,132 +1,281 @@
-import { randomBytes, createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { z } from 'zod';
 
-// We use a simple in-memory map to store the code verifier for the duration of the flow.
-// Since this is a local daemon for a single user, this is safe and sufficient.
-const pkceStore = new Map<string, string>();
+interface CodexLoginSession {
+  child: any;
+  loginId: string;
+  verificationUrl: string;
+  userCode: string;
+  status: 'pending' | 'completed' | 'failed' | 'timeout';
+  error?: string;
+  lastUpdated: number;
+}
 
-const OPENAI_CLIENT_ID = process.env.UJIMA_OPENAI_CLIENT_ID ?? 'app_EMoamEEZ73f0CkXaXp7hrann';
-const OAUTH_AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize';
-const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
-const OAUTH_SCOPE = 'openid profile email offline_access';
+const activeLoginSessions = new Map<string, CodexLoginSession>();
+
+// Cleanup interval to avoid leaking processes
+setInterval(() => {
+  const now = Date.now();
+  for (const [loginId, session] of activeLoginSessions.entries()) {
+    if (now - session.lastUpdated > 5 * 60 * 1000) {
+      try {
+        session.child.kill('SIGKILL');
+      } catch {}
+      activeLoginSessions.delete(loginId);
+    }
+  }
+}, 60 * 1000);
+
+function startCodexLogin(): Promise<{ loginId: string; verificationUrl: string; userCode: string }> {
+  return new Promise((resolve, reject) => {
+    const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+    const child = spawn('codex', ['app-server', '--stdio'], {
+      env: { ...process.env, CODEX_HOME: home },
+    });
+
+    let resolved = false;
+    let stdoutBuffer = '';
+    let loginIdRef = '';
+
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        try { child.kill('SIGKILL'); } catch {}
+        reject(new Error('Timeout starting Codex login flow'));
+      }
+    }, 15000);
+
+    child.on('error', (err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(err);
+      }
+    });
+
+    child.on('close', (code) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(new Error(`Codex App Server closed unexpectedly with code ${code}`));
+      } else if (loginIdRef) {
+        const session = activeLoginSessions.get(loginIdRef);
+        if (session && session.status === 'pending') {
+          session.status = 'failed';
+          session.error = `Codex App Server closed with code ${code}`;
+        }
+      }
+    });
+
+    child.stdout?.on('data', (chunk) => {
+      stdoutBuffer += chunk.toString();
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+
+          // 1. Check response to account/login/start
+          if (msg.id === 2) {
+            if (resolved) continue;
+            resolved = true;
+            clearTimeout(timeout);
+            if (msg.error) {
+              try { child.kill('SIGTERM'); } catch {}
+              reject(new Error(msg.error.message || 'Failed to start login'));
+            } else {
+              const { loginId, verificationUrl, userCode } = msg.result || {};
+              if (!loginId || !verificationUrl || !userCode) {
+                try { child.kill('SIGTERM'); } catch {}
+                reject(new Error('Invalid response from Codex App Server'));
+              } else {
+                loginIdRef = loginId;
+                const session: CodexLoginSession = {
+                  child,
+                  loginId,
+                  verificationUrl,
+                  userCode,
+                  status: 'pending',
+                  lastUpdated: Date.now(),
+                };
+                activeLoginSessions.set(loginId, session);
+                resolve({ loginId, verificationUrl, userCode });
+              }
+            }
+          }
+
+          // 2. Check for notifications
+          if (msg.method === 'account/login/completed') {
+            const { success, error, loginId } = msg.params || {};
+            const targetId = loginId || loginIdRef;
+            if (targetId) {
+              const session = activeLoginSessions.get(targetId);
+              if (session) {
+                session.status = success ? 'completed' : 'failed';
+                if (error) session.error = error;
+                session.lastUpdated = Date.now();
+                try { child.kill('SIGTERM'); } catch {}
+              }
+            }
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
+    });
+
+    // Write initialize request
+    child.stdin?.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        id: 1,
+        params: {
+          clientInfo: { name: 'ujima', version: '0.0.1' },
+        },
+      }) + '\n'
+    );
+
+    // Write login start request
+    child.stdin?.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'account/login/start',
+        id: 2,
+        params: {
+          type: 'chatgptDeviceCode',
+        },
+      }) + '\n'
+    );
+  });
+}
 
 export function registerOauthRoutes(_app: FastifyInstance): void {
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
   app.get('/auth/openai/login', {
     schema: {
-      description: 'Initiate OpenAI OAuth PKCE flow',
+      description: 'Show local Codex login status and setup help',
       tags: ['Onboarding'],
     },
-  }, async (req, reply) => {
-    const state = randomBytes(16).toString('hex');
-    const codeVerifier = randomBytes(32).toString('base64url');
-    const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
-
-    // Store the verifier mapped by state with a simple expiration (e.g., 10 minutes)
-    pkceStore.set(state, codeVerifier);
-    setTimeout(() => pkceStore.delete(state), 10 * 60 * 1000);
-
-    const redirectUri = getRedirectUri(req);
-
-    const authUrl = new URL(OAUTH_AUTHORIZE_URL);
-    authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('client_id', OPENAI_CLIENT_ID);
-    authUrl.searchParams.set('redirect_uri', redirectUri);
-    authUrl.searchParams.set('scope', OAUTH_SCOPE);
-    authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('code_challenge', codeChallenge);
-    authUrl.searchParams.set('code_challenge_method', 'S256');
-    authUrl.searchParams.set('id_token_add_organizations', 'true');
-    authUrl.searchParams.set('codex_cli_simplified_flow', 'true');
-    authUrl.searchParams.set('originator', 'ujima');
-
-    return reply.redirect(302, authUrl.toString());
+  }, async (_req, reply) => {
+    const signedIn = hasCodexAccessToken();
+    return reply.type('text/html').send(renderLoginHelpHtml(signedIn));
   });
 
-  app.get('/auth/openai/callback', {
+  app.post('/auth/openai/codex/start', {
     schema: {
-      description: 'Callback endpoint for OpenAI OAuth flow',
+      description: 'Start Codex device login flow',
       tags: ['Onboarding'],
+      response: {
+        200: z.object({
+          loginId: z.string(),
+          verificationUrl: z.string(),
+          userCode: z.string(),
+        }),
+        500: z.object({
+          error: z.string(),
+        }),
+      },
     },
   }, async (req, reply) => {
-    const { code, state, error, error_description } = req.query as Record<string, string | undefined>;
-
-    if (error) {
-      return reply.type('text/html').send(renderCallbackHtml(null, error_description || error));
-    }
-
-    if (!code || !state) {
-      return reply.type('text/html').send(renderCallbackHtml(null, 'Missing code or state parameter'));
-    }
-
-    const codeVerifier = pkceStore.get(state);
-    if (!codeVerifier) {
-      return reply.type('text/html').send(renderCallbackHtml(null, 'Invalid or expired state'));
-    }
-    
-    // Clean up
-    pkceStore.delete(state);
-
     try {
-      const redirectUri = getRedirectUri(req);
-      
-      const tokenResponse = await fetch(OAUTH_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: OPENAI_CLIENT_ID,
-          code,
-          code_verifier: codeVerifier,
-          redirect_uri: redirectUri,
-        }).toString(),
-      });
-
-      if (!tokenResponse.ok) {
-        const errData = await tokenResponse.text();
-        throw new Error(`Token exchange failed: ${tokenResponse.status} ${errData}`);
-      }
-
-      const tokenData = await tokenResponse.json() as { access_token: string };
-      
-      return reply.type('text/html').send(renderCallbackHtml(tokenData.access_token, null));
+      const result = await startCodexLogin();
+      return result;
     } catch (err) {
-      return reply.type('text/html').send(renderCallbackHtml(null, err instanceof Error ? err.message : String(err)));
+      reply.status(500);
+      return { error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  app.get('/auth/openai/codex/status', {
+    schema: {
+      description: 'Check status of Codex login session',
+      tags: ['Onboarding'],
+      querystring: z.object({
+        loginId: z.string(),
+      }),
+      response: {
+        200: z.object({
+          status: z.enum(['pending', 'completed', 'failed', 'timeout', 'not_found']),
+          error: z.string().optional(),
+        }),
+      },
+    },
+  }, async (req) => {
+    const { loginId } = req.query;
+
+    if (hasCodexAccessToken()) {
+      const session = activeLoginSessions.get(loginId);
+      if (session) {
+        try { session.child.kill('SIGTERM'); } catch {}
+        activeLoginSessions.delete(loginId);
+      }
+      return { status: 'completed' as const };
+    }
+
+    const session = activeLoginSessions.get(loginId);
+    if (!session) {
+      return { status: 'not_found' as const };
+    }
+
+    if (session.status === 'completed' || session.status === 'failed') {
+      activeLoginSessions.delete(loginId);
+    }
+
+    return {
+      status: session.status,
+      error: session.error,
+    };
   });
 }
 
-function getRedirectUri(req: { protocol: string; headers: { host?: string } }) {
-  const host = req.headers.host?.replace(/^127\.0\.0\.1(?=:|$)/, 'localhost') ?? 'localhost';
-  return `${req.protocol}://${host}/api/auth/openai/callback`;
+function hasCodexAccessToken(): boolean {
+  const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+  try {
+    const auth = JSON.parse(readFileSync(join(home, 'auth.json'), 'utf8')) as {
+      tokens?: { access_token?: unknown };
+      OPENAI_API_KEY?: unknown;
+    };
+    return Boolean(
+      (typeof auth.tokens?.access_token === 'string' && auth.tokens.access_token.trim()) ||
+        (typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.trim()),
+    );
+  } catch {
+    return false;
+  }
 }
 
-function renderCallbackHtml(token: string | null, error: string | null) {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head><title>Authentication Callback</title></head>
-    <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #f4f4f5; margin: 0;">
-      <div style="background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center;">
-        <h2 style="margin-top: 0; color: #18181b;">${error ? 'Authentication Failed' : 'Authentication Successful'}</h2>
-        <p style="color: #52525b;">${error ? error : 'Securely transferring token to the application...'}</p>
-      </div>
-      <script>
-        const message = {
-          type: 'OAUTH_SUCCESS',
-          token: ${token ? JSON.stringify(token) : 'null'},
-          error: ${error ? JSON.stringify(error) : 'null'}
-        };
-        if (window.opener) {
-          window.opener.postMessage(message, '*');
-          setTimeout(() => window.close(), 1000);
-        } else {
-          document.body.innerHTML += '<p style="text-align: center; color: #52525b; margin-top: 1rem;">You can close this tab.</p>';
-        }
-      </script>
-    </body>
-    </html>
-  `;
+function renderLoginHelpHtml(signedIn: boolean): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Codex login</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fafafa; color: #18181b; }
+    main { max-width: 32rem; padding: 2rem; }
+    h1 { margin: 0 0 0.75rem; font-size: 1.5rem; }
+    p { margin: 0.5rem 0; line-height: 1.5; color: #3f3f46; }
+    code { background: #f4f4f5; padding: 0.1rem 0.35rem; border-radius: 0.35rem; }
+    a { color: #7c3aed; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${signedIn ? 'Codex login connected' : 'Codex login needed'}</h1>
+    <p>${signedIn ? 'Ujima will use the local Codex ChatGPT session on this machine.' : 'Ujima needs the local Codex ChatGPT session first.'}</p>
+    <p>Run <code>codex login --device-auth</code> in a terminal, then reload Ujima.</p>
+    <p>Confirm status with <code>codex login status</code>.</p>
+  </main>
+</body>
+</html>`;
 }
+

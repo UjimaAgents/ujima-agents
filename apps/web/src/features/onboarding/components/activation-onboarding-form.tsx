@@ -5,7 +5,13 @@ import { AlertCircle, ArrowLeft, ArrowRight, Bot, Check, Eye, EyeOff, FolderKanb
 import { FieldShell, TextInput } from "@/components/ui/form-fields";
 import { Select } from "@/components/ui/select";
 import { ProviderCredentialField } from "@/features/providers/provider-credential-field";
-import { PROVIDER_OPTIONS } from "@/features/providers/catalog";
+import {
+  PROVIDER_OPTIONS,
+  resolveInternalProviderToken,
+  resolveUiProviderToken,
+  resolveAuthMode,
+  type OpenAIAuthMode,
+} from "@/features/providers/catalog";
 import { defaultModelForProvider, type OnboardingDraft, type OnboardingStep, type RolePresetTemplate } from "../types";
 import { getSuggestedAgentName } from "../agent-name-suggestions";
 
@@ -32,6 +38,7 @@ export function ActivationOnboardingForm(props: Props) {
   const [pickError, setPickError] = useState<string | null>(null);
   const [roleSearch, setRoleSearch] = useState("");
   const [roleIndustry, setRoleIndustry] = useState("all");
+  const [codexConnected, setCodexConnected] = useState(false);
 
   const error = useMemo(() => {
     if (step.id === "owner") {
@@ -47,7 +54,9 @@ export function ActivationOnboardingForm(props: Props) {
     if (step.id === "provider") {
       const provider = draft.providers[0];
       if (!provider?.name) return "Choose a provider.";
-      if (provider.name !== "ollama" && !provider.apiKey.trim()) return "Enter the provider API key.";
+      // provider.name is already the internal token (openai / openai-codex / anthropic ...)
+      if (provider.name !== "ollama" && provider.name !== "openai-codex" && !provider.apiKey.trim()) return "Enter the provider API key.";
+      if (provider.name === "openai-codex" && !codexConnected) return "Connect ChatGPT subscription.";
     }
     if (step.id === "agent") {
       const role = draft.roles[0];
@@ -154,12 +163,28 @@ export function ActivationOnboardingForm(props: Props) {
               <div className="mb-5 flex items-center gap-3"><Server className="h-5 w-5 text-violet-600" /><p className="text-sm text-zinc-600 dark:text-zinc-300">Credentials are submitted once and are never saved in browser storage.</p></div>
               <div className="space-y-5">
                 <FieldShell label="Provider" htmlFor="provider">
-                  <Select id="provider" value={provider.name} options={PROVIDER_OPTIONS.map((item) => ({ value: item.token, label: item.label }))} onChange={(e) => {
-                    const name = e.target.value;
-                    onChange({ ...draft, providers: [{ ...provider, name }], roles: draft.roles.map((item) => ({ ...item, llm: name, model: defaultModelForProvider(name) })) });
+                  {/* Show "openai" in dropdown even when internal token is "openai-codex" */}
+                  <Select id="provider" value={resolveUiProviderToken(provider.name)} options={PROVIDER_OPTIONS.map((item) => ({ value: item.token, label: item.label }))} onChange={(e) => {
+                    const uiToken = e.target.value;
+                    // Always reset to apikey when switching providers
+                    const internalName = resolveInternalProviderToken(uiToken, "apikey");
+                    setCodexConnected(false);
+                    onChange({ ...draft, providers: [{ ...provider, name: internalName, apiKey: "" }], roles: draft.roles.map((item) => ({ ...item, llm: internalName, model: defaultModelForProvider(internalName) })) });
                   }} />
                 </FieldShell>
-                <ProviderCredentialField provider={provider.name} apiKey={provider.apiKey} onApiKeyChange={(apiKey) => onChange({ ...draft, providers: [{ ...provider, apiKey }] })} />
+                <ProviderCredentialField
+                  provider={resolveUiProviderToken(provider.name)}
+                  apiKey={provider.apiKey}
+                  onApiKeyChange={(apiKey) => onChange({ ...draft, providers: [{ ...provider, apiKey }] })}
+                  authMode={resolveAuthMode(provider.name) ?? "apikey"}
+                  onAuthModeChange={(mode: OpenAIAuthMode) => {
+                    // Encode auth mode directly in provider name
+                    const internalName = resolveInternalProviderToken("openai", mode);
+                    setCodexConnected(false);
+                    onChange({ ...draft, providers: [{ ...provider, name: internalName, apiKey: "" }], roles: draft.roles.map((item) => ({ ...item, llm: internalName })) });
+                  }}
+                  onCodexConnectionChange={setCodexConnected}
+                />
               </div>
             </div>
           ) : null}

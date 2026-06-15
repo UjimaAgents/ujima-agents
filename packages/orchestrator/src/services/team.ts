@@ -1,4 +1,6 @@
 import type { AgentTeamHandle } from '@ujima/framework';
+import type { ProviderAuthMode } from '@ujima/shared';
+import { hasCodexAccessToken } from '../utils/codex-auth.js';
 
 export interface TeamSummary {
   name: string;
@@ -21,6 +23,12 @@ export function summarizeTeam(team: AgentTeamHandle): TeamSummary {
 export interface ProviderStatus {
   name: string;
   hasKey: boolean;
+  authMode?: ProviderAuthMode;
+}
+
+function providerAuthMode(team: AgentTeamHandle, providerName: string): ProviderAuthMode | undefined {
+  const provider = team.providers[providerName];
+  return provider?.authMode ?? (providerName === 'openai-codex' ? 'chatgpt' : undefined);
 }
 
 export function listProviderStatuses(
@@ -30,9 +38,11 @@ export function listProviderStatuses(
   const providers: ProviderStatus[] = [];
 
   for (const name of Object.keys(team.providers)) {
+    const authMode = providerAuthMode(team, name);
     providers.push({
       name,
-      hasKey: Boolean(credentials[name]),
+      hasKey: authMode === 'chatgpt' ? hasCodexAccessToken() : Boolean(credentials[name]),
+      authMode,
     });
   }
 
@@ -56,6 +66,9 @@ export function validateProviderKeys(
       continue;
     }
     if (role.provider === 'ollama') {
+      continue;
+    }
+    if (providerAuthMode(team, role.provider) === 'chatgpt') {
       continue;
     }
 

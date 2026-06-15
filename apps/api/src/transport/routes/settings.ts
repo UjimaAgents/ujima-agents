@@ -143,7 +143,11 @@ export function registerSettingsRoutes(
       const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
       if (forbidden) return forbidden;
       return {
-        providers: settings.upsertProviders(req.body.organizationId, req.body.providerKeys),
+        providers: settings.upsertProviders(
+          req.body.organizationId,
+          req.body.providerKeys,
+          req.body.providerAuthModes,
+        ),
       };
     } catch (err) {
       const rootError = workspaceRootError(reply, err);

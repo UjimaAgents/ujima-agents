@@ -123,18 +123,12 @@ describe('transport (in-process)', () => {
     expect(res.status).toBe(401);
   });
 
-  it('starts OpenAI Codex OAuth with the OpenAI login URL', async () => {
-    const res = await fetch(`${baseUrl}/api/auth/openai/login`, { redirect: 'manual' });
-    expect(res.status).toBe(302);
-
-    const location = res.headers.get('location');
-    expect(location).toBeTruthy();
-    const url = new URL(location ?? '');
-    expect(`${url.origin}${url.pathname}`).toBe('https://auth.openai.com/oauth/authorize');
-    expect(url.searchParams.get('client_id')).toBe('app_EMoamEEZ73f0CkXaXp7hrann');
-    expect(url.searchParams.get('scope')).toBe('openid profile email offline_access');
-    expect(url.searchParams.get('redirect_uri')).toMatch(/^http:\/\/localhost:\d+\/api\/auth\/openai\/callback$/);
-    expect(url.searchParams.get('codex_cli_simplified_flow')).toBe('true');
+  it('serves Codex login help for OpenAI Codex auth', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/openai/login`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Codex login');
+    expect(html).toContain('codex login --device-auth');
   });
 
   it('returns health with a correct bearer token', async () => {

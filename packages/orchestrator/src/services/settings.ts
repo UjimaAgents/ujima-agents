@@ -15,6 +15,7 @@ import {
   resolveChannelMemberIds,
 } from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
+import type { ProviderAuthMode } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import { listProviderStatuses, type ProviderStatus } from './team.js';
@@ -41,6 +42,7 @@ import { visiblePublicChannels } from './channel-visibility.js';
 import type { ApprovalResolveInput } from './approval.js';
 import { resolveAgentMemberId } from './member-id.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
+import { hasCodexAccessToken } from '../utils/codex-auth.js';
 
 function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
   return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
@@ -236,18 +238,25 @@ export class SettingsService {
   upsertProviders(
     organizationId: string,
     providerKeys: Record<string, string>,
+    providerAuthModes: Record<string, ProviderAuthMode> = {},
   ): ProviderStatus[] {
     const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     const normalizedProviderKeys = Object.fromEntries(
       Object.entries(providerKeys).map(([name, apiKey]) => [normalizeProviderKey(name), apiKey]),
     );
+    const normalizedProviderAuthModes = Object.fromEntries(
+      Object.entries(providerAuthModes).map(([name, authMode]) => [normalizeProviderKey(name), authMode]),
+    ) as Record<string, ProviderAuthMode>;
 
     const knownProviderSet = new Set(PROVIDER_KINDS);
 
     const unknownProviders: string[] = [];
     const needsRegistration: string[] = [];
-    for (const providerName of Object.keys(normalizedProviderKeys)) {
+    for (const providerName of new Set([
+      ...Object.keys(normalizedProviderKeys),
+      ...Object.keys(normalizedProviderAuthModes),
+    ])) {
       if (!team.providers[providerName]) {
         if (knownProviderSet.has(providerName as typeof PROVIDER_KINDS[number])) {
           needsRegistration.push(providerName);
@@ -265,12 +274,46 @@ export class SettingsService {
       for (const name of needsRegistration) {
         config.providers[name] = { kind: name as typeof PROVIDER_KINDS[number], models: [] };
       }
+      for (const [name, authMode] of Object.entries(normalizedProviderAuthModes)) {
+        config.providers[name] = {
+          ...(config.providers[name] ?? { kind: name as typeof PROVIDER_KINDS[number], models: [] }),
+          authMode,
+        };
+      }
       const updated = AgentTeam(config);
       this.teamStore.setTeam(updated, organizationId);
       persistTeamConfig(this.repo, organizationId, updated);
+    } else if (Object.keys(normalizedProviderAuthModes).length > 0) {
+      const config = team.toJSON();
+      let changed = false;
+      for (const [name, authMode] of Object.entries(normalizedProviderAuthModes)) {
+        const provider = config.providers[name] ?? { kind: name as typeof PROVIDER_KINDS[number], models: [] };
+        if (authMode === 'chatgpt') {
+          provider.authMode = authMode;
+        } else {
+          delete provider.authMode;
+        }
+        config.providers[name] = provider;
+        changed = true;
+      }
+      if (changed) {
+        const updated = AgentTeam(config);
+        this.teamStore.setTeam(updated, organizationId);
+        persistTeamConfig(this.repo, organizationId, updated);
+      }
+    }
+
+    for (const [providerName, authMode] of Object.entries(normalizedProviderAuthModes)) {
+      if (authMode === 'chatgpt') {
+        this.repo.deleteProviderCredential(organizationId, providerName);
+      }
     }
 
     for (const [providerName, apiKey] of Object.entries(normalizedProviderKeys)) {
+      const authMode = normalizedProviderAuthModes[providerName];
+      if (authMode === 'chatgpt') {
+        continue;
+      }
       this.repo.saveProviderCredential(organizationId, providerName, apiKey);
     }
 
@@ -278,9 +321,17 @@ export class SettingsService {
   }
 
   deleteProvider(organizationId: string, providerName: string): ProviderStatus[] {
-    this.loadTeamForOrganization(organizationId);
+    const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
-    this.repo.deleteProviderCredential(organizationId, normalizeProviderKey(providerName));
+    const normalizedName = normalizeProviderKey(providerName);
+    const config = team.toJSON();
+    if (config.providers[normalizedName]) {
+      delete config.providers[normalizedName].authMode;
+      const updated = AgentTeam(config);
+      this.teamStore.setTeam(updated, organizationId);
+      persistTeamConfig(this.repo, organizationId, updated);
+    }
+    this.repo.deleteProviderCredential(organizationId, normalizedName);
     return this.listProviders(organizationId);
   }
 
@@ -288,14 +339,27 @@ export class SettingsService {
     const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     const providerKey = normalizeProviderKey(providerName);
+    const authMode = team.getProvider(providerKey)?.authMode ?? (providerKey === 'openai-codex' ? 'chatgpt' : undefined);
 
     if (!team.providers[providerKey]) {
       return { provider: providerKey, ok: false, message: `Unknown provider "${providerKey}"` };
     }
 
+    if (authMode === 'chatgpt') {
+      return {
+        provider: providerKey,
+        ok: hasCodexAccessToken(),
+        message: hasCodexAccessToken() ? 'Codex login configured' : 'Codex login needed',
+      };
+    }
+
     const key = this.repo.getProviderCredential(organizationId, providerKey);
     if (!key || key.trim() === '') {
-      return { provider: providerKey, ok: false, message: 'No API key configured' };
+      return {
+        provider: providerKey,
+        ok: false,
+        message: providerKey === 'openai-codex' ? 'No Codex login configured' : 'No API key configured',
+      };
     }
 
     return { provider: providerKey, ok: true, message: 'Key present' };

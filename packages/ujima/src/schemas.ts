@@ -3,6 +3,7 @@ import {
   ChannelSchema,
   MemberKindSchema,
   OrganizationChartSchema,
+  PROVIDER_AUTH_MODES,
   PROVIDER_KINDS,
   RoleScopesSchema,
   ShellApprovalModeSchema,
@@ -16,6 +17,7 @@ export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
 export const ProviderConfigSchema = z.object({
   kind: ProviderKindSchema,
+  authMode: z.enum(PROVIDER_AUTH_MODES).optional(),
   apiKeyRef: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
   /** Optional base URL override — used for `openrouter` and self-hosted `ollama`. */
