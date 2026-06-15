@@ -1128,16 +1128,26 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
     onTick: async () => {
       await goals.sweepAllPendingTasks();
-      // Agent-attachments LRU pass. Best-effort — wrapped so a
-      // sweep failure doesn't kill the scheduler tick (which is
-      // mission-critical for goal scheduling).
+      // Agent-attachments LRU pass. The list of orgs is sourced
+      // explicitly so a missing/forgotten listOrganizations stub
+      // can't silently produce an empty sweep. The try/catch is
+      // narrowly scoped to per-tick resilience (the scheduler tick
+      // is mission-critical for goal scheduling) but the failure
+      // is logged at error level with a grep-able tag.
       try {
+        const organizationIds = context.repo
+          .listOrganizations()
+          .map((org) => org.id);
         cleanupExpiredAgentAttachments({
           repo: context.repo,
           attachmentStoreRoot,
+          organizationIds,
         });
       } catch (err) {
-        console.warn('[agent-attachment-cleanup] sweep threw', err);
+        console.error(
+          '[agent-attachment-cleanup] sweep failed — investigate',
+          err,
+        );
       }
     },
   });

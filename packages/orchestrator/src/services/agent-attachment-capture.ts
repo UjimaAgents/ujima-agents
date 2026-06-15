@@ -502,15 +502,19 @@ function filenameFor(
 const DEFAULT_LRU_TTL_HOURS = 4;
 
 export interface AgentAttachmentCleanupDeps {
-  // listOrganizations is required by design — without it the sweep
-  // would silently become a no-op for any caller that forgot to
-  // stub it.
   repo: Pick<
     ApiRepository,
-    | 'listOrganizations'
-    | 'listExpiredUnpinnedAgentAttachments'
-    | 'deleteAgentAttachment'
+    'listExpiredUnpinnedAgentAttachments' | 'deleteAgentAttachment'
   >;
+  /**
+   * Org IDs to sweep. The caller is responsible for sourcing this
+   * — typically `repo.listOrganizations().map(o => o.id)` in
+   * production, an explicit fixture list in tests. Pulling it
+   * inside this function used to require listOrganizations on the
+   * repo Pick, which silently produced an empty sweep when a
+   * partial stub forgot to wire it.
+   */
+  organizationIds: string[];
   /** `<home>/attachments/` — same root the web API resolves against. */
   attachmentStoreRoot: string;
   /** Hours after which unpinned rows are eligible for cleanup. */
@@ -560,17 +564,16 @@ export function cleanupExpiredAgentAttachments(
   const ttlHours = deps.ttlHours ?? DEFAULT_LRU_TTL_HOURS;
   const now = (deps.now ?? (() => new Date()))();
   const cutoff = new Date(now.getTime() - ttlHours * 60 * 60 * 1000).toISOString();
-  const orgs = deps.repo.listOrganizations();
   let deletedRows = 0;
   let deletedBytes = 0;
-  for (const org of orgs) {
-    const expired = deps.repo.listExpiredUnpinnedAgentAttachments(org.id, cutoff);
+  for (const organizationId of deps.organizationIds) {
+    const expired = deps.repo.listExpiredUnpinnedAgentAttachments(organizationId, cutoff);
     for (const row of expired) {
       const freedBytes = deleteOneAgentAttachmentRowAndFile({
         row,
         repo: deps.repo,
         attachmentStoreRoot: deps.attachmentStoreRoot,
-        organizationId: org.id,
+        organizationId,
       });
       if (freedBytes > 0) {
         deletedRows += 1;

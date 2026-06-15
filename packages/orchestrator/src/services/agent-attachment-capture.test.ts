@@ -520,6 +520,7 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
       const result = cleanupExpiredAgentAttachments({
         repo: repo as never,
         attachmentStoreRoot: root,
+        organizationIds: ['org_test'],
         ttlHours: 4,
         now: () => new Date('2026-06-11T00:01:00.000Z'),
       });
@@ -572,6 +573,7 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
       cleanupExpiredAgentAttachments({
         repo: repo as never,
         attachmentStoreRoot: storeRoot,
+        organizationIds: ['org_test'],
         ttlHours: 4,
         now: () => new Date('2026-06-11T00:01:00.000Z'),
       });
@@ -580,6 +582,82 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
       expect(existsSync(absPath)).toBe(false);
     } finally {
       rmSync(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('empty organizationIds list is a no-op (bot Round 15 high — no listOrganizations dependency)', () => {
+    const root = tempRoot();
+    try {
+      const repo = fakeRepo();
+      repo.saved.push({
+        id: 'aatt_lonely',
+        organizationId: 'org_test',
+        runId: 'run',
+        memberId: 'mem_1',
+        sourceToolCallId: null,
+        sourceServerId: null,
+        sourceToolName: null,
+        category: 'image',
+        mimeType: 'image/png',
+        filename: 'x.png',
+        storagePath: 'agent-generated/org_test/run/aatt_lonely.png',
+        byteSize: 100,
+        createdAt: '2026-06-01T00:00:00.000Z',
+        pinnedToMessageId: null,
+      });
+      const result = cleanupExpiredAgentAttachments({
+        repo: repo as never,
+        attachmentStoreRoot: root,
+        organizationIds: [],
+        ttlHours: 4,
+        now: () => new Date('2026-06-11T00:01:00.000Z'),
+      });
+      // Pre-fix: listOrganizations() returned an empty list AND the
+      // dependency was implicit, so the same no-op was the only path
+      // any partial repo stub could take. Now an empty list is a
+      // deliberate caller decision, not a silent stub failure.
+      expect(result.deletedRows).toBe(0);
+      expect(repo.saved).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('sweeps exactly the org ids the caller passes', () => {
+    const root = tempRoot();
+    try {
+      const repo = fakeRepo();
+      for (const orgId of ['org_a', 'org_b', 'org_c']) {
+        repo.saved.push({
+          id: `aatt_${orgId}`,
+          organizationId: orgId,
+          runId: 'run',
+          memberId: 'mem_1',
+          sourceToolCallId: null,
+          sourceServerId: null,
+          sourceToolName: null,
+          category: 'image',
+          mimeType: 'image/png',
+          filename: 'x.png',
+          storagePath: `agent-generated/${orgId}/run/aatt.png`,
+          byteSize: 100,
+          createdAt: '2026-06-01T00:00:00.000Z',
+          pinnedToMessageId: null,
+        });
+      }
+      // Only sweep two of the three orgs.
+      cleanupExpiredAgentAttachments({
+        repo: repo as never,
+        attachmentStoreRoot: root,
+        organizationIds: ['org_a', 'org_c'],
+        ttlHours: 4,
+        now: () => new Date('2026-06-11T00:01:00.000Z'),
+      });
+      // org_b's row is untouched — the caller didn't ask for it.
+      const remaining = repo.saved.map((r) => r.id).sort();
+      expect(remaining).toEqual(['aatt_org_b']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
