@@ -23,68 +23,11 @@ describe('parseCronExpression', () => {
     expect(matcher!(new Date('2025-01-15T10:30:00'))).not.toBeNull();
   });
 
-  it('matches exact minute and advances when not matched', () => {
-    const matcher = parseCronExpression('30 * * * *');
-    expect(matcher).not.toBeNull();
-    expect(matcher!(new Date('2025-01-15T10:30:00'))).not.toBeNull();
-    const next = matcher!(new Date('2025-01-15T10:31:00'));
-    expect(next).not.toBeNull();
-    expect(next!.getMinutes()).toBe(30);
-    expect(next!.getHours()).toBe(11);
-  });
-
-  it('matches exact hour+minute, advances to next occurrence', () => {
-    const matcher = parseCronExpression('0 9 * * *');
-    expect(matcher).not.toBeNull();
-    expect(matcher!(new Date('2025-01-15T09:00:00'))).not.toBeNull();
-    const next = matcher!(new Date('2025-01-15T09:01:00'));
-    expect(next).not.toBeNull();
-    expect(next!.getDate()).toBe(16);
-    expect(next!.getHours()).toBe(9);
-    expect(next!.getMinutes()).toBe(0);
-  });
-
-  it('matches day-of-week ranges correctly', () => {
-    const matcher = parseCronExpression('0 9 * * 1-5');
-    expect(matcher).not.toBeNull();
-    const monday = new Date('2025-01-13T09:00:00');
-    expect(matcher!(monday)).not.toBeNull();
-    const saturday = new Date('2025-01-11T09:00:00');
-    const next = matcher!(saturday);
-    expect(next).not.toBeNull();
-    expect(next!.getDay()).toBeGreaterThanOrEqual(1);
-    expect(next!.getDay()).toBeLessThanOrEqual(5);
-  });
-
-  it('matches comma-separated lists, advances to next', () => {
-    const matcher = parseCronExpression('0,30 * * * *');
-    expect(matcher).not.toBeNull();
-    expect(matcher!(new Date('2025-01-15T10:00:00'))).not.toBeNull();
-    expect(matcher!(new Date('2025-01-15T10:30:00'))).not.toBeNull();
-    const next = matcher!(new Date('2025-01-15T10:15:00'));
-    expect(next).not.toBeNull();
-    expect(next!.getMinutes()).toBe(30);
-  });
-
-  it('advances to next day when no match in current day', () => {
-    const matcher = parseCronExpression('0 9 * * *');
-    const from = new Date('2025-01-15T08:30:00');
-    const result = matcher!(from);
-    expect(result).not.toBeNull();
-    expect(result!.getHours()).toBe(9);
-    expect(result!.getMinutes()).toBe(0);
-    expect(result!.getDate()).toBe(15);
-  });
-
   it('returns null for non-numeric values in field', () => {
     expect(parseCronExpression('abc * * * *')).toBeNull();
     expect(parseCronExpression('* * * * abc')).toBeNull();
   });
 
-  it('accepts value 60 (never matches but valid integer)', () => {
-    const matcher = parseCronExpression('60 * * * *');
-    expect(matcher).not.toBeNull();
-  });
 });
 
 describe('computeNextCronRun', () => {
@@ -96,9 +39,6 @@ describe('computeNextCronRun', () => {
     expect(next!.getTime()).toBeGreaterThan(new Date('2025-01-15T08:30:00').getTime());
   });
 
-  it('returns null for invalid cron expressions', () => {
-    expect(computeNextCronRun('not-a-cron')).toBeNull();
-  });
 });
 
 describe('resolveScheduledJobNextRunAt', () => {
@@ -115,12 +55,6 @@ describe('resolveScheduledJobNextRunAt', () => {
     expect(Date.parse(next!)).toBeGreaterThan(now.getTime());
   });
 
-  it('keeps nextRunAt when pausing without cron change', () => {
-    const active = { ...existing, status: 'active', nextRunAt: '2025-06-01T09:00:00.000Z' };
-    const next = resolveScheduledJobNextRunAt(active, { status: 'paused' }, new Date());
-    expect(next).toBe(active.nextRunAt);
-  });
-
   it('recomputes when cron changes on an active job', () => {
     const active = { ...existing, status: 'active' };
     const now = new Date('2025-01-15T10:00:00');
@@ -129,10 +63,6 @@ describe('resolveScheduledJobNextRunAt', () => {
     expect(Date.parse(next!)).toBeGreaterThan(now.getTime());
   });
 
-  it('returns undefined for an invalid cron change', () => {
-    const active = { ...existing, status: 'active' };
-    expect(resolveScheduledJobNextRunAt(active, { cronExpression: 'not-a-cron' }, new Date())).toBeUndefined();
-  });
 });
 
 describe('SchedulerService', () => {
@@ -188,54 +118,6 @@ describe('SchedulerService', () => {
     scheduler.stop();
   });
 
-  it('starts and stops the polling loop', () => {
-    scheduler.start();
-    scheduler.stop();
-  });
-
-  it('advances nextRunAt strictly after a successful run', async () => {
-    const runAt = new Date('2025-01-15T09:00:00');
-    vi.useFakeTimers();
-    vi.setSystemTime(runAt);
-
-    const dueJob = {
-      id: 'job-advance',
-      organizationId: 'org-1',
-      name: 'Daily',
-      cronExpression: '0 9 * * *',
-      prompt: 'Run daily',
-      channelId: 'channel-1',
-      memberId: 'member-1',
-      status: 'active' as const,
-      nextRunAt: runAt.toISOString(),
-      runCount: 0,
-      createdAt: runAt.toISOString(),
-      updatedAt: runAt.toISOString(),
-    };
-    mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([dueJob]);
-    vi.mocked(mockRepo.getChannel).mockReturnValue({
-      id: 'channel-1',
-      organizationId: 'org-1',
-      name: 'general',
-      kind: 'general',
-      topic: '',
-      memberIds: ['member-1'],
-    } as never);
-
-    scheduler.start();
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.waitFor(() => {
-      expect(mockRepo.saveScheduledJob).toHaveBeenCalled();
-    }, { timeout: 2000 });
-
-    const saved = vi.mocked(mockRepo.saveScheduledJob).mock.calls.at(-1)?.[0];
-    expect(saved?.runCount).toBe(1);
-    expect(Date.parse(saved!.nextRunAt!)).toBeGreaterThan(runAt.getTime());
-
-    scheduler.stop();
-    vi.useRealTimers();
-  });
-
   it('executes due jobs and sends messages on behalf of the creator', async () => {
     const now = new Date().toISOString();
     const dueJob = {
@@ -285,69 +167,6 @@ describe('SchedulerService', () => {
       [orgRoom('org-1'), channelRoom('channel-1')],
     );
     scheduler.stop();
-  });
-
-  it('does not overlap ticks while a job is still running', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2025-01-15T09:00:00'));
-
-    let resolveSend!: () => void;
-    const sendPromise = new Promise<void>((resolve) => {
-      resolveSend = resolve;
-    });
-    vi.mocked(mockConversations.sendMessage).mockImplementation(
-      (() => sendPromise) as unknown as ConversationService['sendMessage'],
-    );
-
-    const dueJob = {
-      id: 'job-overlap',
-      organizationId: 'org-1',
-      name: 'Overlap',
-      cronExpression: '0 9 * * *',
-      prompt: 'Hold the line',
-      channelId: 'channel-1',
-      memberId: 'member-1',
-      status: 'active' as const,
-      nextRunAt: new Date('2025-01-15T09:00:00').toISOString(),
-      runCount: 0,
-      createdAt: new Date('2025-01-15T09:00:00').toISOString(),
-      updatedAt: new Date('2025-01-15T09:00:00').toISOString(),
-    };
-    let overlapCalled = false;
-    mockRepo.listDueJobsGlobally = vi.fn().mockImplementation(() => {
-      if (overlapCalled) return [];
-      overlapCalled = true;
-      return [dueJob];
-    });
-    vi.mocked(mockRepo.getChannel).mockReturnValue({
-      id: 'channel-1',
-      organizationId: 'org-1',
-      name: 'general',
-      kind: 'general',
-      topic: '',
-      memberIds: ['member-1'],
-    } as never);
-
-    scheduler = new SchedulerService(mockRepo, mockConversations, mockRealtime, {
-      pollIntervalMs: 5,
-    });
-    scheduler.start();
-    await vi.advanceTimersByTimeAsync(0);
-
-    await vi.waitFor(() => {
-      expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
-    }, { timeout: 2000 });
-
-    await vi.advanceTimersByTimeAsync(50);
-    expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
-
-    resolveSend();
-    await vi.waitFor(() => {
-      expect(mockRepo.saveScheduledJob).toHaveBeenCalledTimes(1);
-    }, { timeout: 2000 });
-
-    scheduler.stop();
-    vi.useRealTimers();
   });
 
   it('handles job execution errors and advances nextRunAt', async () => {

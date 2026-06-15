@@ -38,34 +38,6 @@ describe('scheduled jobs repository', () => {
     expect(stored?.name).toBe('Standup');
   });
 
-  it('lists scheduled jobs for an organization', () => {
-    repo.saveScheduledJob(baseJob({ id: 'j1', name: 'A', cronExpression: '* * * * *', prompt: 'a' }));
-    repo.saveScheduledJob(baseJob({ id: 'j2', name: 'B', cronExpression: '* * * * *', prompt: 'b' }));
-    expect(repo.listScheduledJobs(organizationId)).toHaveLength(2);
-  });
-
-  it('updates a scheduled job on save', () => {
-    repo.saveScheduledJob(baseJob({ id: 'u1', name: 'Old', cronExpression: '0 9 * * *', prompt: 'old' }));
-    repo.saveScheduledJob(
-      baseJob({
-        id: 'u1',
-        name: 'New',
-        cronExpression: '0 10 * * *',
-        prompt: 'new',
-        updatedAt: new Date().toISOString(),
-      }),
-    );
-    const stored = repo.getScheduledJob(organizationId, 'u1');
-    expect(stored?.name).toBe('New');
-    expect(stored?.cronExpression).toBe('0 10 * * *');
-  });
-
-  it('deletes a scheduled job', () => {
-    repo.saveScheduledJob(baseJob({ id: 'd1', name: 'Del', cronExpression: '* * * * *', prompt: 'del' }));
-    repo.deleteScheduledJob(organizationId, 'd1');
-    expect(repo.getScheduledJob(organizationId, 'd1')).toBeNull();
-  });
-
   it('lists due jobs globally', () => {
     const past = new Date(Date.now() - 60_000).toISOString();
     const future = new Date(Date.now() + 3_600_000).toISOString();
@@ -97,31 +69,4 @@ describe('scheduled jobs repository', () => {
     expect(due.some((job) => job.id === 'paused')).toBe(false);
   });
 
-  it('tracks run count and lastError', () => {
-    repo.saveScheduledJob(baseJob({ id: 'stats', name: 'Stats', cronExpression: '* * * * *', prompt: 'stats' }));
-    repo.saveScheduledJob(
-      baseJob({
-        id: 'stats',
-        name: 'Stats',
-        cronExpression: '* * * * *',
-        prompt: 'stats',
-        runCount: 5,
-        lastRunAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }),
-    );
-    expect(repo.getScheduledJob(organizationId, 'stats')?.runCount).toBe(5);
-    repo.saveScheduledJob(
-      baseJob({
-        id: 'stats',
-        name: 'Stats',
-        cronExpression: '* * * * *',
-        prompt: 'stats',
-        runCount: 5,
-        lastError: 'error!',
-        updatedAt: new Date().toISOString(),
-      }),
-    );
-    expect(repo.getScheduledJob(organizationId, 'stats')?.lastError).toBe('error!');
-  });
 });

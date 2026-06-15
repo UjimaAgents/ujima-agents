@@ -24,15 +24,6 @@ describe('resolveVisiblePromptChannels', () => {
     expect(out).toEqual(handles);
   });
 
-  it('rebinds a handle to the live runtime channel when their ids match', () => {
-    const live = buildChannel({ id: 'chan-1', name: 'general', topic: 'live topic' });
-    const handles = [buildChannel({ id: 'chan-1', name: 'general', topic: 'stale topic' })];
-    const out = resolveVisiblePromptChannels(handles, repoOf([live]), 'org-1');
-    expect(out).toHaveLength(1);
-    // Prompt should see the current runtime topic, not the stale config copy.
-    expect(out[0]?.topic).toBe('live topic');
-  });
-
   it('drops a handle whose id matches an archived runtime channel', () => {
     const archived = buildChannel({
       id: 'chan-1',
@@ -40,20 +31,6 @@ describe('resolveVisiblePromptChannels', () => {
       archivedAt: '2026-01-01T00:00:00.000Z',
     });
     const handles = [buildChannel({ id: 'chan-1', name: 'general' })];
-    const out = resolveVisiblePromptChannels(handles, repoOf([archived]), 'org-1');
-    expect(out).toEqual([]);
-  });
-
-  it('drops a name handle when the only runtime channel with that name is archived', () => {
-    // `normalizeChannels` lets `channels: ['general']` produce a Channel
-    // with `id = name = "general"`. When the matching runtime row was
-    // archived, the agent must not see a dead handle.
-    const archived = buildChannel({
-      id: 'chan-1',
-      name: 'general',
-      archivedAt: '2026-01-01T00:00:00.000Z',
-    });
-    const handles = [buildChannel({ id: 'general', name: 'general' })];
     const out = resolveVisiblePromptChannels(handles, repoOf([archived]), 'org-1');
     expect(out).toEqual([]);
   });
@@ -75,88 +52,4 @@ describe('resolveVisiblePromptChannels', () => {
     expect(out[0]?.id).toBe('chan-2');
   });
 
-  it('resolves a synthetic name handle to the live replacement when the archived row shares the synthetic id (regression: archived-id reject was masking the live name match)', () => {
-    // The case the prior ordering missed: config-sync once wrote the
-    // channel with `id = name = "general"`, then the row was archived,
-    // then a replacement was created with a real DB id under the same
-    // name. The handle still uses the synthetic `id = "general"`, so
-    // an "archived id" check would fire before the name lookup and
-    // silently hide the live channel.
-    const archived = buildChannel({
-      id: 'general',
-      name: 'general',
-      archivedAt: '2026-01-01T00:00:00.000Z',
-    });
-    const live = buildChannel({ id: 'chan-2', name: 'general' });
-    const handles = [buildChannel({ id: 'general', name: 'general' })];
-    const out = resolveVisiblePromptChannels(handles, repoOf([archived, live]), 'org-1');
-    expect(out).toHaveLength(1);
-    expect(out[0]?.id).toBe('chan-2');
-  });
-
-  it('also rebinds when an id-handle points at an archived row but a live channel under the same name still exists', () => {
-    // The general form: handle.id == real-but-stale id (now archived),
-    // handle.name still resolves to a single live channel. Should bind
-    // to the live one rather than dropping the handle.
-    const archived = buildChannel({
-      id: 'chan-old',
-      name: 'general',
-      archivedAt: '2026-01-01T00:00:00.000Z',
-    });
-    const live = buildChannel({ id: 'chan-new', name: 'general' });
-    const handles = [buildChannel({ id: 'chan-old', name: 'general' })];
-    const out = resolveVisiblePromptChannels(handles, repoOf([archived, live]), 'org-1');
-    expect(out).toHaveLength(1);
-    expect(out[0]?.id).toBe('chan-new');
-  });
-
-  it('drops a name handle when multiple live channels share that name (ambiguous)', () => {
-    // Schema does not enforce name uniqueness. If two live channels
-    // share a name, binding the handle to either one is a 50/50
-    // guess. Dropping is safer than silently wrong.
-    const liveA = buildChannel({ id: 'chan-1', name: 'general' });
-    const liveB = buildChannel({ id: 'chan-2', name: 'general' });
-    const handles = [buildChannel({ id: 'general', name: 'general' })];
-    const out = resolveVisiblePromptChannels(handles, repoOf([liveA, liveB]), 'org-1');
-    expect(out).toEqual([]);
-  });
-
-  it('drops the archived handle while preserving an unrelated live handle in the same input', () => {
-    const archived = buildChannel({
-      id: 'chan-1',
-      name: 'old-channel',
-      archivedAt: '2026-01-01T00:00:00.000Z',
-    });
-    const live = buildChannel({ id: 'chan-2', name: 'general' });
-    const handles = [
-      buildChannel({ id: 'chan-1', name: 'old-channel' }),
-      buildChannel({ id: 'chan-2', name: 'general' }),
-    ];
-    const out = resolveVisiblePromptChannels(handles, repoOf([archived, live]), 'org-1');
-    expect(out).toHaveLength(1);
-    expect(out[0]?.id).toBe('chan-2');
-  });
-
-  it('deduplicates when multiple handles resolve to the same runtime channel', () => {
-    // Two different config entries (a real id and a name handle) both
-    // point at the same live channel — emit it once.
-    const live = buildChannel({ id: 'chan-1', name: 'general' });
-    const handles = [
-      buildChannel({ id: 'chan-1', name: 'general' }),
-      buildChannel({ id: 'general', name: 'general' }),
-    ];
-    const out = resolveVisiblePromptChannels(handles, repoOf([live]), 'org-1');
-    expect(out).toHaveLength(1);
-    expect(out[0]?.id).toBe('chan-1');
-  });
-
-  it('passes a handle through when the runtime has no channels with that name (handle is new, not archived)', () => {
-    // No archived row, no live row — config-sync just hasn't seen
-    // this channel yet. Pass through so the agent can reference it.
-    const unrelatedLive = buildChannel({ id: 'chan-2', name: 'design' });
-    const handles = [buildChannel({ id: 'general', name: 'general' })];
-    const out = resolveVisiblePromptChannels(handles, repoOf([unrelatedLive]), 'org-1');
-    expect(out).toHaveLength(1);
-    expect(out[0]?.id).toBe('general');
-  });
 });

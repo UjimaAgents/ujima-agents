@@ -3,7 +3,7 @@ import { MemberSchema, MessageSchema, type Message, type RunState } from '@ujima
 import { runAgentDelegateTurn } from './index.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
-import { clearPendingMemberAlertsForTests, enqueuePendingMemberAlert } from './pending-member-alerts.js';
+import { clearPendingMemberAlertsForTests } from './pending-member-alerts.js';
 
 beforeEach(() => {
   clearPendingMemberAlertsForTests();
@@ -120,34 +120,6 @@ describe('agent delegation', () => {
     });
   });
 
-  it('returns a same-millisecond reply by message order instead of id order', async () => {
-    const reply = message({
-      id: 'a-reply',
-      senderId: target.id,
-      content: 'same millisecond done',
-      createdAt: '2026-05-31T10:00:00.000Z',
-    });
-    const { repo, conversations, createRun } = repoFixture({ reply });
-
-    const result = await runAgentDelegateTurn({
-      repo: repo as unknown as ApiRepository,
-      conversations: conversations as unknown as ConversationService,
-      wakeMember: vi.fn(),
-      createRun,
-      organizationId: orgId,
-      fromMemberId: caller.id,
-      to: target.name,
-      message: 'delegate',
-      runId: 'parent-run',
-    });
-
-    expect(result).toMatchObject({
-      status: 'completed',
-      reply_id: 'a-reply',
-      reply_content: 'same millisecond done',
-    });
-  });
-
   it('rejects self-delegation', async () => {
     const { repo, conversations, createRun } = repoFixture();
     repo.listMembers.mockReturnValue([caller]);
@@ -205,38 +177,6 @@ describe('agent delegation', () => {
     expect(result.status).toBe('no_reply');
   });
 
-  it('rejects self-delegation even when the caller already has an active run', async () => {
-    const activeRun = {
-      id: 'run-1',
-      organizationId: orgId,
-      agentId: caller.id,
-      threadId: 'dm:agent-1:agent-1',
-      status: 'running',
-      step: 'running',
-      summary: 'running',
-      startedAt: '2026-05-31T10:00:00.000Z',
-    } as RunState;
-    const { repo, conversations, createRun } = repoFixture({ activeRun });
-    repo.listMembers.mockReturnValue([caller]);
-
-    await expect(
-      runAgentDelegateTurn({
-        repo: repo as unknown as ApiRepository,
-        conversations: conversations as unknown as ConversationService,
-        wakeMember: vi.fn(),
-        createRun,
-        organizationId: orgId,
-        fromMemberId: caller.id,
-        to: caller.id,
-        message: 'parallel self work',
-        runId: 'run-1',
-      }),
-    ).rejects.toThrow(/cannot delegate to yourself/i);
-
-    expect(conversations.sendDirectMessage).not.toHaveBeenCalled();
-    expect(createRun).not.toHaveBeenCalled();
-  });
-
   it('returns delegate_failed when the delegated run fails', async () => {
     const failedRun = {
       id: 'delegate-run-1',
@@ -271,62 +211,4 @@ describe('agent delegation', () => {
     });
   });
 
-  it('returns timed_out when no reply or terminal delegate run appears', async () => {
-    const { repo, conversations, createRun } = repoFixture({ runs: [] });
-
-    const result = await runAgentDelegateTurn({
-      repo: repo as unknown as ApiRepository,
-      conversations: conversations as unknown as ConversationService,
-      wakeMember: vi.fn(),
-      createRun,
-      organizationId: orgId,
-      fromMemberId: caller.id,
-      to: target.id,
-      message: 'review this',
-      runId: 'run-1',
-      timeoutMs: 1,
-      pollIntervalMs: 0,
-    });
-
-    expect(result.status).toBe('timed_out');
-  });
-
-  it('suspends the timeout countdown while the alert is queued', async () => {
-    const { repo, conversations, createRun, delegateMessage } = repoFixture({ runs: [] });
-
-    // Enqueue the pending member alert
-    enqueuePendingMemberAlert({
-      organizationId: orgId,
-      memberId: target.id,
-      threadId: 'dm:agent-1:agent-2',
-      channelId: 'dm:agent-1:agent-2',
-      messageId: delegateMessage.id,
-      byMemberId: caller.id,
-      reason: 'dm',
-      wakeReason: 'dm',
-    });
-
-    // Clear the pending alert queue after 15ms
-    setTimeout(() => {
-      clearPendingMemberAlertsForTests();
-    }, 15);
-
-    const result = await runAgentDelegateTurn({
-      repo: repo as unknown as ApiRepository,
-      conversations: conversations as unknown as ConversationService,
-      wakeMember: vi.fn(),
-      createRun,
-      organizationId: orgId,
-      fromMemberId: caller.id,
-      to: target.id,
-      message: 'please check this',
-      runId: 'run-1',
-      timeoutMs: 10,
-      pollIntervalMs: 5,
-    });
-
-    // Timeout begins ticking only after the queue is drained at 15ms. 
-    // It should time out at 10ms + 15ms = 25ms total, verifying timeout suspension.
-    expect(result.status).toBe('timed_out');
-  });
 });

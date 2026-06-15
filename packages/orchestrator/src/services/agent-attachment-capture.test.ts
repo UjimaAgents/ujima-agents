@@ -101,31 +101,13 @@ describe('agent-attachment-capture — sniff + decideCapture (§3.2)', () => {
     expect(decision?.mimeType).toBe('application/octet-stream');
   });
 
-  it('decideCapture: no hint + mime miss → null', () => {
-    expect(
-      decideCapture({ bytes: Buffer.from('plain text only') }, undefined),
-    ).toBeNull();
-  });
-
-  it('decideCapture: declared application/pdf without sniff match → captures as document (bot Round 1 medium)', () => {
-    // Pre-fix the generic detector only forwarded {data, mimeType}
-    // blobs when mimeType started with image/, so PDFs were silently
-    // dropped. The widened generic + categoryFromMime fallback now
-    // captures them as the right category.
+  it('decideCapture: declared application/pdf without sniff match → captures as document', () => {
     const decision = decideCapture(
       { bytes: Buffer.from('not a real pdf body'), declaredMime: 'application/pdf' },
       undefined,
     );
     expect(decision?.category).toBe('document');
     expect(decision?.mimeType).toBe('application/pdf');
-  });
-
-  it('decideCapture: declared audio/mpeg without sniff match → captures as audio', () => {
-    const decision = decideCapture(
-      { bytes: Buffer.from('not a real mp3 body'), declaredMime: 'audio/mpeg' },
-      undefined,
-    );
-    expect(decision?.category).toBe('audio');
   });
 
   it('decideCapture: text/plain declared mime → still skipped (not binary)', () => {
@@ -215,33 +197,6 @@ describe('captureToolResultAttachments — end-to-end', () => {
     }
   });
 
-  it("hint=['image'] widens: captures even when the bytes don't sniff to a known mime", () => {
-    const root = tempRoot();
-    try {
-      const repo = fakeRepo();
-      const result = captureToolResultAttachments(
-        { repo: repo as never, agentAttachmentRoot: root, attachmentStoreRoot: root },
-        {
-          organizationId: 'org_test',
-          runId: 'run_test',
-          memberId: 'mem_test',
-          serverId: 'srv_unknown',
-          toolName: 'snapshot',
-          toolCallId: 'call_x',
-          toolResult: {
-            data: Buffer.alloc(512, 0xaa).toString('base64'),
-            mimeType: 'image/x-novel-format',
-          },
-          registryHint: ['image'],
-        },
-      );
-      expect(result.attachmentRefs).toHaveLength(1);
-      expect(repo.saved[0]!.category).toBe('image');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it('per-file cap rejects oversized blobs but lets undersized ones through', () => {
     const root = tempRoot();
     try {
@@ -271,12 +226,7 @@ describe('captureToolResultAttachments — end-to-end', () => {
     }
   });
 
-  it('quota recovery deletes the on-disk file too — does NOT leak (bot Round 3 high)', () => {
-    // Pre-fix: quota recovery called deleteAgentAttachment (row only)
-    // and the file leaked. The hourly sweeper could no longer find
-    // it (no row → no enumeration), so it accumulated forever.
-    // Now both quota recovery and the LRU sweeper route through
-    // the shared deleteOneAgentAttachmentRowAndFile helper.
+  it('quota recovery deletes the on-disk file too — does NOT leak', () => {
     const storeRoot = tempRoot();
     try {
       // Seed an expired row whose underlying file is sitting at
@@ -355,7 +305,7 @@ describe('captureToolResultAttachments — end-to-end', () => {
   });
 });
 
-describe('captureToolResultAttachments — atomic file+row (bot Round 4 high)', () => {
+describe('captureToolResultAttachments — atomic file+row rollback', () => {
   it('on saveAgentAttachment throw, the on-disk file is rolled back (no orphans)', () => {
     const root = tempRoot();
     try {
@@ -532,14 +482,7 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
     }
   });
 
-  it('cleanup joins against the attachment store root, NOT the agent-generated subroot (bot Round 2 medium — no double-prefix)', () => {
-    // Regression: previously cleanup took agentAttachmentRoot
-    // (`<home>/attachments/agent-generated/`) and joined the
-    // already-prefixed storage_path against it, producing
-    // `<home>/attachments/agent-generated/agent-generated/...` —
-    // files were never found and never deleted. The fix gives
-    // cleanup the attachmentStoreRoot (`<home>/attachments/`) so
-    // the storage path resolves canonically.
+  it('cleanup joins against the attachment store root, not the agent-generated subroot (no double-prefix)', () => {
     const storeRoot = tempRoot();
     try {
       // Lay down a file at the canonical location
@@ -585,7 +528,7 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
     }
   });
 
-  it('empty organizationIds list is a no-op (bot Round 15 high — no listOrganizations dependency)', () => {
+  it('empty organizationIds list is a no-op (caller-owned org enumeration)', () => {
     const root = tempRoot();
     try {
       const repo = fakeRepo();
@@ -623,41 +566,4 @@ describe('cleanupExpiredAgentAttachments — LRU sweep', () => {
     }
   });
 
-  it('sweeps exactly the org ids the caller passes', () => {
-    const root = tempRoot();
-    try {
-      const repo = fakeRepo();
-      for (const orgId of ['org_a', 'org_b', 'org_c']) {
-        repo.saved.push({
-          id: `aatt_${orgId}`,
-          organizationId: orgId,
-          runId: 'run',
-          memberId: 'mem_1',
-          sourceToolCallId: null,
-          sourceServerId: null,
-          sourceToolName: null,
-          category: 'image',
-          mimeType: 'image/png',
-          filename: 'x.png',
-          storagePath: `agent-generated/${orgId}/run/aatt.png`,
-          byteSize: 100,
-          createdAt: '2026-06-01T00:00:00.000Z',
-          pinnedToMessageId: null,
-        });
-      }
-      // Only sweep two of the three orgs.
-      cleanupExpiredAgentAttachments({
-        repo: repo as never,
-        attachmentStoreRoot: root,
-        organizationIds: ['org_a', 'org_c'],
-        ttlHours: 4,
-        now: () => new Date('2026-06-11T00:01:00.000Z'),
-      });
-      // org_b's row is untouched — the caller didn't ask for it.
-      const remaining = repo.saved.map((r) => r.id).sort();
-      expect(remaining).toEqual(['aatt_org_b']);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 });

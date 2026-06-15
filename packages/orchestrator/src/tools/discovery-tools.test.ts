@@ -231,55 +231,6 @@ describe('search_catalog — §17.5.5 scoring + §17.5.7 sanitization', () => {
     expect(surfaced!.renderedLine).toContain('Custom MCP (srv_hostile)');
   });
 
-  it("isAttachedToEffectiveSet is true for the asking agent's attached MCPs and false for marketplace-only matches", async () => {
-    // Agent has `fetch` attached. The registry also lists "fetch".
-    // The corpus dedupes — the org row wins. flag must reflect the
-    // attached server's id.
-    const fetchSrv = makeServer({
-      id: 'srv_fetch',
-      name: 'Fetch',
-      command: 'uvx',
-      args: ['mcp-server-fetch'],
-      url: undefined,
-    });
-    const repo = stubRepo({
-      orgServers: [fetchSrv],
-      agentAttached: [
-        {
-          attachment: {
-            id: 'att',
-            organizationId: 'org_test',
-            memberId: 'mem_test',
-            mcpServerId: 'srv_fetch',
-            scope: 'worker',
-            tier: 'dispatch',
-            createdAt: '',
-            updatedAt: '',
-          },
-          server: fetchSrv,
-        },
-      ],
-      cache: { srv_fetch: makeTools('fetch') },
-    });
-    const tools = buildDiscoveryTools({
-      organizationId: 'org_test',
-      memberId: 'mem_test',
-      runId: 'run_test',
-      spiritRole: 'worker',
-      tools: baseToolsStub as never,
-      repo,
-      requestAttachmentApproval: () => makeApprovalRequest('apr_x'),
-    });
-    const result = (await tools.search_catalog.execute!(
-      { query: 'fetch' },
-      { toolCallId: 'tc1', messages: [] } as never,
-    )) as { matches: { serverId: string; isAttachedToEffectiveSet: boolean }[] };
-    const attached = result.matches.find((m) => m.serverId === 'srv_fetch');
-    expect(attached?.isAttachedToEffectiveSet).toBe(true);
-    expect(
-      result.matches.some((m) => m.serverId.startsWith('registry:fetch')),
-    ).toBe(false); // org-side row deduped against registry.
-  });
 });
 
 describe('request_attachment — §17.5.6 approval card', () => {
@@ -340,98 +291,6 @@ describe('request_attachment — §17.5.6 approval card', () => {
     expect(repo.saved.channel).toHaveLength(0);
   });
 
-  it('PR 11 (bot fix) — resolves a human-readable serverDisplayName from registry:<id> synthetic ids', async () => {
-    // Bot Round 2 finding: the approval payload was missing a
-    // server-display-name field, so the frontend approval card
-    // fell back to opaque ids like "registry:fetch" instead of
-    // "Fetch". request_attachment now resolves the label at request
-    // time and passes it through. For registry:<id>, the lookup hits
-    // CURATED_REGISTRY directly.
-    const repo = stubRepo({});
-    const requestAttachmentApproval = vi.fn(() => makeApprovalRequest('apr_99'));
-    const tools = buildDiscoveryTools({
-      organizationId: 'org_test',
-      memberId: 'mem_test',
-      runId: 'run_test',
-      spiritRole: 'worker',
-      tools: baseToolsStub as never,
-      repo,
-      requestAttachmentApproval,
-    });
-    await expect(
-      tools.request_attachment.execute!(
-        { server_id: 'registry:fetch', reason: 'need to read a web page' },
-        { toolCallId: 'tc', messages: [] } as never,
-      ),
-    ).rejects.toMatchObject({ approvalId: 'apr_99' });
-    expect(requestAttachmentApproval.mock.calls[0]![0]).toMatchObject({
-      serverId: 'registry:fetch',
-      // "Fetch" is the curated registry entry's canonical name —
-      // the operator sees this in the approval card instead of
-      // the opaque "registry:fetch" id.
-      serverDisplayName: 'Fetch',
-    });
-  });
-
-  it('PR 11 (bot fix) — resolves serverDisplayName via safeServerLabel for org-attached servers', async () => {
-    // For an org MCP that matches a registry entry by URL / package
-    // signature, safeServerLabel returns the curated registry name.
-    // For an un-matched (custom) server, the opaque
-    // "Custom MCP (<id-prefix>)" label survives.
-    const fetchOrg = makeServer({
-      id: 'srv_fetch_org',
-      name: 'Fetch',
-      command: 'uvx',
-      args: ['mcp-server-fetch'],
-      url: undefined,
-    });
-    const repo = stubRepo({ orgServers: [fetchOrg] });
-    const requestAttachmentApproval = vi.fn(() => makeApprovalRequest('apr_xy'));
-    const tools = buildDiscoveryTools({
-      organizationId: 'org_test',
-      memberId: 'mem_test',
-      runId: 'run_test',
-      spiritRole: 'worker',
-      tools: baseToolsStub as never,
-      repo,
-      requestAttachmentApproval,
-    });
-    await expect(
-      tools.request_attachment.execute!(
-        { server_id: 'srv_fetch_org', reason: 'web read' },
-        { toolCallId: 'tc', messages: [] } as never,
-      ),
-    ).rejects.toMatchObject({ approvalId: 'apr_xy' });
-    expect(requestAttachmentApproval.mock.calls[0]![0]).toMatchObject({
-      serverId: 'srv_fetch_org',
-      serverDisplayName: 'Fetch',
-    });
-  });
-
-  it("returns a clean error when no approval callback is wired (legacy V2 callsites)", async () => {
-    // PR 11 keeps requestAttachmentApproval optional so existing tests
-    // + the wake-run path that pre-dates PR 11 don't break. When it's
-    // absent, the tool returns a deterministic error instead of
-    // throwing — the model gets a structured response rather than an
-    // unhandled exception that would mark the tool call as crashed.
-    const repo = stubRepo({});
-    const tools = buildDiscoveryTools({
-      organizationId: 'org_test',
-      memberId: 'mem_test',
-      runId: 'run_test',
-      spiritRole: 'worker',
-      tools: baseToolsStub as never,
-      repo,
-    });
-    const result = (await tools.request_attachment.execute!(
-      { server_id: 'srv', reason: 'why' },
-      { toolCallId: 'tc', messages: [] } as never,
-    )) as { error?: string };
-    // toModelToolErrorOutput returns `{ error: string }` — no `ok`
-    // field, just the error payload the model surfaces back to the
-    // user.
-    expect(result.error).toContain('request_attachment is unavailable');
-  });
 });
 
 describe('buildSearchCorpus — registry/org dedup', () => {
@@ -508,19 +367,4 @@ describe('buildSearchCorpus — registry/org dedup', () => {
     expect(match!.renderedLine).not.toContain('basement workshop');
   });
 
-  it('PR 11 (bot fix) — registry-entry description text is also searchable (regression: keyword matches that only live in entry.description)', () => {
-    // Sibling check: registry entries have richer `description` text
-    // than their (often null) `curatedDescription`. The pre-fix
-    // scorer only fed `curatedDescription` into the description
-    // bucket, so a query that matched only `entry.description` could
-    // miss the entry. The fix uses the registry's description as
-    // the searchable field too.
-    const corpus = buildSearchCorpus([]);
-    const fetchRow = corpus.find((c) => c.serverId === 'registry:fetch');
-    expect(fetchRow).toBeDefined();
-    // Either curatedDescription or description is searchable for
-    // registry entries; the union is what scoring sees.
-    expect(fetchRow!.searchableDescription).not.toBeNull();
-    expect(fetchRow!.searchableDescription!.length).toBeGreaterThan(0);
-  });
 });

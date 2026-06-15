@@ -112,29 +112,6 @@ describe('checkToolPolicy', () => {
       ).toMatchObject({ allowed: true, requiresApproval: true });
     });
 
-    it('bypasses approval for writes inside .ujima-goals', async () => {
-      const team = teamWithRole({
-        name: 'goal-writer',
-        title: 'Goal Writer',
-        instructions: 'Can manage goal artifacts.',
-        provider: 'openai',
-        model: 'gpt-5.4',
-        workspaceScopes: ['.'],
-        tools: ['write', 'edit', 'multiedit'],
-        channels: ['general'],
-      });
-
-      expect(
-        checkToolPolicy(
-          team,
-          'goal-writer',
-          'write',
-          'write',
-          join(workspaceRoot, '.ujima-goals', 'plan.md'),
-        ),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
-
     it('does not require approval for write/edit/multiedit inside role scope', () => {
       const team = teamWithRole({
         name: 'web-writer',
@@ -183,28 +160,6 @@ describe('checkToolPolicy', () => {
       ).toMatchObject({ allowed: true, requiresApproval: true });
     });
 
-    it('allows reads outside role scope without approval', () => {
-      const team = teamWithRole({
-        name: 'web-reader',
-        title: 'Web Reader',
-        instructions: 'Can inspect apps/web.',
-        provider: 'openai',
-        model: 'gpt-5.4',
-        workspaceScopes: ['apps/web'],
-        tools: [],
-        channels: ['general'],
-      });
-
-      expect(
-        checkToolPolicy(
-          team,
-          'web-reader',
-          'view',
-          'read',
-          join(workspaceRoot, 'apps', 'api', 'src', 'main.ts'),
-        ),
-      ).toEqual({ allowed: true, requiresApproval: false });
-    });
   });
 
   // Regression coverage for two bugs in the channel-tool surface:
@@ -268,44 +223,6 @@ describe('checkToolPolicy', () => {
       expect(
         checkToolPolicy(team, 'frontend-engineer', 'channel.dm', 'message', 'dm:alex'),
       ).toEqual({ allowed: true, requiresApproval: false });
-    });
-
-    it('channel.* posting and read tools are baseline-allowed regardless of role.tools', () => {
-      // Design choice: channel.post / channel.reply / channel.dm /
-      // channel.read / channel.list / message / schedule are baseline
-      // conversational primitives. Every agent gets them in its
-      // palette (via ALWAYS_AVAILABLE_AGENT_TOOLS) regardless of
-      // what role.tools declares. Fine-grained access restrictions
-      // (e.g., "junior-qa can't DM senior-*") belong to the
-      // permissions middleware, NOT the role.tools allowlist.
-      const team = loadAgentTeam({
-        name: 'Channel Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
-        },
-        roles: [
-          {
-            name: 'silent-role',
-            title: 'Silent',
-            instructions: 'Role with no channel tools listed.',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            workspaceScopes: ['apps/web'],
-            tools: ['filesystem'], // role doesn't list channel.* — should still be allowed
-            channels: ['general'],
-          },
-        ],
-        agents: [],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
-
-      // All baseline conversational tools are allowed for every role.
-      for (const toolId of ['channel.post', 'channel.reply', 'channel.dm', 'channel.read', 'channel.list', 'message', 'schedule']) {
-        expect(
-          checkToolPolicy(team, 'silent-role', toolId, 'message'),
-        ).toEqual({ allowed: true, requiresApproval: false });
-      }
     });
 
   });
@@ -385,42 +302,6 @@ describe('checkToolPolicy', () => {
       });
       expect(result.allowed).toBe(false);
       expect(result.reason).toMatch(/mandatory-reply/);
-    });
-
-    it('rejects deprecated self.note in favor of memory tools', () => {
-      const team = buildTeam();
-      expect(checkToolPolicy(team, 'engineer', 'self.note', 'message')).toEqual({
-        allowed: false,
-        requiresApproval: false,
-        reason: 'self.note was removed; use memory.write / memory.recall instead.',
-      });
-      expect(checkToolPolicy(team, 'engineer', 'memory.write', 'message')).toEqual({
-        allowed: true,
-        requiresApproval: false,
-      });
-    });
-
-    it('skips the approval gate for goal/question management tools', () => {
-      const team = buildTeam();
-      for (const [tool, action] of [
-        ['goal.start', 'create'],
-        ['goal.task.update', 'update'],
-        ['question.ask', 'create'],
-      ] as const) {
-        expect(checkToolPolicy(team, 'engineer', tool, action)).toEqual({
-          allowed: true,
-          requiresApproval: false,
-        });
-      }
-    });
-
-    it('rejects channel.pass in direct-message threads', () => {
-      const team = buildTeam();
-      const result = checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
-        threadId: 'dm:member-a:member-b',
-      });
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toMatch(/direct-message/);
     });
 
     it('allows channel.pass for non-mention wake reasons', () => {

@@ -26,11 +26,11 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash .github/scripts/check-pr-size.sh
 
-  ci:
+  # Single install step that the rest of the gating jobs share via
+  # cache. node_modules + .turbo + vendored platform binaries all
+  # land in restorable caches keyed on lockfile / script content.
+  install:
     runs-on: ubuntu-latest
-    env:
-      UJIMA_TELEGRAM_POLLING: '0'
-
     steps:
       - uses: actions/checkout@v4
 
@@ -39,31 +39,185 @@ jobs:
           bun-version: 1.3.11
           cache: true
 
-      - name: Restore Turbo cache
+      - name: Cache node_modules
+        id: node_modules
         uses: actions/cache@v4
         with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: node_modules-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Install dependencies
+        if: steps.node_modules.outputs.cache-hit != 'true'
         run: bun install --frozen-lockfile
 
+      - name: Cache vendored binaries
+        id: vendor_bin
+        uses: actions/cache@v4
+        with:
+          path: packages/orchestrator/bin
+          key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
+
       - name: Vendor CLI binaries
+        if: steps.vendor_bin.outputs.cache-hit != 'true'
         run: bash scripts/vendor-binaries.sh linux x86_64
 
-      - name: Lint
-        run: bun run lint
+  lint:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: node_modules-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-lint-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
+          restore-keys: |
+            turbo-lint-${{ runner.os }}-
+            turbo-${{ runner.os }}-
+      - run: bun run lint
 
-      - name: Typecheck
-        run: bun run typecheck
+  typecheck:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: node_modules-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-typecheck-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
+          restore-keys: |
+            turbo-typecheck-${{ runner.os }}-
+            turbo-${{ runner.os }}-
+      - run: bun run typecheck
 
-      - name: Build
-        run: bun run build
+  build:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: node_modules-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: packages/orchestrator/bin
+          key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-build-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
+          restore-keys: |
+            turbo-build-${{ runner.os }}-
+            turbo-${{ runner.os }}-
+      - run: bun run build
 
-      - name: Test
-        run: bun run test:ci
+  # Unit tests gate PR merges. Sharded so the wall-clock per shard
+  # is roughly half the unsharded test job. Integration tests live
+  # in the integration job below and DON'T gate PRs.
+  test-unit:
+    needs: install
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: node_modules-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: packages/orchestrator/bin
+          key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
+      - run: |
+          bunx vitest run \
+            --minWorkers=1 --maxWorkers=4 \
+            --exclude '**/*.int.test.ts' \
+            --exclude '**/*.integration.test.ts' \
+            --shard=${{ matrix.shard }}/2
+
+  # Integration tests. Runs:
+  #   * On every push to main
+  #   * When a PR has the `run-integration` label
+  #   * Nightly via the scheduled workflow (see schedule below)
+  # They do NOT gate PR merges by default — flip the label when a
+  # change actually touches integration-sensitive paths.
+  test-integration:
+    needs: install
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'run-integration'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: node_modules-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: packages/orchestrator/bin
+          key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
+      - run: bun run test:integration:ci
+
+  # PR-blocking gate: collapses the parallel jobs into one required
+  # status check. GitHub branch protection only needs to require
+  # this single job; if any of the upstream jobs fail, this one
+  # fails too.
+  ci:
+    needs: [lint, typecheck, build, test-unit]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All gating jobs passed."
 
   changes:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

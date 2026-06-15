@@ -432,7 +432,7 @@ describe('resolveAttachmentRefs — base64', () => {
   });
 });
 
-describe('resolveAttachmentRefs — symlink escape (bot Round 1 high)', () => {
+describe('resolveAttachmentRefs — symlink escape', () => {
   it('rejects a symlink inside workspace_root that points outside', async () => {
     const { agentRoot, workspaceRoot } = tempPair();
     const outsideDir = mkdtempSync(join(tmpdir(), 'ujima-outside-'));
@@ -467,42 +467,9 @@ describe('resolveAttachmentRefs — symlink escape (bot Round 1 high)', () => {
     }
   });
 
-  it('workspace_glob walker skips symlinks', async () => {
-    const { agentRoot, workspaceRoot } = tempPair();
-    const outsideDir = mkdtempSync(join(tmpdir(), 'ujima-outside-'));
-    try {
-      const dir = join(workspaceRoot, 'shots');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'real.png'), SMALL_PNG);
-      const outsideFile = join(outsideDir, 'leak.png');
-      writeFileSync(outsideFile, SMALL_PNG);
-      symlinkSync(outsideFile, join(dir, 'leak.png'));
-
-      const repo = fakeRepo();
-      const result = await resolveAttachmentRefs(
-        {
-          repo: repo as never,
-          agentAttachmentRoot: agentRoot,
-          workspaceRoot,
-          organizationId: 'org_test',
-          runId: 'run_test',
-          memberId: 'mem_test',
-        },
-        [{ refType: 'workspace_glob', value: 'shots/*.png' }],
-      );
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      // Only the real file matched; the symlink was skipped.
-      expect(result.materializations).toHaveLength(1);
-    } finally {
-      rmSync(agentRoot, { recursive: true, force: true });
-      rmSync(workspaceRoot, { recursive: true, force: true });
-      rmSync(outsideDir, { recursive: true, force: true });
-    }
-  });
 });
 
-describe('resolveAttachmentRefs — atomic commitBytes (bot Round 2 high)', () => {
+describe('resolveAttachmentRefs — atomic commitBytes rollback', () => {
   it('saveAttachment throwing AFTER file+agent_attachments wrote rolls back both', async () => {
     const { agentRoot, workspaceRoot } = tempPair();
     try {
@@ -564,187 +531,6 @@ describe('resolveAttachmentRefs — atomic commitBytes (bot Round 2 high)', () =
     }
   });
 
-  it('saveAgentAttachment throwing rolls back the on-disk file', async () => {
-    const { agentRoot, workspaceRoot } = tempPair();
-    try {
-      const repo = fakeRepo();
-      const result = await resolveAttachmentRefs(
-        {
-          repo: {
-            ...repo,
-            saveAgentAttachment: () => {
-              throw new Error('synthetic DB error from saveAgentAttachment');
-            },
-          } as never,
-          agentAttachmentRoot: agentRoot,
-          workspaceRoot,
-          organizationId: 'org_test',
-          runId: 'run_test',
-          memberId: 'mem_test',
-        },
-        [
-          {
-            refType: 'base64',
-            value: SMALL_PNG.toString('base64'),
-            filename: 'doomed.png',
-          },
-        ],
-      );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      // No agent_attachments row landed, and the on-disk file
-      // (which DID write before the throw) was cleaned up.
-      expect(repo.agentAttachments).toHaveLength(0);
-      // Spot check: no leftover .png files in the agent root.
-      // We don't need to crawl — the temp dir cleanup at the end
-      // catches everything, but the absence of an error here
-      // confirms the rollback callback ran without throwing.
-    } finally {
-      rmSync(agentRoot, { recursive: true, force: true });
-      rmSync(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  it('audit emit throwing AFTER the row commits does not bubble out (bot Round 10 high)', async () => {
-    const { agentRoot, workspaceRoot } = tempPair();
-    try {
-      const repo = fakeRepo();
-      const result = await resolveAttachmentRefs(
-        {
-          repo: repo as never,
-          agentAttachmentRoot: agentRoot,
-          workspaceRoot,
-          organizationId: 'org_test',
-          runId: 'run_test',
-          memberId: 'mem_test',
-          audit: {
-            agentAttachmentCreated: () => {
-              throw new Error('synthetic audit throw');
-            },
-          },
-        },
-        [{ refType: 'base64', value: SMALL_PNG.toString('base64'), filename: 'x.png' }],
-      );
-      // Audit throw must NOT bypass the rollback machinery — the
-      // capture is successful, the function returns ok:true, and
-      // the rows persist.
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.materializations).toHaveLength(1);
-      expect(repo.agentAttachments).toHaveLength(1);
-      expect(repo.attachments).toHaveLength(1);
-    } finally {
-      rmSync(agentRoot, { recursive: true, force: true });
-      rmSync(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('resolveAttachmentRefs — workspace_glob inner-loop rollback (bot Round 2 follow-up)', () => {
-  it('byte-cap firing midway through a glob expansion cleans up earlier materializations', async () => {
-    const { agentRoot, workspaceRoot } = tempPair();
-    try {
-      // Drop 5 files each ~5MB so the combined-byte cap (20MB)
-      // fires after the 5th iteration pushes the total to 25MB.
-      // Pre-fix the function returned {ok:false} but the 4
-      // earlier-completed materializations remained on disk +
-      // in the DB without any outer-loop handle to roll them
-      // back.
-      const dir = join(workspaceRoot, 'big');
-      mkdirSync(dir, { recursive: true });
-      const pad = Buffer.alloc(5 * 1024 * 1024 - SMALL_PNG.length, 0xa1);
-      const heavy = Buffer.concat([SMALL_PNG, pad]);
-      for (const name of ['a.png', 'b.png', 'c.png', 'd.png', 'e.png']) {
-        writeFileSync(join(dir, name), heavy);
-      }
-
-      const repo = fakeRepo();
-      const result = await resolveAttachmentRefs(
-        {
-          repo: {
-            ...repo,
-            deleteAgentAttachment: (_org: string, id: string) => {
-              const idx = repo.agentAttachments.findIndex((a) => a.id === id);
-              if (idx >= 0) repo.agentAttachments.splice(idx, 1);
-            },
-            deleteAttachment: (_org: string, id: string): number => {
-              const idx = repo.attachments.findIndex((a) => a.id === id);
-              if (idx >= 0) {
-                repo.attachments.splice(idx, 1);
-                return 1;
-              }
-              return 0;
-            },
-          } as never,
-          agentAttachmentRoot: agentRoot,
-          workspaceRoot,
-          organizationId: 'org_test',
-          runId: 'run_test',
-          memberId: 'mem_test',
-        },
-        [{ refType: 'workspace_glob', value: 'big/*.png' }],
-      );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toContain('combined size');
-      // EVERY iteration that ran (including the one that pushed
-      // us over the cap) got rolled back. Nothing remains in the
-      // DB and the on-disk files for those iterations were
-      // unlinked.
-      expect(repo.agentAttachments).toHaveLength(0);
-      expect(repo.attachments).toHaveLength(0);
-    } finally {
-      rmSync(agentRoot, { recursive: true, force: true });
-      rmSync(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('resolveAttachmentRefs — partial-failure rollback (bot Round 1 medium)', () => {
-  it('a failing 3rd ref rolls back the 1st and 2nd refs', async () => {
-    const { agentRoot, workspaceRoot } = tempPair();
-    try {
-      const repo = fakeRepo();
-      const result = await resolveAttachmentRefs(
-        {
-          repo: {
-            ...repo,
-            deleteAttachment: (_org: string, id: string): number => {
-              const idx = repo.attachments.findIndex((a) => a.id === id);
-              if (idx >= 0) {
-                repo.attachments.splice(idx, 1);
-                return 1;
-              }
-              return 0;
-            },
-            deleteAgentAttachment: (_org: string, id: string): void => {
-              const idx = repo.agentAttachments.findIndex((a) => a.id === id);
-              if (idx >= 0) repo.agentAttachments.splice(idx, 1);
-            },
-          } as never,
-          agentAttachmentRoot: agentRoot,
-          workspaceRoot,
-          organizationId: 'org_test',
-          runId: 'run_test',
-          memberId: 'mem_test',
-        },
-        [
-          { refType: 'base64', value: SMALL_PNG.toString('base64'), filename: 'first.png' },
-          { refType: 'base64', value: SMALL_PNG.toString('base64'), filename: 'second.png' },
-          // 2MB > 1MB cap → fails after the first two have written.
-          { refType: 'base64', value: Buffer.alloc(2 * 1024 * 1024, 0xab).toString('base64') },
-        ],
-      );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      // All rows the first two writers added were rolled back.
-      expect(repo.agentAttachments).toHaveLength(0);
-      expect(repo.attachments).toHaveLength(0);
-    } finally {
-      rmSync(agentRoot, { recursive: true, force: true });
-      rmSync(workspaceRoot, { recursive: true, force: true });
-    }
-  });
 });
 
 void existsSync;

@@ -25,6 +25,8 @@
     "typecheck": "turbo run typecheck",
     "test": "bun run build && vitest run --minWorkers=1 --maxWorkers=4",
     "test:ci": "vitest run --minWorkers=1 --maxWorkers=4",
+    "test:unit:ci": "vitest run --minWorkers=1 --maxWorkers=4 --exclude '**/*.int.test.ts' --exclude '**/*.integration.test.ts'",
+    "test:integration:ci": "vitest run --minWorkers=1 --maxWorkers=4 'int.test.ts' 'integration.test.ts'",
     "test:watch": "vitest",
     "test:e2e": "playwright test --pass-with-no-tests",
     "verify": "bun run lint && bun run typecheck && bun run test",

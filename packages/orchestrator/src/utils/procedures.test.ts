@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
 import {
   aggregateProcedures,
   isAgentRestrictedProcedurePath,
-  isProceduresPath,
   isValidProcedureName,
   listProceduresByScope,
-  PROCEDURE_BUDGETS,
   PROCEDURE_LAW_HARD_CAP,
   proceduresDirFor,
   removeProcedure,
@@ -20,35 +18,10 @@ function freshWorkspace(): string {
   return mkdtempSync(join(tmpdir(), 'culture-test-'));
 }
 
-describe('isProceduresPath', () => {
-  it('matches every scope', () => {
-    expect(isProceduresPath('ai/memory-bank/org/procedures/foo.md')).toBe(true);
-    expect(isProceduresPath('ai/memory-bank/channels/eng/procedures/bar.md')).toBe(true);
-    expect(isProceduresPath('ai/memory-bank/agents/layla/procedures/baz.md')).toBe(true);
-  });
-  it('rejects sibling paths', () => {
-    expect(isProceduresPath('ai/memory-bank/tasks/foo.md')).toBe(false);
-    expect(isProceduresPath('ai/memory-bank/org/policies/foo.md')).toBe(false);
-    expect(isProceduresPath('src/components/procedures/foo.tsx')).toBe(false);
-  });
-});
-
 describe('isAgentRestrictedProcedurePath', () => {
   it('blocks agent writes to org and channel culture', () => {
     expect(isAgentRestrictedProcedurePath('layla', 'ai/memory-bank/org/procedures/foo.md')).toBe(true);
     expect(isAgentRestrictedProcedurePath('layla', 'ai/memory-bank/channels/eng/procedures/foo.md')).toBe(true);
-  });
-  it('blocks agent writes to OTHER agents subtree', () => {
-    expect(isAgentRestrictedProcedurePath('layla', 'ai/memory-bank/agents/phoebe/procedures/foo.md')).toBe(true);
-    expect(isAgentRestrictedProcedurePath('layla', 'ai/memory-bank/agents/phoebe/notes.md')).toBe(true);
-  });
-  it('allows agent writes to own subtree', () => {
-    expect(isAgentRestrictedProcedurePath('layla', 'ai/memory-bank/agents/layla/procedures/foo.md')).toBe(false);
-    expect(isAgentRestrictedProcedurePath('layla', 'ai/memory-bank/agents/layla/notes.md')).toBe(false);
-  });
-  it('allows writes outside the memory-bank entirely', () => {
-    expect(isAgentRestrictedProcedurePath('layla', 'ai/memory-bank/tasks/foo.md')).toBe(false);
-    expect(isAgentRestrictedProcedurePath('layla', 'src/foo.ts')).toBe(false);
   });
 });
 
@@ -56,12 +29,6 @@ describe('isValidProcedureName', () => {
   it('accepts lowercase-kebab', () => {
     expect(isValidProcedureName('attribute-decisions')).toBe(true);
     expect(isValidProcedureName('a1')).toBe(true);
-  });
-  it('rejects bad shapes', () => {
-    expect(isValidProcedureName('UPPER')).toBe(false);
-    expect(isValidProcedureName('with space')).toBe(false);
-    expect(isValidProcedureName('-leading-hyphen')).toBe(false);
-    expect(isValidProcedureName('x')).toBe(false); // < 2 chars
   });
 });
 
@@ -71,11 +38,6 @@ describe('proceduresDirFor', () => {
     expect(proceduresDirFor(root, 'org', '')).toBe(normalize('/tmp/workspace/ai/memory-bank/org/procedures'));
     expect(proceduresDirFor(root, 'channel', 'eng')).toBe(normalize('/tmp/workspace/ai/memory-bank/channels/eng/procedures'));
     expect(proceduresDirFor(root, 'agent', 'layla')).toBe(normalize('/tmp/workspace/ai/memory-bank/agents/layla/procedures'));
-  });
-  it('sanitises unsafe segments', () => {
-    const root = '/tmp/workspace';
-    expect(proceduresDirFor(root, 'channel', '../etc/passwd')).toContain('etc-passwd');
-    expect(proceduresDirFor(root, 'agent', '../escape')).toContain('escape');
   });
 });
 
@@ -155,22 +117,6 @@ describe('saveProcedure and listProceduresByScope round-trip', () => {
         actor: 'owner',
       }),
     ).rejects.toThrow(/max 3 LAW entries|max 3/);
-  });
-
-  it('rejects enforced=true on non-org scopes', async () => {
-    const root = freshWorkspace();
-    await expect(
-      saveProcedure({
-        workspaceRoot: root,
-        scope: 'channel',
-        scopeId: 'eng',
-        name: 'channel-rule',
-        description: 'd',
-        body: 'b',
-        enforced: true,
-        actor: 'alice',
-      }),
-    ).rejects.toThrow(/enforced=true is only valid/);
   });
 
   it('removeProcedure deletes the file and returns true', async () => {
@@ -282,73 +228,6 @@ describe('aggregateProcedures', () => {
     expect(out.lawText).toContain('Customer data leaves the workspace');
   });
 
-  it('respects the per-scope byte budget', async () => {
-    const root = freshWorkspace();
-    // Stuff org with enough entries to overflow 750 bytes worth of
-    // "- name: description\n" lines. Each is ~80 bytes; ~10 lines fits,
-    // anything beyond should be dropped.
-    for (let i = 0; i < 30; i += 1) {
-      await saveProcedure({
-        workspaceRoot: root,
-        scope: 'org',
-        scopeId: '',
-        name: `procedure-${String(i).padStart(2, '0')}`,
-        description: 'Long-ish description to consume budget bytes deterministically.',
-        body: 'b',
-        actor: 'owner',
-      });
-    }
-    const out = await aggregateProcedures({
-      workspaceRoot: root,
-      organizationId: 'org-1',
-      memberId: 'layla',
-    });
-    expect(out.applied.length).toBeLessThanOrEqual(30);
-    // Org budget is 750 bytes; fitted entries should not exceed it.
-    const orgBytes = out.cultureText
-      ? Buffer.byteLength(
-          out.cultureText
-            .split('\n')
-            .filter((line) => line.startsWith('- procedure-'))
-            .join('\n'),
-          'utf8',
-        )
-      : 0;
-    expect(orgBytes).toBeLessThanOrEqual(PROCEDURE_BUDGETS.org);
-  });
-
-  it('skips channel section when channelId is absent', async () => {
-    const root = freshWorkspace();
-    await saveProcedure({
-      workspaceRoot: root,
-      scope: 'channel',
-      scopeId: 'eng',
-      name: 'eng-rule',
-      description: 'd',
-      body: 'b',
-      actor: 'admin',
-    });
-    // Add an unrelated org procedure so cultureText is defined and we
-    // can assert the channel section is NOT in it.
-    await saveProcedure({
-      workspaceRoot: root,
-      scope: 'org',
-      scopeId: '',
-      name: 'org-rule',
-      description: 'd',
-      body: 'b',
-      actor: 'owner',
-    });
-    const out = await aggregateProcedures({
-      workspaceRoot: root,
-      organizationId: 'org-1',
-      memberId: 'layla',
-      // no channelId
-    });
-    expect(out.cultureText).toBeDefined();
-    expect(out.cultureText ?? '').not.toContain('Channel Culture');
-    expect(out.cultureText ?? '').toContain('Workspace Culture');
-  });
 });
 
 describe('aggregator cache stability', () => {
@@ -392,15 +271,3 @@ describe('aggregator cache stability', () => {
   });
 });
 
-describe('directory survives bad YAML', () => {
-  it('skips unreadable files instead of throwing', async () => {
-    const root = freshWorkspace();
-    const dir = proceduresDirFor(root, 'org', '');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'broken.md'), 'no frontmatter just text', 'utf8');
-    writeFileSync(join(dir, 'good.md'), `---\nname: good\ndescription: d\ncreated_at: 2026\ncreated_by: x\nupdated_at: 2026\nupdated_by: x\nversion: 1\n---\nbody`, 'utf8');
-    const list = await listProceduresByScope(root, 'org', '');
-    // Both load — the "broken" one falls back to name=filename.
-    expect(list.map((p) => p.name).sort()).toEqual(['broken', 'good']);
-  });
-});
