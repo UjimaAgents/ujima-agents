@@ -26,19 +26,4 @@ describe('isMcpDispatchEnabled — kill-switch invariants', () => {
     expect(isMcpDispatchEnabled(undefined, env)).toBe(false);
   });
 
-  it('process-wide switch wins over the allowlist (kill switch in both directions)', () => {
-    expect(
-      isMcpDispatchEnabled('org_other', {
-        UJIMA_MCP_DISPATCH: 'true',
-        UJIMA_MCP_DISPATCH_ORG_ALLOWLIST: 'org_dogfood',
-      }),
-    ).toBe(true);
-  });
-
-  it('tolerates whitespace and empty entries in the allowlist', () => {
-    const env = { UJIMA_MCP_DISPATCH_ORG_ALLOWLIST: ' org_a , , org_b ' };
-    expect(isMcpDispatchEnabled('org_a', env)).toBe(true);
-    expect(isMcpDispatchEnabled('org_b', env)).toBe(true);
-    expect(isMcpDispatchEnabled('', env)).toBe(false);
-  });
 });

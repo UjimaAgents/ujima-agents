@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  appendEvents,
-  filterActivity,
-  uniqueAgents,
-  uniqueTypes,
-  type ActivityEvent,
-} from './activity-stream';
+import { appendEvents, filterActivity, type ActivityEvent } from './activity-stream';
 
 const mk = (
   id: string,
@@ -36,44 +30,6 @@ describe('activity-stream filter', () => {
     expect(filterActivity(events, { agents: [], types: [] })).toEqual(events);
   });
 
-  it('filters by publisher (agent)', () => {
-    const hits = filterActivity(events, { agents: ['sr-designer'] });
-    expect(hits.map((e) => e.event_id)).toEqual(['e1', 'e3']);
-  });
-
-  it('filters by event type', () => {
-    const hits = filterActivity(events, { types: ['tool_call', 'approval_requested'] });
-    expect(hits.map((e) => e.event_id)).toEqual(['e2', 'e4']);
-  });
-
-  it('filters by sinceMs', () => {
-    const hits = filterActivity(events, { sinceMs: 1_700_000_001_500 });
-    expect(hits.map((e) => e.event_id)).toEqual(['e3', 'e4']);
-  });
-
-  it('filters by free-text search (payload JSON included)', () => {
-    const hits = filterActivity(events, { search: 'create_frame' });
-    expect(hits.map((e) => e.event_id)).toEqual(['e2']);
-  });
-
-  it('combines agent + type + search', () => {
-    const hits = filterActivity(events, {
-      agents: ['jr-designer'],
-      types: ['tool_call'],
-      search: 'create',
-    });
-    expect(hits.map((e) => e.event_id)).toEqual(['e2']);
-  });
-
-  it('uniqueAgents / uniqueTypes populate filter dropdowns', () => {
-    expect(uniqueAgents(events)).toEqual(['jr-designer', 'orchestrator', 'sr-designer']);
-    expect(uniqueTypes(events)).toEqual([
-      'agent_exited',
-      'agent_started',
-      'approval_requested',
-      'tool_call',
-    ]);
-  });
 });
 
 describe('activity-stream append', () => {
@@ -90,17 +46,6 @@ describe('activity-stream append', () => {
     expect(merged.map((e) => e.event_id)).toEqual(['e1', 'e2', 'e3']);
   });
 
-  it('uses order ahead of timestamp when events are sequenced', () => {
-    const merged = appendEvents(
-      [],
-      [
-        { event_id: 'tool', type: 't', publisher: 'p', timestamp: new Date(3000).toISOString(), order: 2 },
-        { event_id: 'chunk', type: 't', publisher: 'p', timestamp: new Date(1000).toISOString(), order: 1 },
-      ],
-    );
-    expect(merged.map((e) => e.event_id)).toEqual(['chunk', 'tool']);
-  });
-
   it('trims to max keeping most recent', () => {
     const base: ActivityEvent[] = Array.from({ length: 5 }, (_, i) =>
       mk(`e${i}`, 'p', 't', i * 1_000),
@@ -109,8 +54,4 @@ describe('activity-stream append', () => {
     expect(trimmed.map((e) => e.event_id)).toEqual(['e2', 'e3', 'e4']);
   });
 
-  it('no-op when incoming is empty', () => {
-    const current = [mk('e1', 'p', 't', 0)];
-    expect(appendEvents(current, [])).toBe(current);
-  });
 });

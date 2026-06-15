@@ -222,6 +222,26 @@ export const AttachmentSchema = z.object({
 });
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
+// Agent-generated attachment. Unpinned rows age out via LRU;
+// pinning sets pinnedToMessageId and the row survives.
+export const AgentAttachmentSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  runId: IdSchema,
+  memberId: IdSchema,
+  sourceToolCallId: z.string().nullable(),
+  sourceServerId: z.string().nullable(),
+  sourceToolName: z.string().nullable(),
+  category: AttachmentCategorySchema,
+  mimeType: z.string().min(1),
+  filename: z.string().min(1),
+  storagePath: z.string().min(1),
+  byteSize: z.number().int().nonnegative(),
+  createdAt: TimestampSchema,
+  pinnedToMessageId: z.string().nullable(),
+});
+export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+
 export const MessageAttachmentSchema = z.object({
   messageId: IdSchema,
   attachmentId: IdSchema,

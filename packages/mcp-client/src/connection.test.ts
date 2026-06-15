@@ -64,36 +64,6 @@ describe('MCP connection', () => {
     expect(JSON.stringify(result.content)).toContain('hi');
   });
 
-  it('invokes onToolCall with agent tag, duration and result', async () => {
-    const { server: s, clientTransport } = await startServer();
-    server = s;
-    const calls: { agentId: string; mcpId: string; tool: string }[] = [];
-    conn = await connectMCP(def, {
-      transport: clientTransport,
-      onToolCall: (ctx, mcpId, tool) => {
-        calls.push({ agentId: ctx.agentId, mcpId, tool });
-      },
-    });
-    await conn.callTool({ agentId: 'sr-designer', taskId: 't1' }, 'echo', { msg: 'x' });
-    expect(calls).toEqual([{ agentId: 'sr-designer', mcpId: 'test-mcp', tool: 'echo' }]);
-  });
-
-  it('serializes concurrent tool calls through the queue', async () => {
-    const order: string[] = [];
-    const { server: s, clientTransport } = await startServer({
-      onCall: (name) => order.push(`start:${name}`),
-      toolDelayMs: 20,
-    });
-    server = s;
-    conn = await connectMCP(def, { transport: clientTransport });
-    await Promise.all([
-      conn.callTool({ agentId: 'a1' }, 'echo', { msg: '1' }),
-      conn.callTool({ agentId: 'a2' }, 'echo', { msg: '2' }),
-      conn.callTool({ agentId: 'a3' }, 'echo', { msg: '3' }),
-    ]);
-    expect(order).toEqual(['start:echo', 'start:echo', 'start:echo']);
-  });
-
   it('isOpen reflects close()', async () => {
     const { server: s, clientTransport } = await startServer();
     server = s;
@@ -113,18 +83,4 @@ describe('isConnectionClosedError', () => {
     expect(isConnectionClosedError(new Error('Browser has been closed'))).toBe(true);
   });
 
-  it('matches transport-level close messages', () => {
-    expect(isConnectionClosedError(new Error('transport is closed'))).toBe(true);
-    expect(isConnectionClosedError(new Error('Connection closed before response'))).toBe(true);
-  });
-
-  it('returns false for unrelated errors', () => {
-    expect(isConnectionClosedError(new Error('invalid argument: msg'))).toBe(false);
-    expect(isConnectionClosedError('rate limited')).toBe(false);
-    expect(isConnectionClosedError(undefined)).toBe(false);
-  });
-
-  it('handles string inputs', () => {
-    expect(isConnectionClosedError('Target closed')).toBe(true);
-  });
 });

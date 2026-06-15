@@ -48,6 +48,18 @@ export function saveAttachment(db: DbHandle, attachment: Attachment): Attachment
   return payload;
 }
 
+/** Hard-delete one attachment row. Returns the affected count. */
+export function deleteAttachment(
+  db: DbHandle,
+  organizationId: string,
+  attachmentId: string,
+): number {
+  const info = db
+    .prepare(`DELETE FROM attachments WHERE organization_id = ? AND id = ?`)
+    .run(organizationId, attachmentId);
+  return info.changes ?? 0;
+}
+
 export function getAttachment(
   db: DbHandle,
   organizationId: string,

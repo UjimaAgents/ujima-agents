@@ -923,6 +923,7 @@ export class ConversationService {
     body: string;
     replyTo?: string;
     mentions?: string[];
+    attachmentIds?: string[];
     metadata?: ConversationMessageMetadata;
   }) {
     const channel = this.requireActiveChannel(input.organizationId, input.channelId);
@@ -944,6 +945,7 @@ export class ConversationService {
       content: input.body,
       mentions: input.mentions,
       parentMessageId: input.replyTo,
+      attachmentIds: input.attachmentIds,
       metadata: input.metadata,
     });
   }
@@ -954,6 +956,7 @@ export class ConversationService {
     messageId: string;
     body: string;
     mentions?: string[];
+    attachmentIds?: string[];
     metadata?: ConversationMessageMetadata;
   }) {
     const parent = this.requireMessage(input.organizationId, input.messageId);
@@ -965,6 +968,7 @@ export class ConversationService {
       content: input.body,
       mentions: input.mentions,
       parentMessageId: parent.id,
+      attachmentIds: input.attachmentIds,
       metadata: input.metadata,
     });
   }

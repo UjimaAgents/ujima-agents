@@ -21,7 +21,7 @@ export interface McpRuntimeConnection {
 export interface McpRuntimePool {
   get(
     def: MCPDef,
-    opts?: { agentId?: string; scopePaths?: string[] },
+    opts?: { agentId?: string; scopePaths?: string[]; cwd?: string },
   ): Promise<McpRuntimeConnection>;
 }
 

@@ -11,6 +11,7 @@ import type {
   WakeReason,
 } from '@ujima/shared';
 import type { ActiveSpiritRegistry } from './active-spirit-registry.js';
+import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 import type { ConversationService } from './conversation.js';
 import type { AiService } from '../ai-service.js';
 import type { McpRuntimePool } from './mcp-runtime.js';
@@ -54,6 +55,12 @@ export interface SpiritServiceOptions {
   attachmentApprovalRequester?: (
     input: AttachmentApprovalRequest,
   ) => ApprovalRequest;
+  /**
+   * Agent-attachments capture hook. Runs after each successful
+   * native MCP invoke; returns refs the V2 spawn injects into the
+   * tool result. Absent → results pass through unchanged.
+   */
+  attachmentCapture?: AttachmentCaptureClosure;
 }
 
 export type SpiritMcpPool = McpRuntimePool;

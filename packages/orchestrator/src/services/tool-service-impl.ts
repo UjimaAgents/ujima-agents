@@ -92,6 +92,8 @@ export class ToolServiceImpl implements ToolService {
     private readonly mcpPool?: McpRuntimePool,
     private readonly modelResolver?: ModelResolver,
     private readonly shellAutoReview = new ShellAutoReviewService(),
+    private readonly agentAttachmentRoot?: string,
+    private readonly attachmentStoreRoot?: string,
   ) {}
 
   allowRun(organizationId: string, runId: string, approvalScope?: string): void {
@@ -438,6 +440,8 @@ export class ToolServiceImpl implements ToolService {
         goals: this.goals,
         ...this.delegates,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
+        agentAttachmentRoot: this.agentAttachmentRoot,
+        attachmentStoreRoot: this.attachmentStoreRoot,
       });
     }
 
@@ -563,7 +567,13 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const def = materializeMcpDef(this.repo, attachment.server);
-    const connection = await this.mcpPool.get(def, { agentId: invocation.memberId });
+    // Use the org's workspace_root as the child cwd so file
+    // outputs land where the agent expects.
+    const org = this.repo.getOrganization(invocation.organizationId);
+    const connection = await this.mcpPool.get(def, {
+      agentId: invocation.memberId,
+      cwd: org?.workspace?.root,
+    });
     const result = await connection.callTool(
       {
         agentId: invocation.memberId,

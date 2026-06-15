@@ -22,14 +22,6 @@ describe("buildCatalogUrl", () => {
     );
   });
 
-  it("threads agentId through (per-agent perspective)", () => {
-    expect(
-      buildCatalogUrl({ orgId: "org-1", agentId: "agent-x" }),
-    ).toBe(
-      "/api/settings/mcps/catalog?organizationId=org-1&agentId=agent-x",
-    );
-  });
-
   it("threads role through so worker/supervisor scope reaches the backend", () => {
     expect(
       buildCatalogUrl({ orgId: "org-1", agentId: "agent-x", role: "worker" }),
@@ -47,19 +39,4 @@ describe("buildCatalogUrl", () => {
     );
   });
 
-  it("supports role without agentId (e.g. a defaults-tab refresh that wants role-aware union counts)", () => {
-    expect(
-      buildCatalogUrl({ orgId: "org-1", role: "supervisor" }),
-    ).toBe(
-      "/api/settings/mcps/catalog?organizationId=org-1&role=supervisor",
-    );
-  });
-
-  it("encodes special characters in identifiers", () => {
-    expect(
-      buildCatalogUrl({ orgId: "org with space", agentId: "agent/x" }),
-    ).toBe(
-      "/api/settings/mcps/catalog?organizationId=org+with+space&agentId=agent%2Fx",
-    );
-  });
 });

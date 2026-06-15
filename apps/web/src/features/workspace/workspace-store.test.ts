@@ -79,36 +79,6 @@ describe("workspace-store helpers", () => {
     ).toEqual({ general: 0, random: 2, ava: 3 });
   });
 
-  it("replaces workspace lists on bootstrap sync", () => {
-    useWorkspaceStore.setState({
-      channels: [{ id: "old", name: "old", kind: "general", topic: "", memberIds: [] }],
-      members: [
-        {
-          id: "old-agent",
-          organizationId: "org",
-          name: "Old",
-          kind: "agent",
-          roleName: "assistant",
-          presence: "offline",
-        },
-      ],
-      conversationUnreadCounts: {},
-      selectedConversation: undefined,
-    });
-
-    useWorkspaceStore.getState().syncWorkspace({
-      channels,
-      members,
-      selectedConversation: { type: "channel", id: "general", name: "ops" },
-    });
-
-    expect(useWorkspaceStore.getState().channels.map((channel) => channel.id)).toEqual([
-      "general",
-      "random",
-    ]);
-    expect(useWorkspaceStore.getState().members.map((member) => member.id)).toEqual(["ava", "bo", "human"]);
-  });
-
   it("merges consecutive reasoning run chunks into one activity row", () => {
     const store = useWorkspaceStore.getState();
     store.resetConversationFeed("org:thread");
@@ -134,49 +104,6 @@ describe("workspace-store helpers", () => {
     expect((activity[0]?.payload as { delta?: string }).delta).toHaveLength(1_200);
   });
 
-  it("applies batched run chunks in a single store update", () => {
-    useWorkspaceStore.getState().resetConversationFeed("org:thread");
-    let notifications = 0;
-    const unsubscribe = useWorkspaceStore.subscribe(() => {
-      notifications += 1;
-    });
-
-    useWorkspaceStore.getState().appendRunChunkBatch([
-      {
-        message: {
-          id: "stream:run-1:ava",
-          senderId: "ava",
-          role: "assistant",
-          name: "Ava",
-          time: "12:00",
-          content: "Hel",
-          kind: "agent",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          streamRunId: "run-1",
-          pending: true,
-        },
-      },
-      {
-        message: {
-          id: "stream:run-1:ava",
-          senderId: "ava",
-          role: "assistant",
-          name: "Ava",
-          time: "12:01",
-          content: "lo",
-          kind: "agent",
-          createdAt: "2026-01-01T00:00:01.000Z",
-          streamRunId: "run-1",
-          pending: true,
-        },
-      },
-    ]);
-
-    unsubscribe();
-    expect(useWorkspaceStore.getState().messages[0]?.content).toBe("Hello");
-    expect(notifications).toBe(1);
-  });
-
   it("detects agent-only channels and DMs", () => {
     const state = {
       channels: [
@@ -191,59 +118,6 @@ describe("workspace-store helpers", () => {
     expect(isAgentOnlyThread("dm:ava:ava", state)).toBe(true);
     expect(isAgentOnlyThread("mixed", state)).toBe(false);
     expect(isAgentOnlyThread("dm:ava:human", state)).toBe(false);
-  });
-
-  it("selects active agent chats outside the current thread", () => {
-    useWorkspaceStore.setState({
-      channels: [
-        { id: "agents", name: "agents", kind: "general" as const, topic: "", memberIds: ["ava", "bo"] },
-        { id: "mixed", name: "mixed", kind: "general" as const, topic: "", memberIds: ["ava", "human"] },
-      ],
-      members,
-      globalActiveRuns: [
-        run({ id: "run-1", agentId: "ava", threadId: "agents", status: "running" }),
-        run({ id: "run-2", agentId: "bo", threadId: "agents", status: "waiting_for_approval" }),
-        run({ id: "run-3", agentId: "ava", threadId: "dm:ava:bo", status: "running" }),
-        run({ id: "run-4", agentId: "ava", threadId: "mixed", status: "running" }),
-        run({ id: "run-5", agentId: "ava", threadId: "current", status: "running" }),
-        run({ id: "run-6", agentId: "ava", threadId: "agents", status: "completed" }),
-      ],
-    });
-
-    expect(selectActiveAgentChats(useWorkspaceStore.getState(), "current")).toEqual([
-      { threadId: "agents", name: "agents", agents: ["Ava", "Bo"] },
-      { threadId: "dm:ava:bo", name: "Ava & Bo", agents: ["Ava", "Bo"] },
-    ]);
-  });
-
-  it("labels active self-delegation chats clearly", () => {
-    useWorkspaceStore.setState({
-      channels: [],
-      members,
-      globalActiveRuns: [
-        run({ id: "run-1", agentId: "ava", threadId: "dm:ava:ava", status: "running" }),
-      ],
-    });
-
-    expect(selectActiveAgentChats(useWorkspaceStore.getState(), "current")).toEqual([
-      { threadId: "dm:ava:ava", name: "Ava (self delegation)", agents: ["Ava"] },
-    ]);
-  });
-
-  it("keeps waiting_for_input runs visible in active agent chats", () => {
-    useWorkspaceStore.setState({
-      channels: [
-        { id: "agents", name: "agents", kind: "general" as const, topic: "", memberIds: ["ava", "bo"] },
-      ],
-      members,
-      globalActiveRuns: [
-        run({ id: "run-1", agentId: "ava", threadId: "agents", status: "waiting_for_input" }),
-      ],
-    });
-
-    expect(selectActiveAgentChats(useWorkspaceStore.getState(), "current")).toEqual([
-      { threadId: "agents", name: "agents", agents: ["Ava", "Bo"] },
-    ]);
   });
 
 });

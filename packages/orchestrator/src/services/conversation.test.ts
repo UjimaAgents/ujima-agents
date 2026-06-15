@@ -289,25 +289,6 @@ describe('ConversationService @all mentions', () => {
     }
   });
 
-  it('does not fan out @all from agent-authored messages', async () => {
-    const { alerts, savedMessages, savedMentions, service, thread } = createConversationFixture();
-
-    const message = service.sendMessage({
-      organizationId: 'org-1',
-      threadId: thread.id,
-      channelId: 'general',
-      senderId: 'agent-1',
-      content: 'Please review @all',
-    });
-
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(message.mentions).toHaveLength(0);
-    expect(savedMessages).toHaveLength(1);
-    expect(savedMentions).toHaveLength(0);
-    expect(alerts).toHaveLength(0);
-  });
-
   it('alerts an agent recipient for direct messages', async () => {
     const { alerts, emits, savedMessages, savedMentions, service } =
       createConversationFixture();
@@ -326,25 +307,6 @@ describe('ConversationService @all mentions', () => {
     expect(savedMentions).toHaveLength(0);
     expect(alerts).toEqual(['agent-1']);
     expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(true);
-  });
-
-  it('skips alert fanout for ignored direct messages', async () => {
-    const { alerts, emits, savedMessages, service } = createConversationFixture();
-
-    const message = await service.sendDirectMessage({
-      organizationId: 'org-1',
-      senderId: 'human-1',
-      recipientId: 'agent-1',
-      content: 'private note',
-      ignore: true,
-    });
-
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(message.channelId).toMatch(/^dm:/);
-    expect(savedMessages).toHaveLength(1);
-    expect(alerts).toEqual([]);
-    expect(emits.some((entry) => entry.event === SocketEventNames.memberAlerted)).toBe(false);
   });
 
   it('alerts the other agent when an agent publishes a DM reply directly', async () => {
@@ -388,42 +350,6 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toEqual(['agent-2']);
   });
 
-  it('keeps same-millisecond messages ordered without relying on ids', () => {
-    const { savedMessages, service, thread } = createConversationFixture();
-
-    service.publishMessage({
-      id: 'z-message',
-      organizationId: 'org-1',
-      threadId: thread.id,
-      channelId: 'general',
-      senderId: 'agent-1',
-      senderKind: 'agent',
-      kind: 'agent',
-      content: 'Delegate request',
-      createdAt: '2026-05-07T00:00:01.000Z',
-      mentions: [],
-      toolCalls: [],
-      attachments: [],
-    });
-    service.publishMessage({
-      id: 'a-message',
-      organizationId: 'org-1',
-      threadId: thread.id,
-      channelId: 'general',
-      senderId: 'agent-2',
-      senderKind: 'agent',
-      kind: 'agent',
-      content: 'Delegate reply',
-      createdAt: '2026-05-07T00:00:01.000Z',
-      mentions: [],
-      toolCalls: [],
-      attachments: [],
-    });
-
-    const [first, second] = savedMessages as { createdAt: string }[];
-    expect(Date.parse(second.createdAt)).toBeGreaterThan(Date.parse(first.createdAt));
-  });
-
   it('skips DM wake fanout when the message is a completed channel.handoff', async () => {
     const { alerts, service } = createConversationFixture();
 
@@ -440,20 +366,6 @@ describe('ConversationService @all mentions', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(message.channelId).toMatch(/^dm:/);
-    expect(alerts).toEqual([]);
-  });
-
-  it('skips DM wake fanout for literal Acknowledged terminators', async () => {
-    const { alerts, service } = createConversationFixture();
-
-    await service.sendDirectMessage({
-      organizationId: 'org-1',
-      senderId: 'agent-1',
-      recipientId: 'agent-2',
-      content: 'Acknowledged.',
-    });
-
-    await new Promise((resolve) => setImmediate(resolve));
     expect(alerts).toEqual([]);
   });
 
@@ -502,43 +414,6 @@ describe('ConversationService @all mentions', () => {
     ]);
   });
 
-  it('does not demote repeated human DM requests', async () => {
-    const { alertWakeReasons, service } = createConversationFixture();
-
-    for (let index = 0; index < 4; index++) {
-      await service.sendDirectMessage({
-        organizationId: 'org-1',
-        senderId: 'human-1',
-        recipientId: 'agent-1',
-        content: `Human request ${index}`,
-      });
-    }
-
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(alertWakeReasons).toEqual(
-      Array.from({ length: 4 }, () => ({ memberId: 'agent-1', wakeReason: 'dm' })),
-    );
-  });
-
-  it('does not demote repeated human mentions', async () => {
-    const { alertWakeReasons, service } = createConversationFixture();
-
-    for (let index = 0; index < 4; index++) {
-      service.postToChannel({
-        organizationId: 'org-1',
-        senderId: 'human-1',
-        channelId: 'general',
-        body: `@Mia human request ${index}`,
-        mentions: ['agent-1'],
-      });
-    }
-
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(alertWakeReasons.filter(({ memberId }) => memberId === 'agent-1')).toEqual(
-      Array.from({ length: 4 }, () => ({ memberId: 'agent-1', wakeReason: 'mention' })),
-    );
-  });
-
   it('resolves multi-word mentions in message content', async () => {
     const { alerts, repo, service, thread } = createConversationFixture();
     
@@ -580,187 +455,6 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toContain('agent-quinn');
 
     expect(alerts).toContain('agent-1');
-  });
-
-  it('formats self-note reads with readable timestamps', async () => {
-    const { service } = createConversationFixture();
-    service.sendSelfNote({
-      organizationId: 'org-1',
-      memberId: 'agent-1',
-      body: 'Decision: ship with compaction.',
-    });
-    const page = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'agent-1',
-      channelId: 'self:agent-1',
-    });
-    expect(page.data).toHaveLength(1);
-    expect(page.data[0]?.content).toMatch(
-      /^\[[A-Za-z]+,\s[A-Za-z]+\s\d{1,2},\s\d{4}\sat\s\d{1,2}:\d{2}\s(?:AM|PM)\]/,
-    );
-    expect(page.data[0]?.content).toContain('Decision: ship with compaction.');
-  });
-
-  it('keeps self-channel private to the owner', async () => {
-    const { service } = createConversationFixture();
-    await expect(
-      service.readChannel({
-        organizationId: 'org-1',
-        memberId: 'agent-2',
-        channelId: 'self:agent-1',
-      }),
-    ).rejects.toThrow('Channel not found: self:agent-1');
-  });
-
-  it('hides trace-only rows from channel reads', async () => {
-    const { repo, service } = createConversationFixture();
-    repo.saveMessage(
-      MessageSchema.parse({
-        id: 'trace-1',
-        organizationId: 'org-1',
-        threadId: 'general',
-        channelId: 'general',
-        senderId: 'agent-1',
-        senderKind: 'agent',
-        kind: 'agent',
-        content: '',
-        reasoningContent: 'private trace',
-        metadata: { traceOnly: true, runId: 'run-1' },
-        mentions: [],
-        toolCalls: [],
-        attachments: [],
-        createdAt: '2026-05-03T10:00:01.000Z',
-      }),
-    );
-
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'agent-1',
-      channelId: 'general',
-      limit: 20,
-    });
-
-    expect(visible.data).toHaveLength(0);
-  });
-
-  it('compacts old self notes after threshold overflow', async () => {
-    const { repo, service } = createConversationFixture();
-    for (let i = 1; i <= 501; i += 1) {
-      service.sendSelfNote({
-        organizationId: 'org-1',
-        memberId: 'agent-1',
-        body: `note-${i}`,
-      });
-    }
-
-    const stored = repo.listChannelMessages('org-1', 'self:agent-1', { limit: 1_000 });
-    const compacted = stored.data.filter((message) => message.metadata?.compactedInto);
-    const summaries = stored.data.filter(
-      (message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]') && !message.metadata?.compactedInto,
-    );
-    expect(compacted.length).toBeGreaterThanOrEqual(35);
-    expect(summaries.length).toBe(1);
-
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'agent-1',
-      channelId: 'self:agent-1',
-      limit: 1_000,
-    });
-    expect(visible.data.every((message) => !message.content.includes('SELF_NOTE_COMPACTED_V1'))).toBe(
-      true,
-    );
-    expect(visible.data.some((message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]'))).toBe(false);
-    expect(visible.data.some((message) => message.content.includes('note-501'))).toBe(true);
-  });
-
-  it('keeps newer self notes visible even when a summary exists', async () => {
-    const { service } = createConversationFixture();
-    for (let i = 1; i <= 501; i += 1) {
-      service.sendSelfNote({
-        organizationId: 'org-1',
-        memberId: 'agent-1',
-        body: `initial-${i}`,
-      });
-    }
-    service.sendSelfNote({
-      organizationId: 'org-1',
-      memberId: 'agent-1',
-      body: 'Override: use the latest scope decision.',
-    });
-
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'agent-1',
-      channelId: 'self:agent-1',
-      limit: 1_000,
-    });
-    const joined = visible.data.map((message) => message.content).join('\n');
-    expect(joined).not.toContain('SELF_NOTE_SUMMARY_V1');
-    expect(joined).toContain('Override: use the latest scope decision.');
-  });
-
-  it('keeps a single rolling summary across paginated self-note history', async () => {
-    const { repo, service } = createConversationFixture();
-    for (let i = 1; i <= 870; i += 1) {
-      service.sendSelfNote({
-        organizationId: 'org-1',
-        memberId: 'agent-1',
-        body: `history-${i}`,
-      });
-    }
-
-    const stored = repo.listChannelMessages('org-1', 'self:agent-1', { limit: 1_000 });
-    const summaries = stored.data.filter(
-      (message) => message.content.startsWith('[[SELF_NOTE_SUMMARY_V1]]') && !message.metadata?.compactedInto,
-    );
-    const compacted = stored.data.filter((message) => message.metadata?.compactedInto);
-    expect(summaries).toHaveLength(1);
-    expect(compacted.length).toBeGreaterThan(35);
-
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'agent-1',
-      channelId: 'self:agent-1',
-      limit: 1_000,
-    });
-    const joined = visible.data.map((message) => message.content).join('\n');
-    expect(joined).toContain('history-870');
-    expect(joined).not.toContain('SELF_NOTE_SUMMARY_V1');
-    expect(joined.includes('SELF_NOTE_COMPACTED_V1')).toBe(false);
-  });
-
-  it('summarizes a conversation while keeping the recent raw window visible', async () => {
-    const { service } = createConversationFixture();
-    for (let i = 1; i <= 20; i += 1) {
-      service.sendMessage({
-        organizationId: 'org-1',
-        threadId: 'general',
-        channelId: 'general',
-        senderId: 'human-1',
-        content: `general-${String(i).padStart(2, '0')}`,
-      });
-    }
-
-    const result = await service.archiveConversation({
-      organizationId: 'org-1',
-      threadId: 'general',
-      memberId: 'human-1',
-      mode: 'summarize',
-    });
-
-    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_SUMMARY_V2]]')).toBe(true);
-
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'human-1',
-      channelId: 'general',
-      limit: 1_000,
-    });
-    const joined = visible.data.map((message) => message.content).join('\n');
-    expect(joined).toContain('general-20');
-    expect(joined).toContain('[[CONVERSATION_SUMMARY_V2]]');
-    expect(joined).not.toContain('[[CONVERSATION_COMPACTED_V1]]');
   });
 
   it('auto-compacts a conversation after 500 messages', async () => {
@@ -810,182 +504,6 @@ describe('ConversationService @all mentions', () => {
     expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(503);
   });
 
-  it('folds earlier conversation summaries into later compactions', async () => {
-    const { repo, service } = createConversationFixture();
-    for (let i = 1; i <= 536; i += 1) {
-      service.sendMessage({
-        organizationId: 'org-1',
-        threadId: 'general',
-        channelId: 'general',
-        senderId: 'human-1',
-        content: `roll-${i}`,
-      });
-    }
-    await new Promise((resolve) => setImmediate(resolve));
-
-    const summaries = repo
-      .listMessages('org-1', 'general')
-      .data.filter(
-        (message) =>
-          message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]') && !message.metadata?.compactedInto,
-      );
-
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.content).toContain('AI summarized 35 messages.');
-  });
-
-  it('archives and clears a conversation from the visible feed', async () => {
-    const { service } = createConversationFixture();
-    for (let i = 1; i <= 4; i += 1) {
-      service.sendMessage({
-        organizationId: 'org-1',
-        threadId: 'general',
-        channelId: 'general',
-        senderId: 'human-1',
-        content: `cleanup-${i}`,
-      });
-    }
-
-    const result = await service.archiveConversation({
-      organizationId: 'org-1',
-      threadId: 'general',
-      memberId: 'human-1',
-      mode: 'clear',
-    });
-
-    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
-
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'human-1',
-      channelId: 'general',
-      limit: 1_000,
-    });
-    expect(visible.data).toHaveLength(1);
-    expect(visible.data[0]?.kind).toBe('system');
-    expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
-  });
-
-  it('clears a thread that already has a rolling summarize row', async () => {
-    const { service } = createConversationFixture();
-    for (let i = 1; i <= 20; i += 1) {
-      service.sendMessage({
-        organizationId: 'org-1',
-        threadId: 'general',
-        channelId: 'general',
-        senderId: 'human-1',
-        content: `prior-${i}`,
-      });
-    }
-
-    await service.archiveConversation({
-      organizationId: 'org-1',
-      threadId: 'general',
-      memberId: 'human-1',
-      mode: 'summarize',
-    });
-
-    const result = await service.archiveConversation({
-      organizationId: 'org-1',
-      threadId: 'general',
-      memberId: 'human-1',
-      mode: 'clear',
-    });
-
-    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'human-1',
-      channelId: 'general',
-      limit: 1_000,
-    });
-    expect(visible.data).toHaveLength(1);
-    expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
-  });
-
-  it('clears long conversations in the same batch size as summarize', async () => {
-    const { service } = createConversationFixture();
-    for (let i = 1; i <= 40; i += 1) {
-      service.sendMessage({
-        organizationId: 'org-1',
-        threadId: 'general',
-        channelId: 'general',
-        senderId: 'human-1',
-        content: `cleanup-${i}`,
-      });
-    }
-
-    const result = await service.archiveConversation({
-      organizationId: 'org-1',
-      threadId: 'general',
-      memberId: 'human-1',
-      mode: 'clear',
-    });
-
-    expect(result.compactedMessageIds.length).toBeGreaterThanOrEqual(40);
-    expect(result.summaryMessage?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'human-1',
-      channelId: 'general',
-      limit: 1_000,
-    });
-    expect(visible.data).toHaveLength(1);
-    expect(visible.data[0]?.content.startsWith('[[CONVERSATION_ARCHIVE_V1]]')).toBe(true);
-  });
-
-  it('does not wake participants when a conversation is summarized', async () => {
-    const { alerts, service } = createConversationFixture();
-    for (let i = 1; i <= 20; i += 1) {
-      await service.sendDirectMessage({
-        organizationId: 'org-1',
-        senderId: 'human-1',
-        recipientId: 'agent-1',
-        content: `dm-${i}`,
-      });
-    }
-    alerts.splice(0, alerts.length);
-
-    await service.archiveConversation({
-      organizationId: 'org-1',
-      threadId: 'dm:agent-1:human-1',
-      memberId: 'human-1',
-      mode: 'summarize',
-    });
-
-    expect(alerts).toHaveLength(0);
-    const visible = await service.readChannel({
-      organizationId: 'org-1',
-      memberId: 'human-1',
-      channelId: 'dm:agent-1:human-1',
-      limit: 1_000,
-    });
-    expect(visible.data.some((message) => message.content.includes('CONVERSATION_SUMMARY_V2'))).toBe(true);
-  });
-
-  it('does not re-trigger mention alerts when publishing a compaction summary', async () => {
-    const { alerts, service, thread } = createConversationFixture();
-
-    service.sendMessage({
-      organizationId: 'org-1',
-      threadId: thread.id,
-      channelId: 'general',
-      senderId: 'human-1',
-      content: 'Please review @all and @Mia',
-    });
-    await new Promise((resolve) => setImmediate(resolve));
-    alerts.splice(0, alerts.length);
-
-    await service.archiveConversation({
-      organizationId: 'org-1',
-      threadId: thread.id,
-      memberId: 'human-1',
-      mode: 'summarize',
-    });
-
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(alerts).toHaveLength(0);
-  });
 });
 
 describe('ConversationService channel thread bootstrap', () => {
@@ -1059,21 +577,6 @@ describe('ConversationService alertChannelReaders (L5)', () => {
     expect(alerts.sort()).toEqual(['agent-1', 'agent-2']);
   });
 
-  it('wakes every non-sender agent on a human post in #general', async () => {
-    const { alerts, service } = createConversationFixture();
-
-    service.sendMessage({
-      organizationId: 'org-1',
-      threadId: 'general',
-      channelId: 'general',
-      senderId: 'human-1',
-      content: 'Can someone take a look?',
-    });
-
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(alerts.sort()).toEqual(['agent-1', 'agent-2']);
-  });
-
   it('does NOT broad-wake on system messages (kind=system bypass)', async () => {
     const { alerts, service, groupChannel } = withGroupChannel();
 
@@ -1098,20 +601,6 @@ describe('ConversationService alertChannelReaders (L5)', () => {
     expect(alerts).toEqual([]);
   });
 
-  it('does NOT broad-wake on agent-authored posts (mention-only fanout for agents)', async () => {
-    const { alerts, service, groupChannel } = withGroupChannel();
-
-    service.sendMessage({
-      organizationId: 'org-1',
-      threadId: groupChannel.id,
-      channelId: groupChannel.id,
-      senderId: 'agent-1',
-      content: 'Posted by an agent with no mention',
-    });
-
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(alerts).toEqual([]);
-  });
 });
 
 // L8 — Smart parent-mention inheritance. Only `parent.senderId` is

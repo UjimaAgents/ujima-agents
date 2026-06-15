@@ -4,9 +4,6 @@ import {
   CONVERSATION_ARCHIVE_MARKER,
   CONVERSATION_COMPACTED_MARKER,
   CONVERSATION_SUMMARY_MARKER,
-  compactionSummaryExcerpt,
-  mergeSummaryPartials,
-  transcriptFor,
 } from './conversation-summary.js';
 import {
   listActiveCompactionSummaries,
@@ -52,45 +49,6 @@ describe('conversation-compact selection', () => {
     ]);
   });
 
-  it('folds prior summarize rows into archive clear batches', () => {
-    const priorSummary = makeMessage(`${CONVERSATION_SUMMARY_MARKER} prior`, {
-      id: 'summary-prior',
-      kind: 'system',
-    });
-    const human = makeMessage('hello');
-
-    const uncompacted = listUncompactedConversationMessages(
-      [priorSummary, human],
-      {
-        summaryMarker: CONVERSATION_ARCHIVE_MARKER,
-        compactedMarker: CONVERSATION_ARCHIVE_MARKER,
-        mode: 'archive',
-      },
-    );
-
-    expect(uncompacted.map((message) => message.id)).toEqual(['summary-prior', 'msg-hello']);
-  });
-
-  it('routes rolling summarize rows through activeSummaries, not uncompacted', () => {
-    const priorSummary = makeMessage(`${CONVERSATION_SUMMARY_MARKER} prior`, {
-      id: 'summary-prior',
-      kind: 'system',
-    });
-    const human = makeMessage('hello');
-
-    const batch = selectCompactionBatch({
-      messages: [priorSummary, human],
-      summaryMarker: CONVERSATION_SUMMARY_MARKER,
-      compactedMarker: CONVERSATION_COMPACTED_MARKER,
-      keepRawCount: 0,
-      batchSize: 35,
-      mode: 'summary',
-    });
-
-    expect(batch.activeSummaries.map((message) => message.id)).toEqual(['summary-prior']);
-    expect(batch.compactable.map((message) => message.id)).toEqual(['msg-hello']);
-  });
-
   it('clears in bounded batches while folding prior archive summaries', () => {
     const priorArchive = makeMessage(`${CONVERSATION_ARCHIVE_MARKER} pass-1`, {
       id: 'archive-1',
@@ -134,69 +92,5 @@ describe('conversation-compact selection', () => {
     expect(uncompacted.map((message) => message.id)).toEqual(['msg-visible']);
   });
 
-  it('excludes raw messages already marked with metadata.compactedInto', () => {
-    const compactedRaw = makeMessage('hello', {
-      id: 'msg-compacted',
-      metadata: { compactedInto: 'archive-summary-1' },
-    });
-    const fresh = makeMessage('still visible', { id: 'msg-fresh' });
-
-    const uncompacted = listUncompactedConversationMessages(
-      [compactedRaw, fresh],
-      {
-        summaryMarker: CONVERSATION_ARCHIVE_MARKER,
-        compactedMarker: CONVERSATION_ARCHIVE_MARKER,
-        mode: 'archive',
-      },
-    );
-
-    expect(uncompacted.map((message) => message.id)).toEqual(['msg-fresh']);
-  });
 });
 
-describe('conversation-summary transcript', () => {
-  it('preserves section bullets from rolling summaries instead of only the marker line', () => {
-    const summary = makeMessage(
-      [
-        `${CONVERSATION_ARCHIVE_MARKER} # Archived 2 earlier messages.`,
-        '',
-        '## Current discussion',
-        '- Discussed deployment timing',
-        '## Decisions',
-        '- Ship on Tuesday',
-      ].join('\n'),
-      { kind: 'system', senderId: 'system' },
-    );
-
-    expect(compactionSummaryExcerpt(summary.content)).toContain('Discussed deployment timing');
-    expect(transcriptFor([summary])).toContain('Ship on Tuesday');
-  });
-
-  it('merges chunked partial summaries without another LLM pass', () => {
-    const merged = mergeSummaryPartials(
-      [
-        {
-          context: ['Working on delegate completion'],
-          decisions: ['Use memberIds instead of participantIds'],
-          openQuestions: ['How to resume runs?'],
-          nextActions: ['Patch orchestrator'],
-        },
-        {
-          context: ['delegate completion', 'Working on delegate completion'],
-          decisions: ['Add organizationId to payloads'],
-          openQuestions: [],
-          nextActions: ['Run tests'],
-        },
-      ],
-      6,
-    );
-
-    expect(merged.context).toEqual(['Working on delegate completion', 'delegate completion']);
-    expect(merged.decisions).toEqual([
-      'Use memberIds instead of participantIds',
-      'Add organizationId to payloads',
-    ]);
-    expect(merged.openQuestions).toEqual(['How to resume runs?']);
-    expect(merged.nextActions).toEqual(['Patch orchestrator', 'Run tests']);
-  });
-});

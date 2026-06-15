@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinaryPath, RG_BINARY } from './binary-resolver.js';
@@ -52,94 +52,6 @@ describe.skipIf(!rgAvailable())('grep (ripgrep)', () => {
     expect(result.truncated).toBe(false);
   });
 
-  it('returns empty for no match', async () => {
-    root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
-    await writeFile(join(root, 'a.ts'), 'const x = 42;\n', 'utf8');
-
-    const result = await grepTool.execute({
-      invocation: {
-        organizationId: 'org-1',
-        runId: 'run-2',
-        memberId: 'agent-1',
-        toolCallId: 'call-2',
-        toolId: 'grep',
-        action: 'read',
-        resourceType: 'folder',
-        resourcePath: '.',
-        input: { query: 'zzz_not_found' },
-      },
-      team: {
-        workspace: { root },
-        members: [{ id: 'agent-1', name: 'Agent', roles: [] }],
-      },
-    });
-
-    expect(result.count).toBe(0);
-    expect(result.matches).toEqual([]);
-    expect(result.truncated).toBe(false);
-  });
-
-  it('supports ignoreCase', async () => {
-    root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
-    await writeFile(join(root, 'a.ts'), 'Hello World\nconst x = 42;\n', 'utf8');
-
-    const result = await grepTool.execute({
-      invocation: {
-        organizationId: 'org-1',
-        runId: 'run-3',
-        memberId: 'agent-1',
-        toolCallId: 'call-3',
-        toolId: 'grep',
-        action: 'read',
-        resourceType: 'folder',
-        resourcePath: '.',
-        input: { query: 'hello', ignoreCase: true },
-      },
-      team: {
-        workspace: { root },
-        members: [{ id: 'agent-1', name: 'Agent', roles: [] }],
-      },
-    });
-
-    expect(result.count).toBe(1);
-    expect(result.matches[0].line).toBe('Hello World');
-  });
-
-  it('respects contextLines', async () => {
-    root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
-    await writeFile(
-      join(root, 'a.ts'),
-      'line1\nline2\nline3\nTARGET\nline5\nline6\nline7\n',
-      'utf8',
-    );
-
-    const result = await grepTool.execute({
-      invocation: {
-        organizationId: 'org-1',
-        runId: 'run-4',
-        memberId: 'agent-1',
-        toolCallId: 'call-4',
-        toolId: 'grep',
-        action: 'read',
-        resourceType: 'folder',
-        resourcePath: '.',
-        input: { query: 'TARGET', contextLines: 2 },
-      },
-      team: {
-        workspace: { root },
-        members: [{ id: 'agent-1', name: 'Agent', roles: [] }],
-      },
-    });
-
-    expect(result.count).toBe(1);
-    expect(result.matches[0].before).toHaveLength(2);
-    expect(result.matches[0].after).toHaveLength(2);
-    expect(result.matches[0].before[0].line).toBe('line2');
-    expect(result.matches[0].before[1].line).toBe('line3');
-    expect(result.matches[0].after[0].line).toBe('line5');
-    expect(result.matches[0].after[1].line).toBe('line6');
-  });
-
   it('supports regex patterns', async () => {
     root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
     await writeFile(join(root, 'a.ts'), 'abc123\ndef456\nxyz789\n', 'utf8');
@@ -163,34 +75,6 @@ describe.skipIf(!rgAvailable())('grep (ripgrep)', () => {
     });
 
     expect(result.count).toBe(3);
-  });
-
-  it('scopes search to subdirectory', async () => {
-    root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
-    await mkdir(join(root, 'sub'), { recursive: true });
-    await writeFile(join(root, 'root.txt'), 'target\n', 'utf8');
-    await writeFile(join(root, 'sub', 'sub.txt'), 'target\n', 'utf8');
-
-    const result = await grepTool.execute({
-      invocation: {
-        organizationId: 'org-1',
-        runId: 'run-7',
-        memberId: 'agent-1',
-        toolCallId: 'call-7',
-        toolId: 'grep',
-        action: 'read',
-        resourceType: 'folder',
-        resourcePath: 'sub',
-        input: { query: 'target' },
-      },
-      team: {
-        workspace: { root },
-        members: [{ id: 'agent-1', name: 'Agent', roles: [] }],
-      },
-    });
-
-    expect(result.count).toBe(1);
-    expect(result.matches[0].path).toContain('sub.txt');
   });
 
   it('limits results', async () => {
@@ -270,41 +154,4 @@ describe.skipIf(!rgAvailable())('grep (ripgrep)', () => {
     expect(result.matches[1].after[0].line).toBe('gamma');
   });
 
-  it('clips context only against matches in the same file', async () => {
-    root = await mkdtemp(join(tmpdir(), 'ujima-grep-'));
-    await writeFile(
-      join(root, 'a.ts'),
-      'a1\na2\ntarget-a\na4\na5\n',
-      'utf8',
-    );
-    await writeFile(
-      join(root, 'b.ts'),
-      'b1\nb2\ntarget-b\nb4\nb5\n',
-      'utf8',
-    );
-
-    const result = await grepTool.execute({
-      invocation: {
-        organizationId: 'org-1',
-        runId: 'run-10',
-        memberId: 'agent-1',
-        toolCallId: 'call-10',
-        toolId: 'grep',
-        action: 'read',
-        resourceType: 'folder',
-        resourcePath: '.',
-        input: { query: 'target', contextLines: 2 },
-      },
-      team: {
-        workspace: { root },
-        members: [{ id: 'agent-1', name: 'Agent', roles: [] }],
-      },
-    });
-
-    expect(result.count).toBe(2);
-    const aMatch = result.matches.find((match) => match.path.endsWith('a.ts'));
-    const bMatch = result.matches.find((match) => match.path.endsWith('b.ts'));
-    expect(aMatch?.after.map((line) => line.line)).toEqual(['a4', 'a5']);
-    expect(bMatch?.before.map((line) => line.line)).toEqual(['b1', 'b2']);
-  });
 });

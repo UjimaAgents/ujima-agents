@@ -65,6 +65,7 @@ import {
 import type { ApprovalRequest } from '@ujima/shared';
 import type { ToolService } from './tool-service.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
+import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 
 export interface ConnectorSpawnV2Services {
   mcpPool: SpiritMcpPool;
@@ -82,7 +83,19 @@ export interface ConnectorSpawnV2Services {
       input: AttachmentApprovalRequest,
     ) => ApprovalRequest;
   };
+  /**
+   * Attachment-capture hook. Runs after every successful native
+   * MCP invoke; surfaces `attachment_refs` on the tool result so
+   * the agent can pass them to channel.reply without re-encoding
+   * the bytes.
+   */
+  attachmentCapture?: AttachmentCaptureClosure;
 }
+
+// Re-export so existing consumers don't break. New code should
+// import from `./agent-attachment-closure.js` to keep the type
+// path independent of this runtime-bearing module.
+export type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 
 export interface ConnectorSpawnV2Ctx {
   organizationId: string;
@@ -210,8 +223,12 @@ export async function buildMcpToolDefinitionsV2(
     // both regardless (spirit-agent-run.ts:824-879).
     let refreshed = false;
     try {
+      // Use the org's workspace_root as the child cwd so file
+      // outputs land where the agent expects.
+      const orgForCwd = services.repo.getOrganization(ctx.organizationId);
       const connection = await services.mcpPool.get(def, {
         agentId: ctx.memberId,
+        cwd: orgForCwd?.workspace?.root,
       });
       const liveTools = await connection.listTools();
       toolList = liveTools.map((t) => {
@@ -396,6 +413,49 @@ export async function buildMcpToolDefinitionsV2(
                 ? undefined
                 : result.error ?? 'tool invocation failed',
             });
+          }
+          // Agent-attachments capture — sniffs bytes from the
+          // result, writes to the agent_attachments store, injects
+          // `attachment_refs` for channel.reply to use.
+          if (
+            result.ok &&
+            !isWaitingForApproval &&
+            !isWaitingForInput &&
+            services.attachmentCapture
+          ) {
+            try {
+              const capture = services.attachmentCapture({
+                organizationId: ctx.organizationId,
+                runId: ctx.runId,
+                memberId: ctx.memberId,
+                serverId: entry.serverId,
+                toolName: entry.toolName,
+                toolCallId,
+                toolResult: result.output,
+              });
+              if (capture.attachmentRefs.length > 0) {
+                const existing = result.output;
+                const wrapped: Record<string, unknown> =
+                  existing && typeof existing === 'object' && !Array.isArray(existing)
+                    ? { ...(existing as Record<string, unknown>) }
+                    : { value: existing };
+                wrapped.attachment_refs = capture.attachmentRefs;
+                // Top-level prose hint — the schema-level description
+                // alone wasn't enough to steer the model.
+                wrapped._attachment_capture_note =
+                  `${capture.attachmentRefs.length} attachment(s) from this tool result ` +
+                  `have been captured and are ready to attach to a chat message. ` +
+                  `Use the refs in \`attachment_refs\` with channel.reply / channel.post / ` +
+                  `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
+                  `Do NOT save these bytes to disk first.`;
+                result = { ...result, output: wrapped };
+              }
+            } catch (err) {
+              console.warn(
+                '[connector-spawn-v2] attachment capture threw; falling back to no-capture output',
+                err,
+              );
+            }
           }
           try {
             return toModelToolOutput(result);

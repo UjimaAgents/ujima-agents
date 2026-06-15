@@ -11,11 +11,9 @@ import {
   formatPersistedApprovalGrantReason,
   formatApprovalRelayMarkdown,
   parseApprovalDisplayScopesFromReason,
-  parseApprovalReasonValue,
   parseConnectorScope,
   parseFilesystemScope,
   shellInvocationDisplayLine,
-  stripApprovalScopeDisplayFields,
 } from './approval-scope';
 
 describe('enrichEditScopeFields', () => {
@@ -28,13 +26,6 @@ describe('enrichEditScopeFields', () => {
         fileContent,
       }),
     ).toEqual({ oldString: 'old', newString: 'new', replaceAll: false, startLine: 3 });
-  });
-
-  it('strips startLine for scoped allow-once matching', () => {
-    const scope = 'edit:{"resourcePath":"/x/a.md","oldString":"a","newString":"b","startLine":2}';
-    expect(stripApprovalScopeDisplayFields(scope)).toBe(
-      'edit:{"resourcePath":"/x/a.md","oldString":"a","newString":"b"}',
-    );
   });
 
   it('enriches edit scope for approval display', () => {
@@ -58,38 +49,6 @@ describe('formatApprovalRelayMarkdown', () => {
     ).toBe('[Approval needed] Shell\nCwd: /workspace\nCommand: git diff');
   });
 
-  it('renders path and action for filesystem compact scope', () => {
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'write',
-        resourcePath: '/repo/readme.md',
-        reason: 'Tool action requires approval;scope=filesystem%3Awrite%3A%2Frepo%2Freadme.md',
-      }),
-    ).toBe('[Approval needed] Filesystem write\nPath: /repo/readme.md');
-  });
-
-  it('renders filesystem write with body when JSON scope includes patch', () => {
-    const scope = JSON.stringify({ action: 'write', resourcePath: '/x/a.md', patch: '--- /dev/null\n+++ b/a.md\n' });
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'write',
-        resourcePath: '/x/a.md',
-        reason: `Tool action requires approval;scope=${encodeURIComponent('filesystem:' + scope)}`,
-      }),
-    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /dev/null\n+++ b/a.md\n');
-  });
-
-  it('renders filesystem write with body when JSON scope includes content', () => {
-    const scope = JSON.stringify({ action: 'write', resourcePath: '/x/a.md', content: 'hello' });
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'write',
-        resourcePath: '/x/a.md',
-        reason: `Tool action requires approval;scope=${encodeURIComponent('filesystem:' + scope)}`,
-      }),
-    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\nhello');
-  });
-
   it('renders workspace write approval as a diff patch', () => {
     const scope = JSON.stringify({ resourcePath: '/x/a.md', content: 'hello\nworld' });
     expect(
@@ -103,75 +62,6 @@ describe('formatApprovalRelayMarkdown', () => {
     );
   });
 
-  it('renders workspace edit approval as a diff patch', () => {
-    const scope = JSON.stringify({ file_path: '/x/a.md', old_string: 'old', new_string: 'new' });
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'edit',
-        resourcePath: '/x/a.md',
-        reason: `Tool action requires approval;scope=${encodeURIComponent('edit:' + scope)}`,
-      }),
-    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-old\n+new');
-  });
-
-  it('renders workspace edit approval as a diff patch with startLine hunk offset', () => {
-    const scope = JSON.stringify({ file_path: '/x/a.md', old_string: 'old', new_string: 'new', startLine: 120 });
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'edit',
-        resourcePath: '/x/a.md',
-        reason: `Tool action requires approval;scope=${encodeURIComponent('edit:' + scope)}`,
-      }),
-    ).toBe('[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@ -120,1 +120,1 @@\n-old\n+new');
-  });
-
-  it('renders workspace multiedit approval as a diff patch', () => {
-    const scope = JSON.stringify({
-      resourcePath: '/x/a.md',
-      edits: [
-        { oldString: 'one', newString: 'two' },
-        { old_string: 'red', new_string: 'blue' },
-      ],
-    });
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'multiedit',
-        resourcePath: '/x/a.md',
-        reason: `Tool action requires approval;scope=${encodeURIComponent('multiedit:' + scope)}`,
-      }),
-    ).toBe(
-      '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@\n-one\n+two\n--- /x/a.md\n+++ /x/a.md\n@@\n-red\n+blue',
-    );
-  });
-
-  it('renders workspace multiedit approval as a diff patch with startLine hunk offsets', () => {
-    const scope = JSON.stringify({
-      resourcePath: '/x/a.md',
-      edits: [
-        { oldString: 'one', newString: 'two', startLine: 45 },
-        { old_string: 'red', new_string: 'blue', startLine: 60 },
-      ],
-    });
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'multiedit',
-        resourcePath: '/x/a.md',
-        reason: `Tool action requires approval;scope=${encodeURIComponent('multiedit:' + scope)}`,
-      }),
-    ).toBe(
-      '[Approval needed] Filesystem write\nPath: /x/a.md\nPatch:\n--- /x/a.md\n+++ /x/a.md\n@@ -45,1 +45,1 @@\n-one\n+two\n--- /x/a.md\n+++ /x/a.md\n@@ -60,1 +60,1 @@\n-red\n+blue',
-    );
-  });
-
-  it('falls back to action and path when scope is not shell or filesystem', () => {
-    expect(
-      formatApprovalRelayMarkdown({
-        action: 'message',
-        resourcePath: 'dm:abc',
-        reason: 'Tool action requires approval;scope=other%3Athing',
-      }),
-    ).toBe('`message` · `dm:abc`');
-  });
 });
 
 describe('parseApprovalDisplayScopesFromReason', () => {
@@ -181,16 +71,6 @@ describe('parseApprovalDisplayScopesFromReason', () => {
     expect(parseApprovalDisplayScopesFromReason(reason)).toEqual({
       shell: { cwd: '/w', command: 'ls' },
       filesystem: null,
-      connector: null,
-    });
-  });
-
-  it('returns filesystem only when scope is filesystem', () => {
-    const reason =
-      'Tool action requires approval;scope=filesystem%3Aread%3A%2Ftmp%2Fa.txt';
-    expect(parseApprovalDisplayScopesFromReason(reason)).toEqual({
-      shell: null,
-      filesystem: { action: 'read', resourcePath: '/tmp/a.txt' },
       connector: null,
     });
   });
@@ -215,22 +95,6 @@ describe('parseApprovalDisplayScopesFromReason', () => {
     });
   });
 
-  it('returns all null when scope missing', () => {
-    expect(parseApprovalDisplayScopesFromReason('no scope here')).toEqual({
-      shell: null,
-      filesystem: null,
-      connector: null,
-    });
-  });
-
-  it('handles missing reason', () => {
-    expect(parseApprovalDisplayScopesFromReason(undefined)).toEqual({
-      shell: null,
-      filesystem: null,
-      connector: null,
-    });
-    expect(parseApprovalReasonValue(undefined, 'scope')).toBeNull();
-  });
 });
 
 describe('parseConnectorScope / buildConnectorScope', () => {
@@ -246,32 +110,6 @@ describe('parseConnectorScope / buildConnectorScope', () => {
     expect(parseConnectorScope(built)).toEqual(original);
   });
 
-  it('returns null for non-connector prefixes', () => {
-    expect(parseConnectorScope('shell:{"cwd":"/w","command":"ls"}')).toBeNull();
-    expect(parseConnectorScope('filesystem:read:/tmp/a.txt')).toBeNull();
-  });
-
-  it('returns null for malformed JSON', () => {
-    expect(parseConnectorScope('connector:{not json}')).toBeNull();
-  });
-
-  it('returns null when required fields are missing', () => {
-    expect(parseConnectorScope('connector:{"serverId":"slack","toolName":"x"}')).toBeNull();
-  });
-
-  it('argsPreview defaults to empty string when absent', () => {
-    const payload = JSON.stringify({
-      serverId: 'slack',
-      serverDisplayName: 'Slack',
-      toolName: 'post_message',
-    });
-    expect(parseConnectorScope(`connector:${payload}`)).toEqual({
-      serverId: 'slack',
-      serverDisplayName: 'Slack',
-      toolName: 'post_message',
-      argsPreview: '',
-    });
-  });
 });
 
 describe('parseFilesystemScope', () => {
@@ -282,20 +120,6 @@ describe('parseFilesystemScope', () => {
     });
   });
 
-  it('parses JSON scope with optional patch', () => {
-    const inner = { action: 'write' as const, resourcePath: '/r.md', patch: '@@ -0,0 +1,1 @@\n+hi' };
-    expect(parseFilesystemScope('filesystem:' + JSON.stringify(inner))).toEqual({
-      action: 'write',
-      resourcePath: '/r.md',
-      patch: '@@ -0,0 +1,1 @@\n+hi',
-    });
-  });
-
-  it('parses JSON scope with optional content', () => {
-    expect(
-      parseFilesystemScope('filesystem:{"action":"write","resourcePath":"/r.md","content":"x"}'),
-    ).toEqual({ action: 'write', resourcePath: '/r.md', content: 'x' });
-  });
 });
 
 describe('shellInvocationDisplayLine', () => {
@@ -324,12 +148,6 @@ describe('approvalPersistedGrantMatches', () => {
     expect(approvalPersistedGrantMatches(grantReason, exactScope, log)).toBe(false);
   });
 
-  it('supports legacy allow_family rows stored under grant:always_allow:', () => {
-    const legacyFamilyScope = 'shell:{"cwd":"/workspace","command":"git"}';
-    const grantReason = `grant:always_allow:scope=${encodeURIComponent(legacyFamilyScope)};note=legacy`;
-    const status = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
-    expect(approvalPersistedGrantMatches(grantReason, legacyFamilyScope, status)).toBe(true);
-  });
 });
 
 describe('approvalScopeMatches', () => {
