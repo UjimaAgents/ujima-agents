@@ -1125,30 +1125,43 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
+  // Validate at services bootstrap that listOrganizations is
+  // actually callable + returns an array. A partial stub that
+  // forgot to wire it would otherwise be discovered only at the
+  // first scheduler tick — and the scheduler's own tick-level
+  // catch would then swallow the failure silently. Crashing here
+  // is the loud failure the bot kept asking for.
+  if (typeof context.repo.listOrganizations !== 'function') {
+    throw new Error(
+      'ApiServiceContext.repo.listOrganizations is required for agent-attachment cleanup but is not a function',
+    );
+  }
+  // Probe once so a thrown call (rather than a missing one)
+  // surfaces at boot too. The result is discarded; we re-call
+  // per tick to pick up new orgs.
+  const probeOrgs = context.repo.listOrganizations();
+  if (!Array.isArray(probeOrgs)) {
+    throw new Error(
+      'ApiServiceContext.repo.listOrganizations must return an array of organizations',
+    );
+  }
+
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
     onTick: async () => {
       await goals.sweepAllPendingTasks();
-      // Agent-attachments LRU pass. The list of orgs is sourced
-      // explicitly so a missing/forgotten listOrganizations stub
-      // can't silently produce an empty sweep. The try/catch is
-      // narrowly scoped to per-tick resilience (the scheduler tick
-      // is mission-critical for goal scheduling) but the failure
-      // is logged at error level with a grep-able tag.
-      try {
-        const organizationIds = context.repo
-          .listOrganizations()
-          .map((org) => org.id);
-        cleanupExpiredAgentAttachments({
-          repo: context.repo,
-          attachmentStoreRoot,
-          organizationIds,
-        });
-      } catch (err) {
-        console.error(
-          '[agent-attachment-cleanup] sweep failed — investigate',
-          err,
-        );
-      }
+      // No try/catch here. listOrganizations was validated at
+      // services bootstrap above, so a missing-method failure can't
+      // reach this point. The scheduler's own tick-level error
+      // handler covers transient failures (DB blip, etc.) without
+      // crashing the cron loop.
+      const organizationIds = context.repo
+        .listOrganizations()
+        .map((org) => org.id);
+      cleanupExpiredAgentAttachments({
+        repo: context.repo,
+        attachmentStoreRoot,
+        organizationIds,
+      });
     },
   });
   const notifications = new NotificationService(context.repo);
