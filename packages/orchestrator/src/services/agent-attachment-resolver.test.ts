@@ -27,6 +27,8 @@ interface FakeRepo {
   pinAgentAttachmentToMessage: (org: string, id: string, msgId: string) => AgentAttachment | null;
   getAgentAttachment: (org: string, id: string) => AgentAttachment | null;
   saveAttachment: (att: Attachment) => Attachment;
+  deleteAttachment: (org: string, id: string) => number;
+  deleteAgentAttachment: (org: string, id: string) => void;
 }
 
 function fakeRepo(seed: AgentAttachment[] = []): FakeRepo {
@@ -53,6 +55,18 @@ function fakeRepo(seed: AgentAttachment[] = []): FakeRepo {
     saveAttachment(att) {
       attachments.push(att);
       return att;
+    },
+    deleteAttachment(_org, id) {
+      const idx = attachments.findIndex((a) => a.id === id);
+      if (idx >= 0) {
+        attachments.splice(idx, 1);
+        return 1;
+      }
+      return 0;
+    },
+    deleteAgentAttachment(_org, id) {
+      const idx = agentAttachments.findIndex((a) => a.id === id);
+      if (idx >= 0) agentAttachments.splice(idx, 1);
     },
   };
 }

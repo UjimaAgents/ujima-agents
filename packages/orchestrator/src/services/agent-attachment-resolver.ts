@@ -23,7 +23,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import type { AgentAttachment, Attachment, AttachmentCategory } from '@ujima/shared';
+import type { AgentAttachment, AttachmentCategory } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { sniffMimeAndCategory } from './agent-attachment-capture.js';
 import type { ConnectorAuditWriter } from './connector-audit.js';
@@ -63,6 +63,11 @@ export interface ResolvedAttachmentMaterialization {
 }
 
 export interface AttachmentResolverDeps {
+  // All deletion methods are REQUIRED — the rollback paths in
+  // commitBytes and resolveToolCallRef register them as undos
+  // before each write, so making them optional would silently
+  // bypass the cleanup contract for any test stub that forgot to
+  // wire them. Tests must stub them explicitly.
   repo: Pick<
     ApiRepository,
     | 'findAgentAttachmentByToolCall'
@@ -72,12 +77,7 @@ export interface AttachmentResolverDeps {
     | 'saveAttachment'
     | 'deleteAttachment'
     | 'deleteAgentAttachment'
-  > & {
-    // Optional overrides so tests can stub these as no-ops.
-    saveAttachment?: (attachment: Attachment) => Attachment;
-    deleteAttachment?: (organizationId: string, attachmentId: string) => number;
-    deleteAgentAttachment?: (organizationId: string, attachmentId: string) => void;
-  };
+  >;
   agentAttachmentRoot: string;
   /** Org workspace root, when known. Null when the org has no path set. */
   workspaceRoot: string | null;
@@ -147,19 +147,17 @@ export async function resolveAttachmentRefs(
           console.warn('[agent-attachment-resolver] rollback file delete failed', handle.filePath, e);
         }
       }
-      if (handle.agentAttachmentId && deps.repo.deleteAgentAttachment) {
+      if (handle.agentAttachmentId) {
         try {
           deps.repo.deleteAgentAttachment(deps.organizationId, handle.agentAttachmentId);
         } catch (e) {
           console.warn('[agent-attachment-resolver] rollback agent_attachments delete failed', handle.agentAttachmentId, e);
         }
       }
-      if (deps.repo.deleteAttachment) {
-        try {
-          deps.repo.deleteAttachment(deps.organizationId, handle.userAttachmentId);
-        } catch (e) {
-          console.warn('[agent-attachment-resolver] rollback attachments delete failed', handle.userAttachmentId, e);
-        }
+      try {
+        deps.repo.deleteAttachment(deps.organizationId, handle.userAttachmentId);
+      } catch (e) {
+        console.warn('[agent-attachment-resolver] rollback attachments delete failed', handle.userAttachmentId, e);
       }
     }
     return err;
@@ -310,30 +308,25 @@ function resolveToolCallRef(
   // capture pass and stay intact.
   const { register, runRollback } = createRefCommitUndoStack();
   const attachmentId = newAttId();
-  if (deps.repo.saveAttachment) {
-    if (deps.repo.deleteAttachment) {
-      const del = deps.repo.deleteAttachment;
-      register(() => del(deps.organizationId, attachmentId));
-    }
-    try {
-      deps.repo.saveAttachment({
-        id: attachmentId,
-        organizationId: deps.organizationId,
-        filename: ref.filename ?? row.filename,
-        mimeType: row.mimeType,
-        category: row.category,
-        sizeBytes: row.byteSize,
-        storagePath: row.storagePath,
-        uploadedBy: deps.memberId,
-        createdAt: newNow(),
-      });
-    } catch (err) {
-      runRollback();
-      return {
-        ok: false,
-        error: `tool_call ref "${ref.value}" attachments insert failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
+  register(() => deps.repo.deleteAttachment(deps.organizationId, attachmentId));
+  try {
+    deps.repo.saveAttachment({
+      id: attachmentId,
+      organizationId: deps.organizationId,
+      filename: ref.filename ?? row.filename,
+      mimeType: row.mimeType,
+      category: row.category,
+      sizeBytes: row.byteSize,
+      storagePath: row.storagePath,
+      uploadedBy: deps.memberId,
+      createdAt: newNow(),
+    });
+  } catch (err) {
+    runRollback();
+    return {
+      ok: false,
+      error: `tool_call ref "${ref.value}" attachments insert failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
   return {
     ok: true,
@@ -484,7 +477,7 @@ async function resolveWorkspaceGlobRef(
           );
         }
       }
-      if (m.agentAttachmentId && deps.repo.deleteAgentAttachment) {
+      if (m.agentAttachmentId) {
         try {
           deps.repo.deleteAgentAttachment(deps.organizationId, m.agentAttachmentId);
         } catch (e) {
@@ -495,16 +488,14 @@ async function resolveWorkspaceGlobRef(
           );
         }
       }
-      if (deps.repo.deleteAttachment) {
-        try {
-          deps.repo.deleteAttachment(deps.organizationId, m.attachmentId);
-        } catch (e) {
-          console.warn(
-            '[agent-attachment-resolver] glob rollback attachments delete failed',
-            m.attachmentId,
-            e,
-          );
-        }
+      try {
+        deps.repo.deleteAttachment(deps.organizationId, m.attachmentId);
+      } catch (e) {
+        console.warn(
+          '[agent-attachment-resolver] glob rollback attachments delete failed',
+          m.attachmentId,
+          e,
+        );
       }
     }
   };
@@ -529,22 +520,18 @@ async function resolveWorkspaceGlobRef(
       } catch {
         // already logged via rollbackEarlier semantics
       }
-      if (deps.repo.deleteAgentAttachment) {
-        try {
-          deps.repo.deleteAgentAttachment(
-            deps.organizationId,
-            result.materialization.agentAttachmentId,
-          );
-        } catch {
-          // silent — best-effort cleanup
-        }
+      try {
+        deps.repo.deleteAgentAttachment(
+          deps.organizationId,
+          result.materialization.agentAttachmentId,
+        );
+      } catch {
+        // silent — best-effort cleanup
       }
-      if (deps.repo.deleteAttachment) {
-        try {
-          deps.repo.deleteAttachment(deps.organizationId, result.materialization.attachmentId);
-        } catch {
-          // silent
-        }
+      try {
+        deps.repo.deleteAttachment(deps.organizationId, result.materialization.attachmentId);
+      } catch {
+        // silent
       }
       rollbackEarlier();
       return {
@@ -682,12 +669,9 @@ function commitBytes(
     createdAt: newNow(),
     pinnedToMessageId: null,
   };
+  register(() => deps.repo.deleteAgentAttachment(deps.organizationId, id));
   try {
     deps.repo.saveAgentAttachment(agentRow);
-    if (deps.repo.deleteAgentAttachment) {
-      const del = deps.repo.deleteAgentAttachment;
-      register(() => del(deps.organizationId, id));
-    }
   } catch (err) {
     runRollback();
     return { ok: false, error: `agent_attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
@@ -695,27 +679,22 @@ function commitBytes(
   // Audit emit fires after the user-attachment row succeeds so a
   // failed materialization doesn't produce a `created` event.
   const attachmentId = newAttId();
-  if (deps.repo.saveAttachment) {
-    if (deps.repo.deleteAttachment) {
-      const del = deps.repo.deleteAttachment;
-      register(() => del(deps.organizationId, attachmentId));
-    }
-    try {
-      deps.repo.saveAttachment({
-        id: attachmentId,
-        organizationId: deps.organizationId,
-        filename,
-        mimeType,
-        category,
-        sizeBytes: bytes.length,
-        storagePath: storageRelative,
-        uploadedBy: deps.memberId,
-        createdAt: newNow(),
-      });
-    } catch (err) {
-      runRollback();
-      return { ok: false, error: `attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
-    }
+  register(() => deps.repo.deleteAttachment(deps.organizationId, attachmentId));
+  try {
+    deps.repo.saveAttachment({
+      id: attachmentId,
+      organizationId: deps.organizationId,
+      filename,
+      mimeType,
+      category,
+      sizeBytes: bytes.length,
+      storagePath: storageRelative,
+      uploadedBy: deps.memberId,
+      createdAt: newNow(),
+    });
+  } catch (err) {
+    runRollback();
+    return { ok: false, error: `attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
   }
   // Audit is best-effort. A throw here must not bubble out and
   // bypass the rollback path — the file + rows are already
