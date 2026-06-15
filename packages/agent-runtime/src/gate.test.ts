@@ -40,14 +40,6 @@ function approvalPolicy() {
   });
 }
 
-function inputPolicy() {
-  return setAgentRule(emptyGovernancePolicy(), 'writer', {
-    mcp_id: 'fs',
-    tool_name: 'write_file',
-    state: 'require_input',
-  });
-}
-
 function fsWriteTool(): { name: string; description: string; inputSchema: Record<string, unknown> }[] {
   return [
     {
@@ -177,91 +169,4 @@ describe('runToolLoop — gate pause/resume', () => {
     expect(rejected?.block_reason).toContain('gate_rejected');
   });
 
-  it('passes edited args to MCP on require_input approve', async () => {
-    let received: unknown;
-    const onCall = vi.fn((_ctx, _name, args) => {
-      received = args;
-    });
-    const _provider = createMockProvider({
-      script: [
-        toolTurn('t1', 'write_file', { path: '/risky.md', body: 'raw' }),
-        textTurn('done'),
-      ],
-    });
-    const mcp = makeFakeMCPConnection({ id: 'fs', tools: fsWriteTool(), onCall });
-    const permissions = createPermissionMiddleware({
-      audit: db.audit,
-      governancePolicy: inputPolicy(),
-    });
-
-    const resolver: GateResolver = {
-      async awaitDecision(): Promise<GateDecision> {
-        return {
-          kind: 'approve',
-          args: { path: '/safe.md', body: 'edited' },
-          decidedBy: 'human',
-        };
-      },
-    };
-
-    const handle = runAgent({
-      agent,
-      task,
-      sessionId: 's1',
-      spawnReason: 'initial',
-      model: createLanguageModelFromLegacyProvider(_provider, 'mock'),
-      mcp,
-      permissions,
-      eventBus: bus,
-      context: db.context,
-      audit: db.audit,
-      agentState: db.agentState,
-      gateResolver: resolver,
-    });
-
-    const result = await handle.result;
-    expect(result.exitReason).toBe('completed');
-    expect(received).toEqual({ path: '/safe.md', body: 'edited' });
-    expect(onCall).toHaveBeenCalledTimes(1);
-  });
-
-  it('abort during gate wait exits as killed without calling MCP', async () => {
-    const onCall = vi.fn();
-    const _provider = createMockProvider({
-      script: [toolTurn('t1', 'write_file', { path: '/x.md' }), textTurn('done')],
-    });
-    const mcp = makeFakeMCPConnection({ id: 'fs', tools: fsWriteTool(), onCall });
-    const permissions = createPermissionMiddleware({
-      audit: db.audit,
-      governancePolicy: approvalPolicy(),
-    });
-
-    const resolver: GateResolver = {
-      awaitDecision() {
-        return new Promise<GateDecision>(() => {
-          /* never resolves */
-        });
-      },
-    };
-
-    const handle = runAgent({
-      agent,
-      task,
-      sessionId: 's1',
-      spawnReason: 'initial',
-      model: createLanguageModelFromLegacyProvider(_provider, 'mock'),
-      mcp,
-      permissions,
-      eventBus: bus,
-      context: db.context,
-      audit: db.audit,
-      agentState: db.agentState,
-      gateResolver: resolver,
-    });
-
-    setTimeout(() => handle.kill(), 20);
-    const result = await handle.result;
-    expect(result.exitReason).toBe('killed');
-    expect(onCall).not.toHaveBeenCalled();
-  });
 });

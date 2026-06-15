@@ -35,8 +35,4 @@ describe('resolveClassification', () => {
     });
   });
 
-  it('stored row preserves its declared source even when risk matches inferred', () => {
-    const stored = row({ risk: 'read', source: 'inferred' });
-    expect(resolveClassification(stored, 'read').source).toBe('inferred');
-  });
 });

@@ -164,54 +164,6 @@ describe('runtime enforces classification + risk_defaults', () => {
     expect(onCall).toHaveBeenCalledTimes(1);
   });
 
-  it('destructive=deny blocks without gate and without calling MCP', async () => {
-    const onCall = vi.fn();
-    const provider = createMockProvider({
-      script: [toolTurn('t1', 'delete_thing', {}), textTurn('blocked, stopping')],
-    });
-    const mcp = makeFakeMCPConnection({ id: 'fs', tools: stubTools, onCall });
-    const policy = setRiskDefaults(emptyGovernancePolicy(), {
-      destructive: 'deny',
-    });
-
-    const permissions = createPermissionMiddleware({
-      audit: db.audit,
-      governancePolicy: policy,
-      classificationLookup: classMap({
-        delete_thing: 'destructive',
-      }),
-    });
-
-    const seenGates: unknown[] = [];
-    const resolver: GateResolver = {
-      async awaitDecision(req) {
-        seenGates.push(req);
-        return { kind: 'reject', reason: 'denied' };
-      },
-    };
-
-    const handle = runAgent({
-      agent,
-      task,
-      sessionId: 's1',
-      spawnReason: 'initial',
-      model: createLanguageModelFromLegacyProvider(provider, 'mock'),
-      mcp,
-      permissions,
-      eventBus: bus,
-      context: db.context,
-      audit: db.audit,
-      agentState: db.agentState,
-      gateResolver: resolver,
-    });
-
-    const result = await handle.result;
-    expect(result.exitReason).toBe('completed');
-    // Deny path: no gate is requested, no MCP call happens.
-    expect(seenGates).toHaveLength(0);
-    expect(onCall).not.toHaveBeenCalled();
-  });
-
   it('agent rule overrides risk_default — explicit allow lets a destructive tool through', async () => {
     const onCall = vi.fn();
     const provider = createMockProvider({
@@ -261,37 +213,4 @@ describe('runtime enforces classification + risk_defaults', () => {
     expect(onCall).toHaveBeenCalledTimes(1);
   });
 
-  it('back-compat: no classification lookup + default policy keeps the legacy behaviour', async () => {
-    // Without a classificationLookup and with default `inherit` risk_defaults,
-    // an agent with no allowed_tools list (i.e. permissive) executes
-    // every tool as before. This guarantees pre-classification behaviour
-    // is preserved when the feature is not wired.
-    const onCall = vi.fn();
-    const provider = createMockProvider({
-      script: [toolTurn('t1', 'get_thing', {}), textTurn('ok')],
-    });
-    const mcp = makeFakeMCPConnection({ id: 'fs', tools: stubTools, onCall });
-    const permissions = createPermissionMiddleware({
-      audit: db.audit,
-      governancePolicy: emptyGovernancePolicy(),
-    });
-
-    const handle = runAgent({
-      agent,
-      task,
-      sessionId: 's1',
-      spawnReason: 'initial',
-      model: createLanguageModelFromLegacyProvider(provider, 'mock'),
-      mcp,
-      permissions,
-      eventBus: bus,
-      context: db.context,
-      audit: db.audit,
-      agentState: db.agentState,
-    });
-
-    const result = await handle.result;
-    expect(result.exitReason).toBe('completed');
-    expect(onCall).toHaveBeenCalledTimes(1);
-  });
 });

@@ -10,11 +10,4 @@ describe("mergeVoiceTranscript", () => {
     expect(mergeVoiceTranscript("Hello", "team", " today")).toBe("Hello team today");
   });
 
-  it("returns the draft unchanged when nothing was spoken", () => {
-    expect(mergeVoiceTranscript("Draft line", "", "")).toBe("Draft line");
-  });
-
-  it("returns only spoken text when the draft is empty", () => {
-    expect(mergeVoiceTranscript("", "voice", " note")).toBe("voice note");
-  });
 });

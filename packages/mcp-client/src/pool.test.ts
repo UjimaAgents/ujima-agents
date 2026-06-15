@@ -1,17 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-// Bot Round 2 medium — has() / closeOne() must include cwd in the
-// key the same way get() does, otherwise two callers requesting the
-// same MCP from different workspace roots can collide on lookups
-// even though they live as separate pool entries.
-//
-// Direct behavioural tests are limited because the pool spawns real
-// MCP processes via stdio. We rely on the public surface being
-// internally consistent: has() and closeOne() must accept a `cwd`
-// in opts the same way get() does, and lookups against different
-// cwds must behave independently on the same mcpId.
+// has() / closeOne() must include cwd in the key the same way get()
+// does, otherwise two callers requesting the same MCP from different
+// workspace roots can collide on lookups even though they live as
+// separate pool entries.
 
-describe('createMCPPool — cwd-aware has() and closeOne() (bot Round 2 medium)', () => {
+describe('createMCPPool — cwd-aware has() and closeOne()', () => {
   it('has() accepts cwd in opts and returns false for an empty pool regardless of suffix', async () => {
     const { createMCPPool } = await import('./pool.js');
     const pool = createMCPPool();

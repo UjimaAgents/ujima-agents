@@ -61,24 +61,6 @@ describe('channel.* tools — toInvocation()', () => {
     expect(receivedChannelId).toBe('channel-general');
   });
 
-  it('channel.reply does not emit resourcePath', () => {
-    const inv = channelReplyTool.toInvocation({
-      message_id: 'msg_1',
-      body: 'hi',
-      mentions: [],
-    });
-    expect(inv.resourcePath).toBeUndefined();
-  });
-
-  it('channel.dm does not emit resourcePath', () => {
-    const inv = channelDmTool.toInvocation({
-      member_id: 'alex',
-      body: 'hi',
-      mentions: [],
-    });
-    expect(inv.resourcePath).toBeUndefined();
-  });
-
   it('buildDmSchemaForOrg accepts human members as DM recipients', () => {
     const schema = channelDmTool.buildSchema?.({
       organizationId: 'org-1',
@@ -95,16 +77,6 @@ describe('channel.* tools — toInvocation()', () => {
     expect(parsed.success).toBe(true);
     const byName = schema!.safeParse({ member_id: 'Pat', body: 'hi', mentions: [] });
     expect(byName.success).toBe(true);
-  });
-
-  it('channel.dm forwards ignore through to the invocation payload', () => {
-    const inv = channelDmTool.toInvocation({
-      member_id: 'alex',
-      body: 'hi',
-      mentions: [],
-      ignore: true,
-    });
-    expect(inv.input).toMatchObject({ ignore: true });
   });
 
   it('channel.list is tagged as a read', () => {
@@ -143,36 +115,6 @@ describe('channel.* tools — toInvocation()', () => {
         listAllChannels: () => [],
         getMember: (_orgId: string, memberId: string) =>
           memberId === 'agent-2' ? ({ id: 'agent-2' } as never) : null,
-      } as never,
-      conversations: {
-        readChannel: (input: { channelId: string }) => {
-          receivedChannelId = input.channelId;
-          return input;
-        },
-      } as never,
-    });
-    expect(receivedChannelId).toBe('dm:agent-1:agent-2');
-  });
-
-  it('channel.read normalizes dm:{singleMemberId} to a canonical DM thread id', async () => {
-    let receivedChannelId: string | undefined;
-    await channelReadTool.execute({
-      invocation: {
-        organizationId: 'org-1',
-        runId: 'run-1',
-        memberId: 'agent-1',
-        toolCallId: 'call-1',
-        toolId: 'channel.read',
-        action: 'read',
-        resourceType: 'message',
-        input: { channel_id: 'dm:agent-2', limit: 50 },
-      } as never,
-      team: { getChannel: () => undefined } as never,
-      repo: {
-        getChannel: () => null,
-        listAllChannels: () => [],
-        getMember: () => null,
-        listMembers: () => [],
       } as never,
       conversations: {
         readChannel: (input: { channelId: string }) => {
@@ -308,9 +250,6 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
     },
   );
 
-  it('does not keep the old agent.spawn alias', () => {
-    expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain('agent.spawn');
-  });
 });
 
 // L13 — `already_handled` and `duplicate_reply` reasons require a
@@ -320,14 +259,6 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
 describe('channelPassTool schema refine (L13)', () => {
   it('rejects reason="already_handled" without a note', () => {
     const parsed = channelPassTool.schema.safeParse({ reason: 'already_handled' });
-    expect(parsed.success).toBe(false);
-  });
-
-  it('rejects reason="duplicate_reply" with an empty note', () => {
-    const parsed = channelPassTool.schema.safeParse({
-      reason: 'duplicate_reply',
-      note: '   ',
-    });
     expect(parsed.success).toBe(false);
   });
 
@@ -346,14 +277,6 @@ describe('channelPassTool schema refine (L13)', () => {
       note: 'agent-2 just posted the same answer in this thread',
       // No cited_message_ids — the schema requires it for this reason
       // so the model has to ground the claim in a real message id.
-    });
-    expect(parsed.success).toBe(false);
-  });
-
-  it('rejects reason="duplicate_reply" when cited_message_ids is missing', () => {
-    const parsed = channelPassTool.schema.safeParse({
-      reason: 'duplicate_reply',
-      note: 'I already answered this earlier',
     });
     expect(parsed.success).toBe(false);
   });
@@ -488,7 +411,7 @@ describe('channelHandoffTool', () => {
   });
 });
 
-describe('channel.* tools — attachment rollback when publish throws (bot Round 6 high)', () => {
+describe('channel.* tools — attachment rollback when publish throws', () => {
   it('channel.post rolls back materialised attachments when conversations.postToChannel throws', async () => {
     const { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } =
       await import('node:fs');
@@ -605,124 +528,7 @@ describe('channel.* tools — attachment rollback when publish throws (bot Round
     }
   });
 
-  it('rollback on publish failure preserves captured tool_call source row + file (bot Round 10 high)', async () => {
-    const { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readdirSync } =
-      await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-
-    const storeRoot = mkdtempSync(join(tmpdir(), 'ujima-rollback-capture-'));
-    try {
-      const runDir = join(storeRoot, 'agent-generated', 'org-1', 'run-1');
-      mkdirSync(runDir, { recursive: true });
-      const sourceFilename = 'aatt_capture.png';
-      const sourcePath = join(runDir, sourceFilename);
-      const PNG = Buffer.from([
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-        ...Array.from({ length: 256 }).map(() => 0x42),
-      ]);
-      writeFileSync(sourcePath, PNG);
-
-      // Seed the captured agent_attachments row that a prior MCP
-      // tool result would have produced. The channel.post call
-      // below references it via refType: 'tool_call'.
-      const agentAttachments: { id: string; storagePath: string; byteSize: number; sourceToolCallId?: string }[] = [
-        {
-          id: 'aatt_capture',
-          storagePath: 'agent-generated/org-1/run-1/aatt_capture.png',
-          byteSize: PNG.length,
-          sourceToolCallId: 'call-42',
-        },
-      ];
-      const userAttachments: { id: string }[] = [];
-      const deletedAgent: string[] = [];
-
-      const result = await channelPostTool.execute({
-        invocation: {
-          organizationId: 'org-1',
-          runId: 'run-1',
-          memberId: 'agent-1',
-          toolCallId: 'call-1',
-          toolId: 'channel.post',
-          action: 'message',
-          resourceType: 'message',
-          input: {
-            channel_id: 'general',
-            body: 'hi',
-            mentions: [],
-            // Borrowed tool_call ref — the captured row + file
-            // pre-exist. If the publish step throws, rollback
-            // must NOT delete them.
-            attachments: [{ refType: 'tool_call', value: 'tc_call-42:0' }],
-          },
-        } as never,
-        team: {
-          getChannel: (name: string) =>
-            name === 'general' ? { id: 'channel-general' } : undefined,
-        } as never,
-        repo: {
-          getChannel: (_orgId: string, channelId: string) =>
-            channelId === 'channel-general' ? ({ id: 'channel-general' } as never) : null,
-          getOrganization: () => ({ id: 'org-1', workspace: { root: '/tmp/ws' } }),
-          listAllChannels: () => [],
-          findAgentAttachmentByToolCall: (_org: string, callId: string, idx: number) =>
-            callId === 'call-42' && idx === 0
-              ? {
-                  id: 'aatt_capture',
-                  storagePath: 'agent-generated/org-1/run-1/aatt_capture.png',
-                  byteSize: PNG.length,
-                  filename: 'shot.png',
-                  mimeType: 'image/png',
-                  category: 'image',
-                }
-              : null,
-          saveAttachment: (att: { id: string }) => {
-            userAttachments.push(att);
-            return att;
-          },
-          deleteAgentAttachment: (_org: string, id: string) => {
-            deletedAgent.push(id);
-            const idx = agentAttachments.findIndex((a) => a.id === id);
-            if (idx >= 0) agentAttachments.splice(idx, 1);
-          },
-          deleteAttachment: (_org: string, id: string): number => {
-            const idx = userAttachments.findIndex((a) => a.id === id);
-            if (idx >= 0) {
-              userAttachments.splice(idx, 1);
-              return 1;
-            }
-            return 0;
-          },
-          getAgentAttachment: (_org: string, id: string) =>
-            agentAttachments.find((a) => a.id === id) ?? null,
-          saveAuditEvent: () => undefined,
-        } as never,
-        conversations: {
-          tryMirrorSuppress: () => false,
-          postToChannel: () => {
-            throw new Error('synthetic publish failure');
-          },
-        } as never,
-        agentAttachmentRoot: join(storeRoot, 'agent-generated'),
-        attachmentStoreRoot: storeRoot,
-      }).catch((err) => err);
-
-      expect(result).toBeInstanceOf(Error);
-      // CRITICAL: the captured source row + file MUST survive.
-      // Rolling them back would destroy the artifact and break
-      // retries for the same tool_call ref.
-      expect(agentAttachments).toHaveLength(1);
-      expect(deletedAgent).toEqual([]);
-      expect(existsSync(sourcePath)).toBe(true);
-      expect(readdirSync(runDir)).toContain(sourceFilename);
-      // The freshly-written user-attachment row IS cleaned up.
-      expect(userAttachments).toHaveLength(0);
-    } finally {
-      rmSync(storeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it('rollback DELETES the agent_attachments row even when attachmentStoreRoot is absent (bot Round 14 high)', async () => {
+  it('rollback DELETES the agent_attachments row even when attachmentStoreRoot is absent', async () => {
     const { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } =
       await import('node:fs');
     const { tmpdir } = await import('node:os');

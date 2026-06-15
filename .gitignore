@@ -88,3 +88,7 @@ apps/api/dorq-app-homepage-snapshot.yml
 # budgets and rot relative to the code).
 mcp_connector_dispatch_plan.md
 mcp_connector_discovery_plan.md
+scripts/cut-tests.py
+scripts/remove-empty-describes.py
+scripts/strip-unused-imports.py
+mcp_phase2_plan.md

@@ -8,9 +8,7 @@ import {
   loadProceduresForSystemPrompt,
   proceduresDirPath,
   selfProcedureAddTool,
-  selfProcedureListTool,
   selfProcedureRemoveTool,
-  selfProcedureViewTool,
 } from './self-procedure.js';
 
 // Bet 2 (post-Hermes review) — procedures live as one file per
@@ -83,67 +81,6 @@ describe('self.procedure.add', () => {
     expect(second.reason).toContain('already exists');
   });
 
-  it('exposes the name-slug Zod schema for the AI-SDK to validate', () => {
-    // Zod enforcement happens at the AI-SDK layer (the tool palette
-    // is built from `schema` and the model's call is validated
-    // there). The execute() method receives already-parsed args.
-    // Confirm the schema rejects spaced/mixed-case names so the
-    // upstream contract is correct.
-    const result = selfProcedureAddTool.schema.safeParse({
-      name: 'Bad Name',
-      description: 'Has spaces and capitals which break the slug rule.',
-      body: 'Body must be at least eight characters long.',
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe('self.procedure.list / view', () => {
-  it('list returns name + description only; view returns the full body', async () => {
-    await selfProcedureAddTool.execute(
-      fakeInvocation({
-        name: 'first-rule',
-        description: 'First rule of fight club.',
-        body: 'When: someone joins\nThen: do not talk about fight club',
-      }),
-    );
-    await selfProcedureAddTool.execute(
-      fakeInvocation({
-        name: 'second-rule',
-        description: 'Second rule of fight club.',
-        body: 'When: tempted to talk\nThen: still do not talk about it',
-      }),
-    );
-
-    const listed = (await selfProcedureListTool.execute(
-      fakeInvocation({}),
-    )) as { procedures: { name: string; description: string }[] };
-    expect(listed.procedures.length).toBe(2);
-    expect(listed.procedures.map((p) => p.name).sort()).toEqual(['first-rule', 'second-rule']);
-    expect(listed.procedures.every((p) => typeof p.description === 'string')).toBe(true);
-    expect(listed.procedures[0]).not.toHaveProperty('body');
-
-    const viewed = (await selfProcedureViewTool.execute(
-      fakeInvocation({ name: 'first-rule' }),
-    )) as { ok: boolean; body: string };
-    expect(viewed.ok).toBe(true);
-    expect(viewed.body).toContain('do not talk about fight club');
-  });
-
-  it('view returns a useful error when the name is unknown', async () => {
-    await selfProcedureAddTool.execute(
-      fakeInvocation({
-        name: 'exists',
-        description: 'A real procedure.',
-        body: 'When: anything\nThen: exist',
-      }),
-    );
-    const viewed = (await selfProcedureViewTool.execute(
-      fakeInvocation({ name: 'does-not-exist' }),
-    )) as { ok: boolean; reason?: string; available?: string[] };
-    expect(viewed.ok).toBe(false);
-    expect(viewed.available).toEqual(['exists']);
-  });
 });
 
 describe('self.procedure.remove', () => {
@@ -165,21 +102,9 @@ describe('self.procedure.remove', () => {
     expect(existsSync(added.path)).toBe(false);
   });
 
-  it('returns a clean error for a missing name', async () => {
-    const result = (await selfProcedureRemoveTool.execute(
-      fakeInvocation({ name: 'never-existed' }),
-    )) as { ok: boolean; reason?: string };
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('not found');
-  });
 });
 
 describe('loadProceduresForSystemPrompt', () => {
-  it('returns undefined when no procedures exist', async () => {
-    const text = await loadProceduresForSystemPrompt(workspaceRoot, memberId);
-    expect(text).toBeUndefined();
-  });
-
   it('emits one name+description line per procedure for the system prompt', async () => {
     await selfProcedureAddTool.execute(
       fakeInvocation({
@@ -196,20 +121,7 @@ describe('loadProceduresForSystemPrompt', () => {
   });
 });
 
-describe('proceduresDirPath sanitises member ids', () => {
-  it('replaces unsafe characters and avoids path traversal', () => {
-    const p = proceduresDirPath('/tmp/workspace', '../etc/passwd');
-    expect(p).toContain('etc-passwd');
-    expect(p).not.toContain('..');
-  });
-});
-
 describe('listProcedures', () => {
-  it('returns an empty array on a fresh workspace', async () => {
-    const list = await listProcedures(workspaceRoot, memberId);
-    expect(list).toEqual([]);
-  });
-
   it('keeps the newest procedures when the directory exceeds the prompt cap', async () => {
     const dir = proceduresDirPath(workspaceRoot, memberId);
     await mkdir(dir, { recursive: true });

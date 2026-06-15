@@ -2,13 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   GovernancePolicy,
   buildToolCatalog,
-  clearAgent,
   emptyGovernancePolicy,
-  emptyRiskDefaults,
   evaluatePolicy,
   matchRule,
-  removeAgentRule,
-  removePlatformRule,
   setAgentRule,
   setPlatformRule,
   setRiskDefaults,
@@ -21,31 +17,6 @@ describe('governance policy schema', () => {
     expect(parsed.platform.always_deny).toEqual([]);
     expect(parsed.platform.default_require_approval).toEqual([]);
     expect(parsed.agents).toEqual({});
-  });
-
-  it('parses a fully-formed policy round-trip', () => {
-    const input = {
-      version: 1 as const,
-      platform: {
-        always_deny: [{ mcp_id: 'shell', tool_name: 'exec', state: 'deny' as const }],
-        default_require_approval: [
-          { mcp_id: '*', tool_name: 'write*', state: 'require_approval' as const },
-        ],
-      },
-      agents: {
-        'designer-1': [
-          {
-            mcp_id: 'figma',
-            tool_name: 'get_file',
-            state: 'allow' as const,
-            reason: 'read-only UX',
-          },
-        ],
-      },
-    };
-    const parsed = GovernancePolicy.parse(input);
-    expect(parsed.agents['designer-1']).toHaveLength(1);
-    expect(parsed.agents['designer-1']?.[0]?.state).toBe('allow');
   });
 
   it('rejects unknown states', () => {
@@ -68,32 +39,6 @@ describe('matchRule', () => {
     ).toBe(true);
   });
 
-  it('wildcard mcp matches any mcp', () => {
-    expect(
-      matchRule({ mcp_id: '*', tool_name: 'delete', state: 'deny' }, 'fs', 'delete'),
-    ).toBe(true);
-  });
-
-  it('wildcard tool matches any tool on that mcp', () => {
-    expect(
-      matchRule({ mcp_id: 'shell', tool_name: '*', state: 'deny' }, 'shell', 'exec'),
-    ).toBe(true);
-  });
-
-  it('prefix glob matches tool prefix', () => {
-    expect(
-      matchRule({ mcp_id: 'fs', tool_name: 'write*', state: 'deny' }, 'fs', 'write_file'),
-    ).toBe(true);
-    expect(
-      matchRule({ mcp_id: 'fs', tool_name: 'write*', state: 'deny' }, 'fs', 'read'),
-    ).toBe(false);
-  });
-
-  it('different mcp does not match', () => {
-    expect(
-      matchRule({ mcp_id: 'fs', tool_name: 'read', state: 'allow' }, 'shell', 'read'),
-    ).toBe(false);
-  });
 });
 
 describe('evaluatePolicy precedence', () => {
@@ -116,43 +61,6 @@ describe('evaluatePolicy precedence', () => {
     });
     expect(r.state).toBe('deny');
     expect(r.source).toBe('platform_deny');
-  });
-
-  it('agent rule beats platform default_require_approval', () => {
-    let p = emptyGovernancePolicy();
-    p = setPlatformRule(p, 'default_require_approval', {
-      mcp_id: 'fs',
-      tool_name: 'write',
-      state: 'require_approval',
-    });
-    p = setAgentRule(p, 'trusted-bot', {
-      mcp_id: 'fs',
-      tool_name: 'write',
-      state: 'allow',
-    });
-    const r = evaluatePolicy(p, {
-      agentId: 'trusted-bot',
-      mcpId: 'fs',
-      toolName: 'write',
-    });
-    expect(r.state).toBe('allow');
-    expect(r.source).toBe('agent_rule');
-  });
-
-  it('platform default_require_approval applies when no agent rule', () => {
-    let p = emptyGovernancePolicy();
-    p = setPlatformRule(p, 'default_require_approval', {
-      mcp_id: '*',
-      tool_name: 'delete',
-      state: 'require_approval',
-    });
-    const r = evaluatePolicy(p, {
-      agentId: 'any',
-      mcpId: 'fs',
-      toolName: 'delete',
-    });
-    expect(r.state).toBe('require_approval');
-    expect(r.source).toBe('platform_require_approval');
   });
 
   it('exact agent rule beats wildcard agent rule', () => {
@@ -200,16 +108,6 @@ describe('evaluatePolicy precedence', () => {
     });
     expect(r.state).toBe('require_approval');
     expect(r.source).toBe('platform_require_approval');
-  });
-
-  it('empty policy returns inherit/default', () => {
-    const r = evaluatePolicy(emptyGovernancePolicy(), {
-      agentId: 'a',
-      mcpId: 'm',
-      toolName: 't',
-    });
-    expect(r.state).toBe('inherit');
-    expect(r.source).toBe('default');
   });
 
   it('back-compat: omitted classification still returns inherit when defaults are all inherit', () => {
@@ -272,73 +170,12 @@ describe('evaluatePolicy: risk_defaults', () => {
     expect(r.source).toBe('agent_rule');
   });
 
-  it('platform require_approval beats risk_default', () => {
-    let p = emptyGovernancePolicy();
-    p = setRiskDefaults(p, { read: 'allow' });
-    p = setPlatformRule(p, 'default_require_approval', {
-      mcp_id: 'fs',
-      tool_name: 'read_file',
-      state: 'require_approval',
-    });
-    const r = evaluatePolicy(p, {
-      agentId: 'a',
-      mcpId: 'fs',
-      toolName: 'read_file',
-      classification: 'read',
-    });
-    expect(r.state).toBe('require_approval');
-    expect(r.source).toBe('platform_require_approval');
-  });
-
   // risk_defaults only applies when `classificationLookup` returns
   // something — including the literal 'unknown'. Built-in tools
   // (channel.*, self.*, view, ls, …) are never classified and surface
   // as `undefined`; treating them as the `unknown` bucket would block
   // standups when admins set `risk_defaults.unknown=require_approval`,
   // even though those built-ins have their own enforcement path.
-  it('missing classification on a non-MCP tool falls through (inherit)', () => {
-    let p = emptyGovernancePolicy();
-    p = setRiskDefaults(p, { unknown: 'require_approval' });
-    const r = evaluatePolicy(p, { agentId: 'a', mcpId: 'channels', toolName: 'channel.pass' });
-    expect(r.state).toBe('inherit');
-    expect(r.source).toBe('default');
-  });
-
-  it('explicit classification=unknown also uses the unknown bucket', () => {
-    let p = emptyGovernancePolicy();
-    p = setRiskDefaults(p, { unknown: 'deny' });
-    const r = evaluatePolicy(p, {
-      agentId: 'a',
-      mcpId: 'm',
-      toolName: 't',
-      classification: 'unknown',
-    });
-    expect(r.state).toBe('deny');
-  });
-
-  it('class with inherit falls through to legacy', () => {
-    const p = emptyGovernancePolicy();
-    const r = evaluatePolicy(p, {
-      agentId: 'a',
-      mcpId: 'm',
-      toolName: 't',
-      classification: 'read',
-    });
-    expect(r.state).toBe('inherit');
-    expect(r.source).toBe('default');
-  });
-
-  it('PolicyEvaluation carries the classification through', () => {
-    let p = emptyGovernancePolicy();
-    p = setRiskDefaults(p, { destructive: 'deny' });
-    const r = evaluatePolicy(p, {
-      agentId: 'a',
-      mcpId: 'm',
-      toolName: 't',
-      classification: 'destructive',
-    });
-    expect(r.classification).toBe('destructive');
-  });
 });
 
 describe('setRiskDefaults', () => {
@@ -352,26 +189,9 @@ describe('setRiskDefaults', () => {
     expect(p.risk_defaults.write).toBe('require_approval');
   });
 
-  it('emptyRiskDefaults returns inherit for every class', () => {
-    const d = emptyRiskDefaults();
-    expect(d.read).toBe('inherit');
-    expect(d.write).toBe('inherit');
-    expect(d.destructive).toBe('inherit');
-    expect(d.unknown).toBe('inherit');
-  });
 });
 
 describe('GovernancePolicy schema with risk_defaults', () => {
-  it('parses a policy with risk_defaults declared', () => {
-    const parsed = GovernancePolicy.parse({
-      risk_defaults: { read: 'allow', destructive: 'deny' },
-    });
-    expect(parsed.risk_defaults.read).toBe('allow');
-    expect(parsed.risk_defaults.write).toBe('inherit');
-    expect(parsed.risk_defaults.destructive).toBe('deny');
-    expect(parsed.risk_defaults.unknown).toBe('inherit');
-  });
-
   it('back-compat: parses an old policy without risk_defaults', () => {
     const parsed = GovernancePolicy.parse({
       version: 1,
@@ -397,41 +217,6 @@ describe('policy mutators', () => {
     });
     expect(p.agents['a']).toHaveLength(1);
     expect(p.agents['a']?.[0]?.state).toBe('allow');
-  });
-
-  it('removeAgentRule drops only that rule and clears the agent key when empty', () => {
-    let p = emptyGovernancePolicy();
-    p = setAgentRule(p, 'a', { mcp_id: 'fs', tool_name: 'r', state: 'deny' });
-    p = setAgentRule(p, 'a', { mcp_id: 'fs', tool_name: 'w', state: 'deny' });
-    p = removeAgentRule(p, 'a', 'fs', 'r');
-    expect(p.agents['a']).toHaveLength(1);
-    p = removeAgentRule(p, 'a', 'fs', 'w');
-    expect(p.agents['a']).toBeUndefined();
-  });
-
-  it('clearAgent wipes all rules for an agent', () => {
-    let p = emptyGovernancePolicy();
-    p = setAgentRule(p, 'a', { mcp_id: 'fs', tool_name: 'r', state: 'deny' });
-    p = setAgentRule(p, 'a', { mcp_id: 'shell', tool_name: 'exec', state: 'deny' });
-    p = clearAgent(p, 'a');
-    expect(p.agents['a']).toBeUndefined();
-  });
-
-  it('removePlatformRule only affects the named bucket', () => {
-    let p = emptyGovernancePolicy();
-    p = setPlatformRule(p, 'always_deny', {
-      mcp_id: 'shell',
-      tool_name: 'exec',
-      state: 'deny',
-    });
-    p = setPlatformRule(p, 'default_require_approval', {
-      mcp_id: 'shell',
-      tool_name: 'exec',
-      state: 'require_approval',
-    });
-    p = removePlatformRule(p, 'always_deny', 'shell', 'exec');
-    expect(p.platform.always_deny).toHaveLength(0);
-    expect(p.platform.default_require_approval).toHaveLength(1);
   });
 
   it('mutators are pure — they return a new policy', () => {

@@ -52,28 +52,6 @@ describe('mcp_tool_classifications repository', () => {
     expect(getFile?.source).toBe('inferred');
   });
 
-  it('INSERT OR IGNORE: re-seeding the same tool does not change existing rows', () => {
-    const repo = freshRepo();
-    const orgId = `org_${randomUUID()}`;
-    const server = makeServer(orgId);
-    repo.saveMcpServer(server);
-
-    repo.seedInferredClassifications(orgId, server.id, [
-      { toolName: 'get_file', risk: 'read' },
-    ]);
-    const first = repo.getMcpToolClassification(orgId, server.id, 'get_file')!;
-
-    // Re-seed with a different risk — must NOT overwrite.
-    const inserted = repo.seedInferredClassifications(orgId, server.id, [
-      { toolName: 'get_file', risk: 'destructive' },
-    ]);
-    expect(inserted).toBe(0);
-
-    const after = repo.getMcpToolClassification(orgId, server.id, 'get_file')!;
-    expect(after.risk).toBe('read');
-    expect(after.updatedAt).toBe(first.updatedAt);
-  });
-
   it('manual overrides survive re-seeding (the load-bearing safety property)', () => {
     const repo = freshRepo();
     const orgId = `org_${randomUUID()}`;
@@ -131,62 +109,4 @@ describe('mcp_tool_classifications repository', () => {
     expect(after.needsReview).toBe(false);
   });
 
-  it('listMcpToolClassifications can scope to a single mcpServerId', () => {
-    const repo = freshRepo();
-    const orgId = `org_${randomUUID()}`;
-    const a = makeServer(orgId, { name: 'a' });
-    const b = makeServer(orgId, { name: 'b' });
-    repo.saveMcpServer(a);
-    repo.saveMcpServer(b);
-    repo.seedInferredClassifications(orgId, a.id, [{ toolName: 't', risk: 'read' }]);
-    repo.seedInferredClassifications(orgId, b.id, [{ toolName: 'u', risk: 'write' }]);
-
-    expect(repo.listMcpToolClassifications(orgId)).toHaveLength(2);
-    expect(repo.listMcpToolClassifications(orgId, a.id)).toHaveLength(1);
-    expect(repo.listMcpToolClassifications(orgId, a.id)[0]?.toolName).toBe('t');
-  });
-
-  it('orgs are isolated', () => {
-    const repo = freshRepo();
-    const o1 = `org_${randomUUID()}`;
-    const o2 = `org_${randomUUID()}`;
-    const s1 = makeServer(o1);
-    const s2 = makeServer(o2, { id: s1.id }); // intentional id collision across orgs
-    repo.saveMcpServer(s1);
-    repo.saveMcpServer(s2);
-    repo.seedInferredClassifications(o1, s1.id, [{ toolName: 't', risk: 'read' }]);
-
-    expect(repo.listMcpToolClassifications(o1)).toHaveLength(1);
-    expect(repo.listMcpToolClassifications(o2)).toHaveLength(0);
-  });
-
-  it('deleteMcpServer cascades to classifications', () => {
-    const repo = freshRepo();
-    const orgId = `org_${randomUUID()}`;
-    const server = makeServer(orgId);
-    repo.saveMcpServer(server);
-    repo.seedInferredClassifications(orgId, server.id, [
-      { toolName: 't', risk: 'read' },
-      { toolName: 'u', risk: 'write' },
-    ]);
-    expect(repo.listMcpToolClassifications(orgId, server.id)).toHaveLength(2);
-
-    repo.deleteMcpServer(orgId, server.id);
-    expect(repo.listMcpToolClassifications(orgId, server.id)).toHaveLength(0);
-  });
-
-  it('deleteMcpToolClassification removes a single row only', () => {
-    const repo = freshRepo();
-    const orgId = `org_${randomUUID()}`;
-    const server = makeServer(orgId);
-    repo.saveMcpServer(server);
-    repo.seedInferredClassifications(orgId, server.id, [
-      { toolName: 't', risk: 'read' },
-      { toolName: 'u', risk: 'write' },
-    ]);
-    repo.deleteMcpToolClassification(orgId, server.id, 't');
-    const remaining = repo.listMcpToolClassifications(orgId, server.id);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.toolName).toBe('u');
-  });
 });

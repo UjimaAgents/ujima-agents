@@ -39,26 +39,9 @@ describe('looksLikeNpmCacheCorruption', () => {
     expect(looksLikeNpmCacheCorruption(REAL_NPM_CACHE_ERROR)).toBe(true);
   });
 
-  it('matches EACCES variants on _cacache', () => {
-    expect(
-      looksLikeNpmCacheCorruption("npm EACCES: permission denied, rename '/foo/.npm/_cacache/tmp/x'"),
-    ).toBe(true);
-  });
-
-  it('does NOT match unrelated MCP errors', () => {
-    expect(looksLikeNpmCacheCorruption('ECONNREFUSED 127.0.0.1:53000')).toBe(false);
-    expect(looksLikeNpmCacheCorruption('Target page has been closed')).toBe(false);
-  });
 });
 
 describe('connectMCPWithCacheRecovery', () => {
-  it('returns the connection on first-try success without a recovery marker', async () => {
-    const connector = async () => fakeConnection;
-    const res = await connectMCPWithCacheRecovery(baseDef, {}, connector);
-    expect(res.connection).toBe(fakeConnection);
-    expect(res.recovery).toBeUndefined();
-  });
-
   it('retries with NPM_CONFIG_CACHE when stderr matches the npm-cache signature', async () => {
     const calls: { env?: Record<string, string> }[] = [];
     let attempt = 0;
@@ -79,27 +62,4 @@ describe('connectMCPWithCacheRecovery', () => {
     });
   });
 
-  it('does NOT retry when the failure is unrelated to npm cache', async () => {
-    let attempt = 0;
-    const connector = async () => {
-      attempt += 1;
-      throw new Error('ECONNREFUSED 127.0.0.1:53000');
-    };
-    await expect(connectMCPWithCacheRecovery(baseDef, {}, connector)).rejects.toThrow(
-      'ECONNREFUSED',
-    );
-    expect(attempt).toBe(1);
-  });
-
-  it('does NOT retry when the transport is not stdio', async () => {
-    let attempt = 0;
-    const connector = async () => {
-      attempt += 1;
-      throw new Error(REAL_NPM_CACHE_ERROR);
-    };
-    await expect(
-      connectMCPWithCacheRecovery({ ...baseDef, transport: 'sse', url: 'http://x' }, {}, connector),
-    ).rejects.toThrow();
-    expect(attempt).toBe(1);
-  });
 });

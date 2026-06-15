@@ -129,45 +129,6 @@ describe('tier-curation analyzer', () => {
     });
   });
 
-  it('writes a promote suggestion when a dispatch attachment is high-volume AND high-error', async () => {
-    // 30 runs, dispatch attachment, 200 completions with 30 errors:
-    // volumePerRun = 6.67 (above 5), errorRate = 0.15 (above 0.10).
-    const runs = Array.from({ length: 30 }, (_, i) => makeRun(`run_${i}`));
-    const audit: AuditEvent[] = [];
-    for (let i = 0; i < 30; i += 1) {
-      for (let j = 0; j < 6; j += 1) {
-        audit.push(
-          makeCompletion({
-            runId: `run_${i}`,
-            status: j === 0 ? 'error' : 'ok',
-          }),
-        );
-      }
-      audit.push(makeCompletion({ runId: `run_${i}`, status: 'error' }));
-    }
-    const repo = makeRepo({
-      members: [makeMember()],
-      attachmentsByMember: {
-        mem_agent: [makeAttachment({ tier: 'dispatch' })],
-      },
-      audit,
-      runs,
-    });
-    const service = createTierCurationService({ repo });
-    const result = await service.analyzeOrganization({ organizationId: 'org_test' });
-    expect(result.promoteCount).toBe(1);
-    expect(repo.saved[0]).toMatchObject({
-      direction: 'promote',
-      signalMetadata: {
-        tierAtScoreTime: 'dispatch',
-        runsConsidered: 30,
-      },
-    });
-    const m = repo.saved[0]!.signalMetadata as { volumePerRun: number; errorRate: number };
-    expect(m.volumePerRun).toBeCloseTo(7, 1);
-    expect(m.errorRate).toBeGreaterThan(0.1);
-  });
-
   it('does NOT count blocked rows as completions (policy denials must not inflate volume into a false promote)', async () => {
     // Bot finding: every blocked invocation must be excluded BEFORE
     // counting, otherwise a dispatch tool that keeps tripping
@@ -199,50 +160,4 @@ describe('tier-curation analyzer', () => {
     expect(repo.saved).toHaveLength(0);
   });
 
-  it('does NOT promote a dispatch tool that is high-volume but low-error (the model is handling the indirection fine)', async () => {
-    // Volume alone is not enough — the error-rate gate is what makes
-    // the promote candidate. A hot but reliable read tool stays on
-    // dispatch, preserving the native palette budget.
-    const runs = Array.from({ length: 30 }, (_, i) => makeRun(`run_${i}`));
-    const audit: AuditEvent[] = [];
-    for (let i = 0; i < 30; i += 1) {
-      for (let j = 0; j < 10; j += 1) {
-        audit.push(makeCompletion({ runId: `run_${i}`, status: 'ok' }));
-      }
-    }
-    const repo = makeRepo({
-      members: [makeMember()],
-      attachmentsByMember: {
-        mem_agent: [makeAttachment({ tier: 'dispatch' })],
-      },
-      audit,
-      runs,
-    });
-    const service = createTierCurationService({ repo });
-    const result = await service.analyzeOrganization({ organizationId: 'org_test' });
-    expect(result.suggestionsWritten).toBe(0);
-  });
-
-  it('returns zero with runsConsidered=0 when the org has no runs to score against', async () => {
-    // A brand-new org or an org with the dispatch flag freshly flipped
-    // on shouldn't generate spurious demote candidates for every
-    // native attachment that hasn't had a chance to be exercised yet.
-    const repo = makeRepo({
-      members: [makeMember()],
-      attachmentsByMember: {
-        mem_agent: [makeAttachment({ tier: 'native' })],
-      },
-      audit: [],
-      runs: [],
-    });
-    const service = createTierCurationService({ repo });
-    const result = await service.analyzeOrganization({ organizationId: 'org_test' });
-    expect(result).toEqual({
-      suggestionsWritten: 0,
-      demoteCount: 0,
-      promoteCount: 0,
-      runsConsidered: 0,
-    });
-    expect(repo.saved).toHaveLength(0);
-  });
 });

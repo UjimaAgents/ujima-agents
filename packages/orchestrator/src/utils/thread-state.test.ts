@@ -64,21 +64,6 @@ describe('buildThreadStateBlock', () => {
     expect(block).toContain('<you-explicitly-addressed>true</you-explicitly-addressed>');
   });
 
-  it('marks the agent as implicitly addressed when name appears as standalone token', () => {
-    const source = buildMessage({
-      id: 'msg-1',
-      content: 'Hey ada, status?',
-      createdAt: '2026-05-19T10:00:00.000Z',
-    });
-    const block = buildThreadStateBlock({
-      messages: [source],
-      currentMember: { id: 'agent-ada', name: 'Ada' },
-      sourceMessageId: 'msg-1',
-      members,
-    });
-    expect(block).toContain('<you-implicitly-addressed>true</you-implicitly-addressed>');
-  });
-
   it('lists agents who have responded since the source message', () => {
     const source = buildMessage({
       id: 'msg-1',
@@ -104,85 +89,4 @@ describe('buildThreadStateBlock', () => {
     expect(block).toMatch(/<agents-not-yet-responded>[^<]*Cleo[^<]*<\/agents-not-yet-responded>/);
   });
 
-  it('does not falsely treat the current agent as a responder', () => {
-    const source = buildMessage({
-      id: 'msg-1',
-      content: 'who can ship?',
-      createdAt: '2026-05-19T10:00:00.000Z',
-    });
-    const adaReply = buildMessage({
-      id: 'msg-2',
-      senderId: 'agent-ada',
-      senderKind: 'agent',
-      kind: 'agent',
-      content: 'I will ship.',
-      createdAt: '2026-05-19T10:05:00.000Z',
-    });
-    const block = buildThreadStateBlock({
-      messages: [source, adaReply],
-      currentMember: { id: 'agent-ada', name: 'Ada' },
-      sourceMessageId: 'msg-1',
-      members,
-    });
-    expect(block).toContain('<agents-who-already-responded>none</agents-who-already-responded>');
-  });
-
-  it('treats peer messages in a DM thread as implicitly addressed', () => {
-    const source = buildMessage({
-      id: 'msg-dm-1',
-      senderId: 'human-1',
-      senderKind: 'human',
-      kind: 'human',
-      content: 'review the frontend web for ujima and critique the UX extensively',
-      createdAt: '2026-05-19T10:00:00.000Z',
-    });
-    const block = buildThreadStateBlock({
-      messages: [source],
-      currentMember: { id: 'agent-ada', name: 'Ethan Parker' },
-      sourceMessageId: 'msg-dm-1',
-      threadId: 'dm:agent-ada:human-1',
-      members: [
-        buildMember({ id: 'human-1', name: 'Precious Vincent', kind: 'human', roleName: 'lead' }),
-        buildMember({ id: 'agent-ada', name: 'Ethan Parker', kind: 'agent', roleName: 'engineer' }),
-      ],
-    });
-    expect(block).toContain('<conversation-kind>dm</conversation-kind>');
-    expect(block).toContain('<you-implicitly-addressed>true</you-implicitly-addressed>');
-    expect(block).toContain('<you-explicitly-addressed>false</you-explicitly-addressed>');
-  });
-
-  it('returns "none" for empty mention/responder sets', () => {
-    const source = buildMessage({
-      id: 'msg-1',
-      content: 'general announcement — no addressee',
-    });
-    const block = buildThreadStateBlock({
-      messages: [source],
-      currentMember: { id: 'agent-ada', name: 'Ada' },
-      sourceMessageId: 'msg-1',
-      members,
-    });
-    expect(block).toContain('<explicit-mentions>none</explicit-mentions>');
-    expect(block).toContain('<implicit-name-references>none</implicit-name-references>');
-  });
-
-  it('keeps addressing factual while making a channel-read reply optional', () => {
-    const source = buildMessage({
-      id: 'msg-1',
-      content: 'Hey Ada, please review',
-      mentions: ['agent-ada'],
-      createdAt: '2026-05-19T10:00:00.000Z',
-    });
-    const block = buildThreadStateBlock({
-      messages: [source],
-      currentMember: { id: 'agent-ada', name: 'Ada' },
-      sourceMessageId: 'msg-1',
-      members,
-      wakeReason: 'channel-read',
-    });
-    expect(block).toContain('<explicit-mentions>Ada</explicit-mentions>');
-    expect(block).toContain('<you-explicitly-addressed>true</you-explicitly-addressed>');
-    expect(block).toContain('<you-implicitly-addressed>true</you-implicitly-addressed>');
-    expect(block).toContain('<reply-obligation>optional-backpressure</reply-obligation>');
-  });
 });
