@@ -187,6 +187,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
           approvals: this.attachmentApprovalRequester
             ? { requestAttachmentApproval: this.attachmentApprovalRequester }
             : undefined,
+          attachmentCapture: this.attachmentCapture,
         },
         mcpCtx,
       );
@@ -770,6 +771,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
           approvals: this.attachmentApprovalRequester
             ? { requestAttachmentApproval: this.attachmentApprovalRequester }
             : undefined,
+          attachmentCapture: this.attachmentCapture,
         },
         ctx,
       );

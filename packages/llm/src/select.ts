@@ -157,6 +157,10 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 
   if (input.kind === 'deepseek') {
     if (!input.apiKey) throw new LLMError('not_configured', 'deepseek provider requires apiKey');
+    // DeepSeek's direct chat API rejects multimodal `image_url`
+    // blocks. The official SDK silently drops non-text parts so the
+    // run still completes against the sender's text + inventory
+    // block; vision-capable DeepSeek lives behind OpenRouter.
     return createDeepSeek({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? DEEPSEEK_BASE_URL,

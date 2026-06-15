@@ -38,6 +38,8 @@ export interface ConnectOptions {
   clientName?: string;
   clientVersion?: string;
   transport?: Transport;
+  /** Working directory for stdio MCPs. Ignored for non-stdio. */
+  cwd?: string;
   onToolCall?: (
     ctx: ToolCallContext,
     mcpId: string,
@@ -54,7 +56,7 @@ export async function connectMCP(
   def: MCPDef,
   options: ConnectOptions = {},
 ): Promise<MCPConnection> {
-  const transport = options.transport ?? buildTransport(def);
+  const transport = options.transport ?? buildTransport(def, { cwd: options.cwd });
   const client = new Client(
     { name: options.clientName ?? 'ujima', version: options.clientVersion ?? '0.1.0' },
     { capabilities: {} },

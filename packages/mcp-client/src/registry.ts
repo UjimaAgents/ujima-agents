@@ -36,6 +36,10 @@ export interface RegistryEntry {
   // the §7.2 renderer falls back to structural facts only — closing
   // the prompt-injection surface from §17.5.7.
   curatedDescription?: string;
+  // Agent-attachments hint modifying mime-detection: an array of
+  // categories widens capture for known generators; `'never'`
+  // suppresses capture even when mime detection succeeds.
+  capturesAttachments?: ('image' | 'document' | 'audio' | 'video')[] | 'never';
 }
 
 export const CURATED_REGISTRY: RegistryEntry[] = [
@@ -132,6 +136,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
       isolation: 'per-agent',
     },
     knownDestructiveTools: ['browser_close', 'browser_kill', 'browser_execute_js'],
+    capturesAttachments: ['image'],
   },
   {
     id: 'git',
@@ -592,6 +597,9 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     lastVerified: '2026-06-05',
     curatedDescription:
       'Fetch any URL and convert to Markdown. Use for: pulling public web pages, scraping reference content, reading API docs. Treat as egress-capable in classifications — `fetch(url=...)` with an external host is exfiltration shaped as a read.',
+    // Fetch output is meant for the agent to reason about (markdown
+    // text); never stuff it into the attachment store.
+    capturesAttachments: 'never',
     defaults: {
       version: '0.0.0',
       description: 'MCP reference Fetch server (HTTP + Markdown).',

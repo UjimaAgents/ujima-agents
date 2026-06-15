@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { z } from 'zod';
 import {
   AGENT_KIND,
@@ -16,18 +18,89 @@ import type { BuildSchemaContext } from './types.js';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ApiRepository } from '../services/repository-reader.js';
 import { verifyChannelPass } from '../utils/decision-verifier.js';
-import type { OrchestratorTool } from './types.js';
+import type { OrchestratorTool, ToolExecutionContext } from './types.js';
+import {
+  resolveAttachmentRefs,
+  type AttachmentRefInput,
+  type ResolvedAttachmentMaterialization,
+} from '../services/agent-attachment-resolver.js';
+import { createConnectorAuditWriter } from '../services/connector-audit.js';
+
+/**
+ * Two-level fallback for the absolute on-disk path of an
+ * agent_attachment. storage_path is canonical
+ * `agent-generated/<org>/<run>/<id>.<ext>`:
+ *   - `attachmentStoreRoot` joins against the full storage_path.
+ *   - `agentAttachmentRoot` already includes `agent-generated/`,
+ *     so we strip that prefix before joining.
+ * Returns null only when neither root is wired (best-effort —
+ * the DB row delete still runs in that case).
+ */
+function resolveAgentAttachmentAbsolutePath(
+  ctx: ToolExecutionContext,
+  storagePath: string | undefined,
+): string | null {
+  if (!storagePath) return null;
+  if (ctx.attachmentStoreRoot) {
+    return join(ctx.attachmentStoreRoot, storagePath);
+  }
+  if (ctx.agentAttachmentRoot) {
+    const stripped = storagePath.startsWith('agent-generated/')
+      ? storagePath.slice('agent-generated/'.length)
+      : storagePath;
+    return join(ctx.agentAttachmentRoot, stripped);
+  }
+  return null;
+}
+
+const AttachmentRefSchema = z.object({
+  refType: z
+    .enum(['tool_call', 'base64', 'workspace_path', 'workspace_glob'])
+    .describe(
+      'Where the attachment bytes come from. Use "tool_call" with the ' +
+        '`ref` returned by a previous MCP tool result — this is the right ' +
+        'choice for Playwright screenshots and most generated images. ' +
+        'Use "workspace_path" for a single file already in the workspace, ' +
+        '"workspace_glob" for a pattern (max 10 files), and "base64" only ' +
+        'for tiny programmatic blobs (1MB cap).',
+    ),
+  value: z
+    .string()
+    .min(1)
+    .describe(
+      'For refType=tool_call: the `ref` string from a tool result ' +
+        '`attachment_refs` array, e.g. `tc_<toolCallId>:0`. ' +
+        'For workspace_path: a path relative to the workspace root ' +
+        '(`screenshots/login.png`, NO `..` segments, NO absolute paths). ' +
+        'For workspace_glob: a glob pattern (`screenshots/*.png`). ' +
+        'For base64: the raw bytes as a base64 string.',
+    ),
+  filename: z.string().min(1).optional(),
+  mimeType: z.string().min(1).optional(),
+});
+const ChannelAttachmentsSchema = z
+  .array(AttachmentRefSchema)
+  .max(10)
+  .optional()
+  .describe(
+    'Optional files to attach to this message. When an MCP tool result ' +
+      'contained `attachment_refs`, PREFER refType="tool_call" referencing ' +
+      'those refs — that path avoids round-tripping bytes through your ' +
+      'context. Max 10 attachments per message.',
+  );
 
 const ChannelPostSchema = z.object({
   channel_id: z.string().min(1),
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
+  attachments: ChannelAttachmentsSchema,
 });
 
 const ChannelReplySchema = z.object({
   message_id: z.string().min(1),
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
+  attachments: ChannelAttachmentsSchema,
 });
 
 const ChannelDmSchema = z.object({
@@ -35,6 +108,7 @@ const ChannelDmSchema = z.object({
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).default([]),
   ignore: z.boolean().optional(),
+  attachments: ChannelAttachmentsSchema,
 });
 
 const ChannelListSchema = z.object({
@@ -198,6 +272,188 @@ function buildDmSchemaForOrg(ctx: BuildSchemaContext) {
   });
 }
 
+/**
+ * Resolve the agent-attachments param into materialised rows for
+ * sendMessage. The failure shape is deliberately loud so the model
+ * can tell the message wasn't posted and stop retrying the same
+ * arguments.
+ */
+async function resolveAndPinAttachments(
+  ctx: ToolExecutionContext,
+  attachments: AttachmentRefInput[] | undefined,
+  body: string,
+): Promise<
+  | { ok: true; attachmentIds: string[]; materializations: ResolvedAttachmentMaterialization[] }
+  | {
+      ok: false;
+      status: string;
+      message_sent: false;
+      error: string;
+      recovery: { instruction: string; body_you_tried_to_send: string };
+    }
+> {
+  if (!attachments || attachments.length === 0) {
+    return { ok: true, attachmentIds: [], materializations: [] };
+  }
+  if (!ctx.agentAttachmentRoot) {
+    return {
+      ok: false,
+      status: 'attachments_unavailable',
+      message_sent: false,
+      error: 'agent-attachments subsystem is not wired in this runtime',
+      recovery: {
+        instruction:
+          'MESSAGE NOT SENT. The agent-attachments subsystem is unavailable in this runtime. ' +
+          'Retry channel.reply / channel.post / channel.dm WITHOUT the `attachments` param ' +
+          '— just the body — and tell the user the runtime cannot deliver file attachments.',
+        body_you_tried_to_send: body,
+      },
+    };
+  }
+  const organization = ctx.repo.getOrganization(ctx.invocation.organizationId);
+  const workspaceRoot =
+    organization?.workspace?.root && typeof organization.workspace.root === 'string'
+      ? organization.workspace.root
+      : null;
+  const audit = createConnectorAuditWriter({ repo: ctx.repo });
+  const result = await resolveAttachmentRefs(
+    {
+      repo: ctx.repo,
+      agentAttachmentRoot: ctx.agentAttachmentRoot,
+      workspaceRoot,
+      organizationId: ctx.invocation.organizationId,
+      runId: ctx.invocation.runId,
+      memberId: ctx.invocation.memberId,
+      audit,
+    },
+    attachments,
+  );
+  if (!result.ok) {
+    // Surface to the dev log so operators see the cap fire even if
+    // they're not staring at the chat. Best-effort — log failures
+    // never block the tool result.
+    console.warn(
+      `[channel-tool] attachments rejected for member=${ctx.invocation.memberId} run=${ctx.invocation.runId}: ${result.error}`,
+    );
+    return {
+      ok: false,
+      status: 'attachments_rejected',
+      message_sent: false,
+      error: result.error,
+      recovery: {
+        instruction:
+          'MESSAGE NOT SENT. Your channel.reply / channel.post / channel.dm call did NOT post to the channel because the attachments param failed validation. ' +
+          'Do NOT retry with the same arguments — that will fail the same way. ' +
+          'Recovery options: ' +
+          '(1) narrow a workspace_glob to match fewer files (max 10), ' +
+          '(2) replace the glob with several specific workspace_path refs, one per file, ' +
+          '(3) drop the `attachments` param entirely and send the body as a text-only message, then mention the file delivery failure to the user. ' +
+          'After choosing one of (1)-(3), issue a NEW channel.reply / channel.post / channel.dm call.',
+        body_you_tried_to_send: body,
+      },
+    };
+  }
+  return {
+    ok: true,
+    attachmentIds: result.materializations.map((m) => m.attachmentId),
+    materializations: result.materializations,
+  };
+}
+
+/**
+ * After sendMessage / postToChannel / sendDirectMessage has returned
+ * a message id, pin the agent_attachments rows to that id so the
+ * LRU cleanup job leaves them alone. Best-effort: a pin failure
+ * doesn't undo the message — the row just becomes eligible for
+ * cleanup if unpinned, which costs a re-attach the next time. Logs
+ * a warning.
+ */
+function pinResolvedAttachments(
+  ctx: ToolExecutionContext,
+  materializations: ResolvedAttachmentMaterialization[],
+  messageId: string,
+): void {
+  for (const m of materializations) {
+    try {
+      ctx.repo.pinAgentAttachmentToMessage(
+        ctx.invocation.organizationId,
+        m.agentAttachmentId,
+        messageId,
+      );
+    } catch (err) {
+      console.warn(
+        '[channel-tool] failed to pin agent_attachment',
+        m.agentAttachmentId,
+        err,
+      );
+    }
+  }
+}
+
+/**
+ * Roll back resolved attachments when the message publish step
+ * throws. Only deletes the captured agent_attachments row + file
+ * for materializations the resolver OWNS (base64 / workspace_path
+ * / workspace_glob). For borrowed tool_call refs, the source row
+ * + file belong to the capture pass that produced them — deleting
+ * those would destroy the original artifact and break any retry
+ * path. The user-attachment row is always our own to delete.
+ */
+function rollbackResolvedAttachments(
+  ctx: ToolExecutionContext,
+  materializations: ResolvedAttachmentMaterialization[],
+): void {
+  const orgId = ctx.invocation.organizationId;
+  for (const m of materializations) {
+    if (m.ownsAgentAttachmentRow) {
+      // Look up the row first so we can resolve the on-disk path
+      // before the row is gone. The row delete must always run
+      // (DB rows count against quota even when the file is already
+      // unlinked); the file unlink is best-effort with two path
+      // fallbacks for the case where the store root isn't wired.
+      const row = ctx.repo.getAgentAttachment(orgId, m.agentAttachmentId);
+      const absolutePath = resolveAgentAttachmentAbsolutePath(ctx, row?.storagePath);
+      if (absolutePath) {
+        try {
+          rmSync(absolutePath, { force: true });
+        } catch (err) {
+          console.warn(
+            '[channel-tool] rollback agent_attachment file unlink failed',
+            absolutePath,
+            err,
+          );
+        }
+      } else if (row?.storagePath) {
+        // Neither attachmentStoreRoot nor agentAttachmentRoot is
+        // wired — we can't safely unlink. Log so the file leak is
+        // visible; the DB row delete below still runs.
+        console.warn(
+          '[channel-tool] rollback skipping file unlink (no attachment root wired)',
+          row.storagePath,
+        );
+      }
+      try {
+        ctx.repo.deleteAgentAttachment(orgId, m.agentAttachmentId);
+      } catch (err) {
+        console.warn(
+          '[channel-tool] rollback agent_attachment row delete failed',
+          m.agentAttachmentId,
+          err,
+        );
+      }
+    }
+    try {
+      ctx.repo.deleteAttachment(orgId, m.attachmentId);
+    } catch (err) {
+      console.warn(
+        '[channel-tool] rollback attachments row delete failed',
+        m.attachmentId,
+        err,
+      );
+    }
+  }
+}
+
 export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
   id: 'channel.post',
   schema: ChannelPostSchema,
@@ -217,31 +473,39 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, team, repo, conversations }) =>
-    (() => {
-      const body = String(invocation.input.body);
-      const channelId = resolveChannelId(
-        team,
-        repo,
-        invocation.organizationId,
-        invocation.memberId,
-        String(invocation.input.channel_id),
-      );
-      // The channel's main thread shares its id by convention; for a
-      // posting tool that's the thread to scan for mirror chains.
-      const threadId = invocation.threadId ?? channelId;
-      const suppressed = conversations.tryMirrorSuppress?.({
-        organizationId: invocation.organizationId,
-        runId: invocation.runId,
-        senderId: invocation.memberId,
-        threadId,
-        channelId,
-        body,
-      });
-      if (suppressed) {
-        return { status: 'mirror_suppressed', terminator: 'channel.ack' };
-      }
-      return conversations.postToChannel({
+  execute: async (ctx) => {
+    const { invocation, team, repo, conversations } = ctx;
+    const body = String(invocation.input.body);
+    const channelId = resolveChannelId(
+      team,
+      repo,
+      invocation.organizationId,
+      invocation.memberId,
+      String(invocation.input.channel_id),
+    );
+    const threadId = invocation.threadId ?? channelId;
+    const suppressed = conversations.tryMirrorSuppress?.({
+      organizationId: invocation.organizationId,
+      runId: invocation.runId,
+      senderId: invocation.memberId,
+      threadId,
+      channelId,
+      body,
+    });
+    if (suppressed) {
+      return { status: 'mirror_suppressed', terminator: 'channel.ack' };
+    }
+    const resolveResult = await resolveAndPinAttachments(
+      ctx,
+      invocation.input.attachments as AttachmentRefInput[] | undefined,
+      body,
+    );
+    if (!resolveResult.ok) {
+      return resolveResult;
+    }
+    let message;
+    try {
+      message = conversations.postToChannel({
         organizationId: invocation.organizationId,
         senderId: invocation.memberId,
         channelId,
@@ -249,9 +513,22 @@ export const channelPostTool: OrchestratorTool<typeof ChannelPostSchema> = {
         mentions: Array.isArray(invocation.input.mentions)
           ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
           : [],
+        attachmentIds: resolveResult.attachmentIds,
         metadata: { runId: invocation.runId },
       });
-    })(),
+    } catch (err) {
+      rollbackResolvedAttachments(ctx, resolveResult.materializations);
+      throw err;
+    }
+    const messageId =
+      message && typeof message === 'object' && 'id' in message
+        ? String((message as { id: unknown }).id)
+        : null;
+    if (messageId) {
+      pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
+    }
+    return message;
+  },
 };
 
 export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
@@ -265,7 +542,8 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, repo, conversations }) => {
+  execute: async (ctx) => {
+    const { invocation, repo, conversations } = ctx;
     const body = String(invocation.input.body);
     const parent = repo.getMessage(
       invocation.organizationId,
@@ -285,16 +563,39 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
         return { status: 'mirror_suppressed', terminator: 'channel.ack' };
       }
     }
-    return conversations.replyToMessage({
-      organizationId: invocation.organizationId,
-      senderId: invocation.memberId,
-      messageId: String(invocation.input.message_id),
+    const resolveResult = await resolveAndPinAttachments(
+      ctx,
+      invocation.input.attachments as AttachmentRefInput[] | undefined,
       body,
-      mentions: Array.isArray(invocation.input.mentions)
-        ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
-      metadata: { runId: invocation.runId },
-    });
+    );
+    if (!resolveResult.ok) {
+      return resolveResult;
+    }
+    let message;
+    try {
+      message = conversations.replyToMessage({
+        organizationId: invocation.organizationId,
+        senderId: invocation.memberId,
+        messageId: String(invocation.input.message_id),
+        body,
+        mentions: Array.isArray(invocation.input.mentions)
+          ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
+          : [],
+        attachmentIds: resolveResult.attachmentIds,
+        metadata: { runId: invocation.runId },
+      });
+    } catch (err) {
+      rollbackResolvedAttachments(ctx, resolveResult.materializations);
+      throw err;
+    }
+    const messageId =
+      message && typeof message === 'object' && 'id' in message
+        ? String((message as { id: unknown }).id)
+        : null;
+    if (messageId) {
+      pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
+    }
+    return message;
   },
 };
 
@@ -309,7 +610,8 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     permissionMcpId: 'channels',
     input: args,
   }),
-  execute: ({ invocation, repo, conversations }) => {
+  execute: async (ctx) => {
+    const { invocation, repo, conversations } = ctx;
     const body = String(invocation.input.body);
     const recipientRef = String(invocation.input.member_id);
     const recipientId =
@@ -329,17 +631,40 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     if (suppressed) {
       return { status: 'mirror_suppressed', terminator: 'channel.ack' };
     }
-    return conversations.sendDirectMessage({
-      organizationId: invocation.organizationId,
-      senderId: invocation.memberId,
-      recipientId,
-      content: body,
-      ignore: invocation.input.ignore === true,
-      mentions: Array.isArray(invocation.input.mentions)
-        ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
-        : [],
-      metadata: { runId: invocation.runId },
-    });
+    const resolveResult = await resolveAndPinAttachments(
+      ctx,
+      invocation.input.attachments as AttachmentRefInput[] | undefined,
+      body,
+    );
+    if (!resolveResult.ok) {
+      return resolveResult;
+    }
+    let message;
+    try {
+      message = conversations.sendDirectMessage({
+        organizationId: invocation.organizationId,
+        senderId: invocation.memberId,
+        recipientId,
+        content: body,
+        ignore: invocation.input.ignore === true,
+        mentions: Array.isArray(invocation.input.mentions)
+          ? invocation.input.mentions.filter((value): value is string => typeof value === 'string')
+          : [],
+        attachmentIds: resolveResult.attachmentIds,
+        metadata: { runId: invocation.runId },
+      });
+    } catch (err) {
+      rollbackResolvedAttachments(ctx, resolveResult.materializations);
+      throw err;
+    }
+    const messageId =
+      message && typeof message === 'object' && 'id' in message
+        ? String((message as { id: unknown }).id)
+        : null;
+    if (messageId) {
+      pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
+    }
+    return message;
   },
 };
 

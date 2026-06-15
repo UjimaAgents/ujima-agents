@@ -101,6 +101,8 @@ export interface ConnectorAuditWriter {
   attachmentRequestCreated(input: AttachmentRequestCreatedInput): void;
   /** PR 11 — discovery. Emit when an operator resolves an attachment_request. */
   attachmentRequestResolved(input: AttachmentRequestResolvedInput): void;
+  /** Fires per agent-attachment row write. */
+  agentAttachmentCreated(input: AgentAttachmentCreatedInput): void;
 }
 
 export interface ConnectorToolsListedInput {
@@ -215,6 +217,24 @@ export interface AttachmentRequestResolvedInput {
     | 'attached_action_rejected'
     | 'rejected'
     | 'attach_failed';
+}
+
+export interface AgentAttachmentCreatedInput {
+  organizationId: string;
+  /** The agent that produced the attachment. */
+  actorMemberId: string;
+  runId: string;
+  /** agent_attachments row id. */
+  attachmentId: string;
+  category: string;
+  mimeType: string;
+  byteSize: number;
+  /** Origin: 'tool_capture' | 'agent_post' (workspace path / base64). */
+  source: 'tool_capture' | 'agent_post';
+  /** When source='tool_capture'. */
+  toolCallId?: string;
+  serverId?: string;
+  toolName?: string;
 }
 
 /**
@@ -405,6 +425,28 @@ export function createConnectorAuditWriter(deps: WriterDeps): ConnectorAuditWrit
           resolution: input.resolution,
         },
         serverId: input.serverId,
+      });
+    },
+
+    agentAttachmentCreated(input) {
+      write({
+        organizationId: input.organizationId,
+        actorId: input.actorMemberId,
+        action: 'agent_attachment_created',
+        targetType: 'agent_attachment',
+        targetId: input.attachmentId,
+        metadata: {
+          runId: input.runId,
+          category: input.category,
+          mimeType: input.mimeType,
+          byteSize: input.byteSize,
+          source: input.source,
+          ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+          ...(input.serverId ? { serverId: input.serverId } : {}),
+          ...(input.toolName ? { toolName: input.toolName } : {}),
+        },
+        ...(input.serverId ? { serverId: input.serverId } : {}),
+        ...(input.toolName ? { toolName: input.toolName } : {}),
       });
     },
   };

@@ -4,7 +4,15 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
-export function buildTransport(def: MCPDef): Transport {
+export interface BuildTransportOptions {
+  /** Working directory for stdio child processes. */
+  cwd?: string;
+}
+
+export function buildTransport(
+  def: MCPDef,
+  options: BuildTransportOptions = {},
+): Transport {
   switch (def.transport) {
     case 'stdio': {
       if (!def.command) {
@@ -15,6 +23,7 @@ export function buildTransport(def: MCPDef): Transport {
         args: def.args,
         env: mergeEnv(def.env),
         stderr: 'pipe',
+        ...(options.cwd ? { cwd: options.cwd } : {}),
       });
     }
     case 'sse': {

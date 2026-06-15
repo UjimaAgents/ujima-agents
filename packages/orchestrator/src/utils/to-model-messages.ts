@@ -104,6 +104,23 @@ function buildUserContent(message: Message): UserContent {
   }
 
   const parts: (TextPart | ImagePart | FilePart)[] = [];
+  // Lead with a text inventory before the binary parts so the
+  // agent knows attachments exist even if the provider strips
+  // image/file parts (text-only model, transcoding, etc.).
+  const inventory = attachments
+    .map(
+      (a, i) =>
+        `  <attachment index="${i}" category="${a.category}" filename="${a.filename}" mediaType="${a.mimeType}" />`,
+    )
+    .join('\n');
+  const inventoryBlock =
+    `<message-attachments count="${attachments.length}">\n${inventory}\n` +
+    `  <!-- The actual file content for image/document attachments follows ` +
+    `in this message as multimodal parts. If you don't see those parts ` +
+    `(e.g. your model lacks vision), you can still confirm the sender ` +
+    `attached the file(s) listed above. -->\n</message-attachments>`;
+  parts.push({ type: 'text', text: inventoryBlock });
+
   if (message.content.trim().length > 0) {
     parts.push({ type: 'text', text: message.content });
   }

@@ -42,8 +42,10 @@ export const MODEL_OPTIONS_BY_PROVIDER: Record<string, readonly ProviderModelOpt
     { value: "devstral-latest", label: "devstral-latest" },
   ],
   deepseek: [
-    { value: "deepseek-v4-flash", label: "deepseek-v4-flash" },
-    { value: "deepseek-v4-pro", label: "deepseek-v4-pro" },
+    // Direct DeepSeek is text-only; for vision pick the deepseek/*
+    // rows under the openrouter provider.
+    { value: "deepseek-v4-flash", label: "deepseek-v4-flash (text-only)" },
+    { value: "deepseek-v4-pro", label: "deepseek-v4-pro (text-only)" },
   ],
   xai: [
     { value: "grok-4.3", label: "grok-4.3" },
@@ -79,6 +81,9 @@ export const MODEL_OPTIONS_BY_PROVIDER: Record<string, readonly ProviderModelOpt
     { value: "anthropic/claude-sonnet-4-20250514", label: "anthropic/claude-sonnet-4-20250514" },
     { value: "openai/gpt-5.4", label: "openai/gpt-5.4" },
     { value: "google/gemini-2.5-pro", label: "google/gemini-2.5-pro" },
+    // DeepSeek through OpenRouter gains vision support.
+    { value: "deepseek/deepseek-v4-flash", label: "deepseek/deepseek-v4-flash (vision)" },
+    { value: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro (vision)" },
   ],
   ollama: [
     { value: "llama3.1", label: "llama3.1" },

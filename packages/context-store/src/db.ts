@@ -1584,6 +1584,38 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON channel_mcp_attachments(organization_id, mcp_server_id);
     `,
   },
+  {
+    // Agent-generated attachments. Staging area for tool-result
+    // captures and workspace-file refs the channel.* tools attach
+    // to a message. Unpinned rows age out via the LRU sweeper;
+    // pinning to a message id makes the row permanent.
+    id: '052_agent_attachments',
+    up: `
+      CREATE TABLE IF NOT EXISTS agent_attachments (
+        id                      TEXT PRIMARY KEY,
+        organization_id         TEXT NOT NULL,
+        run_id                  TEXT NOT NULL,
+        member_id               TEXT NOT NULL,
+        source_tool_call_id     TEXT,
+        source_server_id        TEXT,
+        source_tool_name        TEXT,
+        category                TEXT NOT NULL,
+        mime_type               TEXT NOT NULL,
+        filename                TEXT NOT NULL,
+        storage_path            TEXT NOT NULL,
+        byte_size               INTEGER NOT NULL,
+        created_at              TEXT NOT NULL,
+        pinned_to_message_id    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_attachments_run
+        ON agent_attachments(organization_id, run_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_attachments_unpinned
+        ON agent_attachments(organization_id, created_at)
+        WHERE pinned_to_message_id IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_attachments_tool_call
+        ON agent_attachments(source_tool_call_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

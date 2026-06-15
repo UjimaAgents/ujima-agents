@@ -27,7 +27,10 @@ import { TrajectoryService } from './trajectory.js';
 import { McpRegistryService } from './mcp-registry.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
 import { findRegistryEntry } from '@ujima/mcp-client';
+import { join } from 'node:path';
 import { findRegistryMatch } from './connector-catalog.js';
+import { captureToolResultAttachments, cleanupExpiredAgentAttachments } from './agent-attachment-capture.js';
+import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
@@ -976,6 +979,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     conversations,
   );
 
+  // storagePath column is canonical `agent-generated/<org>/<run>/<id>.<ext>`,
+  // joined against attachmentStoreRoot by the web API + LRU sweeper.
+  // Writers join the bare path against the agent-generated subroot.
+  const ujimaHome = context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd();
+  const attachmentStoreRoot = join(ujimaHome, 'attachments');
+  const agentAttachmentRoot = join(attachmentStoreRoot, 'agent-generated');
+
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
@@ -986,6 +996,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     delegateHandlers,
     context.mcpPool,
     spiritModelResolver,
+    undefined,
+    agentAttachmentRoot,
+    attachmentStoreRoot,
   );
 
   const tools = createPermissionGatedToolService(
@@ -1021,6 +1034,34 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // (spawn/retire/complete) and reads on every alert.
   const activeSpirits = new ActiveSpiritRegistry();
 
+  // Shared audit writer for agent-attachment events + the existing
+  // attachment-request flow. Declared early so the capture closure
+  // below can pass it in.
+  const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
+
+  const attachmentCaptureClosure: AttachmentCaptureClosure = (input) => {
+    const server = context.repo.getMcpServer(input.organizationId, input.serverId);
+    const registryHint = server ? findRegistryMatch(server)?.capturesAttachments : undefined;
+    return captureToolResultAttachments(
+      {
+        repo: context.repo,
+        agentAttachmentRoot,
+        attachmentStoreRoot,
+        audit: attachmentAuditWriter,
+      },
+      {
+        organizationId: input.organizationId,
+        runId: input.runId,
+        memberId: input.memberId,
+        serverId: input.serverId,
+        toolName: input.toolName,
+        toolCallId: input.toolCallId,
+        toolResult: input.toolResult,
+        registryHint,
+      },
+    );
+  };
+
   const spirits = new SpiritService(
     context.teamStore,
     context.repo,
@@ -1037,6 +1078,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       // approval card via the active ApprovalService.
       attachmentApprovalRequester: (input) =>
         approvalsImpl.requestAttachmentApproval(input),
+      attachmentCapture: attachmentCaptureClosure,
     },
   );
   createDelegateRun = (run) => spirits.createRun(run);
@@ -1083,8 +1125,37 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
   const onboarding = new OnboardingService(context.repo, context.teamStore);
+  // Single named dependency for the org-IDs source used by the
+  // attachment-cleanup sweep. Declaring it as a typed local
+  // function makes the contract explicit at the bootstrap
+  // boundary instead of duck-typing through context.repo at
+  // every call site.
+  const getOrganizationIdsForSweep: () => string[] = () =>
+    context.repo.listOrganizations().map((org) => org.id);
+
+  // Probe at bootstrap so a misconfigured Repository fails at
+  // services boot with a clear error rather than silently no-oping
+  // at the first scheduler tick.
+  const probeIds = getOrganizationIdsForSweep();
+  if (!Array.isArray(probeIds)) {
+    throw new Error(
+      'ApiServicesContext.repo.listOrganizations must return an array of organizations',
+    );
+  }
+
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
-    onTick: () => goals.sweepAllPendingTasks(),
+    onTick: async () => {
+      await goals.sweepAllPendingTasks();
+      // No try/catch. The bootstrap probe above validated the
+      // dependency; the scheduler's own tick-level handler covers
+      // transient failures (DB blip, etc.) without crashing the
+      // cron loop.
+      cleanupExpiredAgentAttachments({
+        repo: context.repo,
+        attachmentStoreRoot,
+        organizationIds: getOrganizationIdsForSweep(),
+      });
+    },
   });
   const notifications = new NotificationService(context.repo);
   handleMessagePublished = (msg) => {
@@ -1142,7 +1213,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the same McpRegistryService surface the settings UI uses, so the
   // audit + UNIQUE-constraint shape stays identical. On reject, emit
   // the attachment_request_resolved audit row only.
-  const attachmentAuditWriter = createConnectorAuditWriter({ repo: context.repo });
   approvalsImpl.setAttachmentApprovalResolver((input) => {
     // PR 11 (bot fix) — search_catalog returns `registry:<entryId>`
     // synthetic ids for marketplace entries the org has never

@@ -68,6 +68,7 @@ export class SpiritServiceBase {
   protected readonly runAbortControllers = new Map<string, AbortController>();
   protected runCompletedHook?: (run: RunState) => Promise<void> | void;
   protected readonly attachmentApprovalRequester?: SpiritServiceOptions['attachmentApprovalRequester'];
+  protected readonly attachmentCapture?: SpiritServiceOptions['attachmentCapture'];
 
   constructor(
     protected readonly teamStore: TeamStore,
@@ -89,6 +90,7 @@ export class SpiritServiceBase {
     this.supervisorTurnCapPerSession =
       options.supervisorTurnCapPerSession ?? DEFAULT_SUPERVISOR_TURN_CAP_PER_SESSION;
     this.attachmentApprovalRequester = options.attachmentApprovalRequester;
+    this.attachmentCapture = options.attachmentCapture;
   }
 
   /** Hydrate registry from DB; register oldest→newest so `registeredAt` matches runtime order. */
@@ -405,6 +407,43 @@ export class SpiritServiceBase {
                   ? result.error
                   : 'replay invocation failed',
           });
+          // Approval-gated MCP calls bypass the V2 execute closure
+          // (which already runs capture), so the replay invokes
+          // ToolService directly. Capture here too so resumed
+          // turns see `attachment_refs` like non-gated turns.
+          if (success && result && this.attachmentCapture) {
+            try {
+              const capture = this.attachmentCapture({
+                organizationId: invocation.organizationId,
+                runId: invocation.runId,
+                memberId: invocation.memberId,
+                serverId,
+                toolName,
+                toolCallId: invocation.toolCallId,
+                toolResult: result.output,
+              });
+              if (capture.attachmentRefs.length > 0) {
+                const existing = result.output;
+                const wrapped: Record<string, unknown> =
+                  existing && typeof existing === 'object' && !Array.isArray(existing)
+                    ? { ...(existing as Record<string, unknown>) }
+                    : { value: existing };
+                wrapped.attachment_refs = capture.attachmentRefs;
+                wrapped._attachment_capture_note =
+                  `${capture.attachmentRefs.length} attachment(s) from this tool result ` +
+                  `have been captured and are ready to attach to a chat message. ` +
+                  `Use the refs in \`attachment_refs\` with channel.reply / channel.post / ` +
+                  `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
+                  `Do NOT save these bytes to disk first.`;
+                result.output = wrapped;
+              }
+            } catch (err) {
+              console.warn(
+                '[spirit-service-base] replay capture threw',
+                err,
+              );
+            }
+          }
         }
       }
     }
