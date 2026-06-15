@@ -721,4 +721,107 @@ describe('channel.* tools — attachment rollback when publish throws (bot Round
       rmSync(storeRoot, { recursive: true, force: true });
     }
   });
+
+  it('rollback DELETES the agent_attachments row even when attachmentStoreRoot is absent (bot Round 14 high)', async () => {
+    const { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } =
+      await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const agentRoot = mkdtempSync(join(tmpdir(), 'ujima-agent-gen-'));
+    try {
+      // Layout matches the on-disk shape commitBytes produces:
+      // agentAttachmentRoot already includes the `agent-generated/`
+      // segment, so the file lives at <agentRoot>/<org>/<run>/<id>.<ext>.
+      mkdirSync(join(agentRoot, 'org-1', 'run-1'), { recursive: true });
+      const PNG = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        ...Array.from({ length: 256 }).map(() => 0x42),
+      ]);
+
+      const agentAttachments: { id: string; storagePath: string; byteSize: number }[] = [];
+      const userAttachments: { id: string }[] = [];
+
+      const result = await channelPostTool.execute({
+        invocation: {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          memberId: 'agent-1',
+          toolCallId: 'call-1',
+          toolId: 'channel.post',
+          action: 'message',
+          resourceType: 'message',
+          input: {
+            channel_id: 'general',
+            body: 'hi',
+            mentions: [],
+            // base64 ref: the commitBytes path runs, materializes
+            // an owned agent_attachments row + file, then we throw
+            // in postToChannel.
+            attachments: [
+              { refType: 'base64', value: PNG.toString('base64'), filename: 'shot.png' },
+            ],
+          },
+        } as never,
+        team: {
+          getChannel: (name: string) =>
+            name === 'general' ? { id: 'channel-general' } : undefined,
+        } as never,
+        repo: {
+          getChannel: (_orgId: string, channelId: string) =>
+            channelId === 'channel-general' ? ({ id: 'channel-general' } as never) : null,
+          getOrganization: () => ({ id: 'org-1', workspace: { root: '/tmp/ws' } }),
+          listAllChannels: () => [],
+          saveAgentAttachment: (att: { id: string; storagePath: string; byteSize: number }) => {
+            agentAttachments.push(att);
+            return att;
+          },
+          saveAttachment: (att: { id: string }) => {
+            userAttachments.push(att);
+            return att;
+          },
+          deleteAgentAttachment: (_org: string, id: string) => {
+            const idx = agentAttachments.findIndex((a) => a.id === id);
+            if (idx >= 0) agentAttachments.splice(idx, 1);
+          },
+          deleteAttachment: (_org: string, id: string): number => {
+            const idx = userAttachments.findIndex((a) => a.id === id);
+            if (idx >= 0) {
+              userAttachments.splice(idx, 1);
+              return 1;
+            }
+            return 0;
+          },
+          getAgentAttachment: (_org: string, id: string) =>
+            agentAttachments.find((a) => a.id === id) ?? null,
+          saveAuditEvent: () => undefined,
+        } as never,
+        conversations: {
+          tryMirrorSuppress: () => false,
+          postToChannel: () => {
+            throw new Error('synthetic publish failure');
+          },
+        } as never,
+        // attachmentStoreRoot intentionally OMITTED to assert the
+        // row delete + file-path fallback still runs.
+        agentAttachmentRoot: agentRoot,
+      }).catch((err) => err);
+
+      expect(result).toBeInstanceOf(Error);
+      // The owned agent_attachments row was deleted even without
+      // attachmentStoreRoot wired — pre-fix this was the leak path.
+      expect(agentAttachments).toHaveLength(0);
+      expect(userAttachments).toHaveLength(0);
+      // File was unlinked via the agentAttachmentRoot fallback.
+      const runDir = join(agentRoot, 'org-1', 'run-1');
+      const { readdirSync } = await import('node:fs');
+      const remaining = existsSync(runDir)
+        ? readdirSync(runDir).filter((f) => f.endsWith('.png'))
+        : [];
+      expect(remaining).toEqual([]);
+      void writeFileSync; // silence unused
+    } finally {
+      rmSync(agentRoot, { recursive: true, force: true });
+    }
+  });
 });

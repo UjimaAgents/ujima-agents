@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { z } from 'zod';
 import {
   AGENT_KIND,
@@ -23,7 +25,33 @@ import {
   type ResolvedAttachmentMaterialization,
 } from '../services/agent-attachment-resolver.js';
 import { createConnectorAuditWriter } from '../services/connector-audit.js';
-import { deleteOneAgentAttachmentRowAndFile } from '../services/agent-attachment-capture.js';
+
+/**
+ * Two-level fallback for the absolute on-disk path of an
+ * agent_attachment. storage_path is canonical
+ * `agent-generated/<org>/<run>/<id>.<ext>`:
+ *   - `attachmentStoreRoot` joins against the full storage_path.
+ *   - `agentAttachmentRoot` already includes `agent-generated/`,
+ *     so we strip that prefix before joining.
+ * Returns null only when neither root is wired (best-effort —
+ * the DB row delete still runs in that case).
+ */
+function resolveAgentAttachmentAbsolutePath(
+  ctx: ToolExecutionContext,
+  storagePath: string | undefined,
+): string | null {
+  if (!storagePath) return null;
+  if (ctx.attachmentStoreRoot) {
+    return join(ctx.attachmentStoreRoot, storagePath);
+  }
+  if (ctx.agentAttachmentRoot) {
+    const stripped = storagePath.startsWith('agent-generated/')
+      ? storagePath.slice('agent-generated/'.length)
+      : storagePath;
+    return join(ctx.agentAttachmentRoot, stripped);
+  }
+  return null;
+}
 
 const AttachmentRefSchema = z.object({
   refType: z
@@ -377,25 +405,41 @@ function rollbackResolvedAttachments(
 ): void {
   const orgId = ctx.invocation.organizationId;
   for (const m of materializations) {
-    if (m.ownsAgentAttachmentRow && ctx.attachmentStoreRoot) {
+    if (m.ownsAgentAttachmentRow) {
+      // Look up the row first so we can resolve the on-disk path
+      // before the row is gone. The row delete must always run
+      // (DB rows count against quota even when the file is already
+      // unlinked); the file unlink is best-effort with two path
+      // fallbacks for the case where the store root isn't wired.
       const row = ctx.repo.getAgentAttachment(orgId, m.agentAttachmentId);
-      if (row) {
-        deleteOneAgentAttachmentRowAndFile({
-          row,
-          repo: ctx.repo,
-          attachmentStoreRoot: ctx.attachmentStoreRoot,
-          organizationId: orgId,
-        });
-      } else {
+      const absolutePath = resolveAgentAttachmentAbsolutePath(ctx, row?.storagePath);
+      if (absolutePath) {
         try {
-          ctx.repo.deleteAgentAttachment(orgId, m.agentAttachmentId);
+          rmSync(absolutePath, { force: true });
         } catch (err) {
           console.warn(
-            '[channel-tool] rollback agent_attachment row delete failed',
-            m.agentAttachmentId,
+            '[channel-tool] rollback agent_attachment file unlink failed',
+            absolutePath,
             err,
           );
         }
+      } else if (row?.storagePath) {
+        // Neither attachmentStoreRoot nor agentAttachmentRoot is
+        // wired — we can't safely unlink. Log so the file leak is
+        // visible; the DB row delete below still runs.
+        console.warn(
+          '[channel-tool] rollback skipping file unlink (no attachment root wired)',
+          row.storagePath,
+        );
+      }
+      try {
+        ctx.repo.deleteAgentAttachment(orgId, m.agentAttachmentId);
+      } catch (err) {
+        console.warn(
+          '[channel-tool] rollback agent_attachment row delete failed',
+          m.agentAttachmentId,
+          err,
+        );
       }
     }
     try {
