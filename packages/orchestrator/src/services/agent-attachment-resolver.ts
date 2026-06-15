@@ -252,6 +252,51 @@ type MultiResult = MultiOk | ResolveResultErr;
  * keeps the stack scoped to this materialization rather than a
  * module-level singleton.
  */
+/**
+ * Single user-attachment row commit step. Used by EVERY ref branch
+ * (tool_call as the only step, base64 / workspace_* as the final
+ * step after the file write + agent_attachments insert). Registers
+ * the rollback undo BEFORE the saveAttachment call so a partial
+ * write inside the DB layer still gets cleaned up idempotently.
+ */
+function commitUserAttachmentRow(
+  deps: AttachmentResolverDeps,
+  register: (undo: () => void) => void,
+  runRollback: () => void,
+  args: {
+    attachmentId: string;
+    filename: string;
+    mimeType: string;
+    category: AttachmentCategory;
+    sizeBytes: number;
+    storagePath: string;
+    createdAt: string;
+    errorPrefix: string;
+  },
+): { ok: true } | ResolveResultErr {
+  register(() => deps.repo.deleteAttachment(deps.organizationId, args.attachmentId));
+  try {
+    deps.repo.saveAttachment({
+      id: args.attachmentId,
+      organizationId: deps.organizationId,
+      filename: args.filename,
+      mimeType: args.mimeType,
+      category: args.category,
+      sizeBytes: args.sizeBytes,
+      storagePath: args.storagePath,
+      uploadedBy: deps.memberId,
+      createdAt: args.createdAt,
+    });
+  } catch (err) {
+    runRollback();
+    return {
+      ok: false,
+      error: `${args.errorPrefix}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  return { ok: true };
+}
+
 function createRefCommitUndoStack(): {
   register: (undo: () => void) => void;
   runRollback: () => void;
@@ -302,32 +347,23 @@ function resolveToolCallRef(
       error: `tool_call ref "${ref.value}" resolves to no captured attachment (was the tool call successful, and did it return capturable bytes?)`,
     };
   }
-  // Shared commit/rollback contract with commitBytes. The
-  // user-attachment row is the only resolver-owned side effect on
-  // this branch — the file + agent_attachments row belong to the
-  // capture pass and stay intact.
+  // Same commit/rollback contract base64 / workspace_path /
+  // workspace_glob use. The user-attachment row is the only
+  // resolver-owned side effect on this branch — the file +
+  // agent_attachments row belong to the capture pass.
   const { register, runRollback } = createRefCommitUndoStack();
   const attachmentId = newAttId();
-  register(() => deps.repo.deleteAttachment(deps.organizationId, attachmentId));
-  try {
-    deps.repo.saveAttachment({
-      id: attachmentId,
-      organizationId: deps.organizationId,
-      filename: ref.filename ?? row.filename,
-      mimeType: row.mimeType,
-      category: row.category,
-      sizeBytes: row.byteSize,
-      storagePath: row.storagePath,
-      uploadedBy: deps.memberId,
-      createdAt: newNow(),
-    });
-  } catch (err) {
-    runRollback();
-    return {
-      ok: false,
-      error: `tool_call ref "${ref.value}" attachments insert failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+  const committed = commitUserAttachmentRow(deps, register, runRollback, {
+    attachmentId,
+    filename: ref.filename ?? row.filename,
+    mimeType: row.mimeType,
+    category: row.category,
+    sizeBytes: row.byteSize,
+    storagePath: row.storagePath,
+    createdAt: newNow(),
+    errorPrefix: `tool_call ref "${ref.value}" attachments insert failed`,
+  });
+  if (!committed.ok) return committed;
   return {
     ok: true,
     materialization: {
@@ -679,23 +715,17 @@ function commitBytes(
   // Audit emit fires after the user-attachment row succeeds so a
   // failed materialization doesn't produce a `created` event.
   const attachmentId = newAttId();
-  register(() => deps.repo.deleteAttachment(deps.organizationId, attachmentId));
-  try {
-    deps.repo.saveAttachment({
-      id: attachmentId,
-      organizationId: deps.organizationId,
-      filename,
-      mimeType,
-      category,
-      sizeBytes: bytes.length,
-      storagePath: storageRelative,
-      uploadedBy: deps.memberId,
-      createdAt: newNow(),
-    });
-  } catch (err) {
-    runRollback();
-    return { ok: false, error: `attachments insert failed: ${err instanceof Error ? err.message : String(err)}` };
-  }
+  const committed = commitUserAttachmentRow(deps, register, runRollback, {
+    attachmentId,
+    filename,
+    mimeType,
+    category,
+    sizeBytes: bytes.length,
+    storagePath: storageRelative,
+    createdAt: newNow(),
+    errorPrefix: 'attachments insert failed',
+  });
+  if (!committed.ok) return committed;
   // Audit is best-effort. A throw here must not bubble out and
   // bypass the rollback path — the file + rows are already
   // committed successfully and the caller expects {ok:true}.
