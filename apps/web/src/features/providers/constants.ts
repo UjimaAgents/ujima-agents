@@ -1,10 +1,9 @@
-import { normalizeProviderToken } from "./catalog";
+import { isCodexProvider } from "./catalog";
 
 export const OPENAI_CODEX_TOKEN = "openai-codex";
-export const OPENAI_OAUTH_LOGIN_PATH = "/api/auth/openai/login";
+export const OPENAI_CODEX_LOGIN_HELP_PATH = "/api/auth/openai/login";
 
-const OAUTH_PROVIDERS = new Set([OPENAI_CODEX_TOKEN]);
-
-export function isOAuthProvider(name: string) {
-  return OAUTH_PROVIDERS.has(normalizeProviderToken(name));
+/** @deprecated Use isCodexProvider from catalog */
+export function isCodexLoginProvider(name: string) {
+  return isCodexProvider(name);
 }

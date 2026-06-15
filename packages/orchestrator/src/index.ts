@@ -187,3 +187,6 @@ export type {
   ToolService,
   UpdateOrganizationInput,
 } from './services/index.js';
+
+export { hasCodexAccessToken, readCodexAccessToken } from './utils/codex-auth.js';
+

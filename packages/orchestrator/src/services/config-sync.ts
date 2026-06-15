@@ -74,7 +74,7 @@ const ROLE_CONFIG_FIELDS = [
 ] as const;
 const MEMBER_CONFIG_FIELDS = ['name', 'kind', 'roleName'] as const;
 const CHANNEL_CONFIG_FIELDS = ['name', 'kind', 'topic'] as const;
-const PROVIDER_CONFIG_FIELDS = ['kind', 'defaultModel', 'baseUrl', 'models'] as const;
+const PROVIDER_CONFIG_FIELDS = ['kind', 'authMode', 'defaultModel', 'baseUrl', 'models'] as const;
 
 const CONFIG_PATH_SETTING_KEY = 'config_sync.path';
 export const TEAM_CONFIG_SETTING_KEY = 'team.config';

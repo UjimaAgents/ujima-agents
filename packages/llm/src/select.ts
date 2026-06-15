@@ -6,6 +6,7 @@ import type { LanguageModelV3 } from '@ai-sdk/provider';
 import { defaultSettingsMiddleware, wrapLanguageModel, type LanguageModel } from 'ai';
 import type { ReasoningEffort } from '@ujima/shared';
 import { clampReasoningEffortForProvider } from '@ujima/shared';
+import { createCodexAppServerModel } from './codex-app-server.js';
 import { LLMError, PROVIDER_KINDS, type ProviderKind } from './types.js';
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
@@ -196,17 +197,10 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
   }
 
   if (input.kind === 'openai-codex') {
-    // Uses OpenAI Codex OAuth subscription token as API key
-    if (!input.apiKey) throw new LLMError('not_configured', 'openai-codex provider requires apiKey (OAuth token)');
-    return withReasoning(
-      createOpenAI({
-        apiKey: input.apiKey,
-        baseURL: input.baseUrl ?? 'https://api.openai.com/v1',
-      }).chat(input.modelId),
-      input.kind,
-      input.reasoningEffort,
-      input.modelId,
-    );
+    return createCodexAppServerModel({
+      modelId: input.modelId,
+      reasoningEffort: input.reasoningEffort,
+    });
   }
 
   const exhaustive: never = input.kind;

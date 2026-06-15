@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveSpiritModel, defaultResolveProviderName, defaultResolveModelId } from './to-model-messages.js';
+
+vi.mock('@ujima/llm', () => ({
+  selectLanguageModel: vi.fn((input) => ({ input })),
+}));
 
 /**
  * Minimal fake `AgentTeamHandle` covering only the surface that
@@ -11,7 +15,7 @@ function buildTeam(input: {
   roleName: string;
   rolePreferredProvider: string;
   roleModel?: string;
-  providers: Record<string, { kind: string; defaultModel: string }>;
+  providers: Record<string, { kind: string; defaultModel?: string; authMode?: 'chatgpt' }>;
 }) {
   const agent = { id: input.agentName, name: input.agentName, roleName: input.roleName };
   const role = {
@@ -27,6 +31,11 @@ function buildTeam(input: {
     getProvider: (name: string) => input.providers[name],
   } as unknown as Parameters<typeof resolveSpiritModel>[0]['team'];
 }
+
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe('resolveSpiritModel provider-fallback (Option 1)', () => {
   it('uses the preferred provider when it has a key', () => {

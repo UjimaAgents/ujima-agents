@@ -25,6 +25,7 @@ import { toModelToolName } from '../tools/names.js';
 import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 import { messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
+import { resolveOpenAIAccessToken } from './codex-auth.js';
 
 export function toModelMessages(
   messages: Message[],
@@ -226,9 +227,18 @@ export function resolveSpiritModel(params: {
       tried.push({ name: providerName, rejected: 'provider not configured' });
       continue;
     }
-    const apiKey = params.getProviderCredential(params.organizationId, providerName);
+    const apiKey = resolveOpenAIAccessToken({
+      providerName,
+      authMode: provider.authMode,
+      storedCredential: params.getProviderCredential(params.organizationId, providerName),
+    });
     if (!apiKey) {
-      tried.push({ name: providerName, rejected: 'no API key' });
+      tried.push({
+        name: providerName,
+        rejected: provider.authMode === 'chatgpt' || providerName === 'openai-codex'
+          ? 'no Codex login or API key'
+          : 'no API key',
+      });
       continue;
     }
 

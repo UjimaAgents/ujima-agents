@@ -16,7 +16,6 @@ import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-st
 import { SettingsList, SettingsListRow, SettingsRowIcon } from "@/features/settings/shared/settings-list-row";
 import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
 import { normalizeProviderKey, providerLabelFromToken } from "@/features/providers/catalog";
-import { isOAuthProvider } from "@/features/providers/constants";
 import { credentialStatusLabel } from "@/features/providers/provider-status-copy";
 import { ProviderFormModal } from "./providers/provider-form-modal";
 
@@ -30,7 +29,6 @@ export const ProvidersTab = memo(function ProvidersTab({
   onProvidersChange: (providers: ProviderStatus[]) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
-  const [updateTarget, setUpdateTarget] = useState<string | null>(null);
   const [testingName, setTestingName] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ name: string; ok: boolean; message: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -43,9 +41,10 @@ export const ProvidersTab = memo(function ProvidersTab({
     [configured],
   );
 
-  const saveProvider = useCallback(async (name: string, apiKey: string) => {
+  const saveProvider = useCallback(async (name: string, apiKey: string, authMode: "apikey" | "codex") => {
     if (!orgId) return;
     const normalizedName = normalizeProviderKey(name);
+    const backendAuthMode = authMode === "codex" ? "chatgpt" : "apikey";
     const data = await settingsFetch<ProviderSecretsUpsertResponse>(
       "/api/settings/providers",
       {
@@ -53,7 +52,8 @@ export const ProvidersTab = memo(function ProvidersTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           organizationId: orgId,
-          providerKeys: { [normalizedName]: apiKey },
+          providerKeys: apiKey ? { [normalizedName]: apiKey } : {},
+          providerAuthModes: { [normalizedName]: backendAuthMode },
         }),
       },
       "Failed to save provider.",
@@ -119,7 +119,7 @@ export const ProvidersTab = memo(function ProvidersTab({
         <SettingsEmptyState
           icon={Server}
           title="No providers configured"
-          description="Add API keys for LLM providers used by your team."
+          description="Add credentials for the LLM providers used by your team."
           action={
             <SettingsPrimaryButton onClick={() => setShowAdd(true)}>
               <Plus className="h-4 w-4" />
@@ -134,15 +134,14 @@ export const ProvidersTab = memo(function ProvidersTab({
               key={provider.name}
               leading={<SettingsRowIcon icon={Server} />}
               primary={providerLabelFromToken(provider.name)}
-              secondary={credentialStatusLabel(provider.name, provider.hasKey)}
-              badge={<SettingsBadge variant="success">Active</SettingsBadge>}
+              secondary={credentialStatusLabel(provider.name, provider.hasKey, provider.authMode)}
+              badge={
+                <SettingsBadge variant={provider.hasKey ? "success" : "warning"}>
+                  {provider.hasKey ? (provider.authMode === "chatgpt" ? "Codex" : "Active") : "Needs login"}
+                </SettingsBadge>
+              }
               actions={
                 <>
-                  {isOAuthProvider(provider.name) ? (
-                    <SettingsSecondaryButton onClick={() => setUpdateTarget(provider.name)}>
-                      Reconnect
-                    </SettingsSecondaryButton>
-                  ) : null}
                   <SettingsSecondaryButton
                     disabled={testingName === provider.name}
                     onClick={() => void testProvider(provider.name)}
@@ -168,15 +167,6 @@ export const ProvidersTab = memo(function ProvidersTab({
         usedProviderNames={usedNames}
         onSave={saveProvider}
         mode="add"
-      />
-
-      <ProviderFormModal
-        isOpen={Boolean(updateTarget)}
-        onClose={() => setUpdateTarget(null)}
-        usedProviderNames={usedNames}
-        onSave={saveProvider}
-        mode="update"
-        initialName={updateTarget ?? ""}
       />
 
       <ConfirmDialog

@@ -35,6 +35,10 @@ export function ProviderModelFields({
     return options;
   }, [model, provider]);
 
+  const providerOptions = useMemo(() => {
+    return PROVIDER_OPTIONS.map((option) => ({ value: option.token, label: option.label }));
+  }, []);
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <FieldShell label={providerLabel} htmlFor={providerId} hint={providerHint}>
@@ -48,10 +52,7 @@ export function ProviderModelFields({
           }}
           className="w-full"
           placeholder="Select provider"
-          options={PROVIDER_OPTIONS.map((option) => ({
-            value: option.token,
-            label: option.label,
-          }))}
+          options={providerOptions}
         />
       </FieldShell>
 
