@@ -46,6 +46,7 @@ import {
   PairMentionTracker,
 } from './conversation-quota.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
+import type { DelegateKind } from '../utils/delegate-turn.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -54,7 +55,7 @@ interface ConversationMessageMetadata {
   runId?: string;
   goalMode?: boolean;
   reasoningEffort?: ReasoningEffort;
-  delegate?: { parentRunId?: string };
+  delegate?: { parentRunId?: string; kind?: DelegateKind };
 }
 
 export interface ArchivedChannelMessageStore {

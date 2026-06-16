@@ -30,7 +30,7 @@ import {
 import { requireTeam } from '../utils/require-team.js';
 import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
-import { isDelegateMessage, filterDelegateTurnTools } from './run-reply-guard.js';
+import { isDelegateMessage } from './run-reply-guard.js';
 import { buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
@@ -40,7 +40,11 @@ import {
 import type { ApiRepository } from './repository-reader.js';
 import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
 import { errorMessage } from '../utils/error-message.js';
-import { DELEGATE_TURN_USER_MESSAGE } from '../utils/delegate-turn.js';
+import {
+  buildDelegateTurnContextMessages,
+  filterDelegateTurnToolSet,
+  getDelegateKind,
+} from '../utils/delegate-turn.js';
 import {
   createMessageCursor,
   loadChannelInterruptModelMessages,
@@ -147,8 +151,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       resolvedAllowlist,
       supervisorWakePolicy,
     );
-    const allowedToolIds = isDelegateTurn ? filterDelegateTurnTools(baseAllowedToolIds) : baseAllowedToolIds;
-    const builtInToolDefs = this.buildToolDefinitions(allowedToolIds, {
+    const builtInToolDefs = this.buildToolDefinitions(baseAllowedToolIds, {
       organizationId: input.organizationId,
       runId: spirit.runId ?? spirit.id,
       memberId: input.memberId,
@@ -199,7 +202,9 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       mcpToolDefs = legacy.toolSet;
       attachedMcpServers = legacy.servers;
     }
-    const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
+    const toolDefs: ToolSet = isDelegateTurn
+      ? filterDelegateTurnToolSet({ ...builtInToolDefs, ...mcpToolDefs }, getDelegateKind(sourceMessage))
+      : { ...builtInToolDefs, ...mcpToolDefs };
 
     const availableToolIds = Object.keys(toolDefs);
     const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
@@ -264,7 +269,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       contextMessages.push({ role: 'user', content: workspaceStateBlock });
     }
     if (isDelegateTurn) {
-      contextMessages.push({ role: 'user', content: DELEGATE_TURN_USER_MESSAGE });
+      contextMessages.push(...buildDelegateTurnContextMessages(getDelegateKind(sourceMessage)));
     }
     const systemPrompt = system;
     const historyMessages = sourceMessage ? recent.filter((message) => message.id !== sourceMessage.id) : recent;

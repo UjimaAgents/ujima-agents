@@ -50,6 +50,7 @@ import { NotificationService } from './notification.js';
 import { TaskSessionService } from './task-session.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { TeamStore } from './team-store.js';
+import type { DelegateKind } from '../utils/delegate-turn.js';
 import {
   createPermissionGatedToolService,
   saveBlockedToolRunStep,
@@ -629,6 +630,7 @@ export async function runAgentDelegateTurn(input: {
   fromMemberId: string;
   to: string;
   message: string;
+  kind?: DelegateKind;
   runId: string;
   mode?: 'blocking' | 'non_blocking';
   timeoutMs?: number;
@@ -668,7 +670,10 @@ export async function runAgentDelegateTurn(input: {
     recipientId: target.id,
     content: input.message,
     ignore: true,
-    metadata: { runId: input.runId, delegate: { parentRunId: input.runId } },
+    metadata: {
+      runId: input.runId,
+      delegate: { parentRunId: input.runId, kind: input.kind ?? 'worker' },
+    },
   });
 
   await input.wakeMember({
@@ -760,6 +765,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     fromMemberId: string;
     to: string;
     message: string;
+    kind?: DelegateKind;
     runId: string;
     mode?: 'blocking' | 'non_blocking';
     timeoutMs?: number;
@@ -895,7 +901,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       recipientId: ctx.recipientId,
       content: message,
       ignore: true,
-      metadata: { delegate: { parentRunId: ctx.msg.metadata?.delegate?.parentRunId } },
+      metadata: {
+        delegate: {
+          parentRunId: ctx.msg.metadata?.delegate?.parentRunId,
+          kind: ctx.msg.metadata?.delegate?.kind ?? 'worker',
+        },
+      },
     });
     await wakeMember({
       organizationId: orgId,

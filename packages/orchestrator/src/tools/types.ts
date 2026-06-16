@@ -3,6 +3,7 @@ import type { z } from 'zod';
 import type { ConversationService } from '../services/conversation.js';
 import type { GoalSystemService } from '../services/goal-system.js';
 import type { ApiRepository, RepositoryReader } from '../services/repository-reader.js';
+import type { DelegateKind } from '../utils/delegate-turn.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
 
 export interface AgentDelegateResult {
@@ -31,6 +32,7 @@ export interface DelegateHandlers {
     fromMemberId: string;
     to: string;
     message: string;
+    kind?: DelegateKind;
     runId: string;
     mode?: 'blocking' | 'non_blocking';
   }) => Promise<AgentDelegateResult>;

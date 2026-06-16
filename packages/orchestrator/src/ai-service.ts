@@ -44,9 +44,13 @@ import {
 } from './utils/wake-reply-policy.js';
 import { selectPromptContextMessages } from './utils/prompt-context.js';
 import { createMessageCursor, loadInterruptModelMessages } from './utils/interrupt-loader.js';
-import { DELEGATE_TURN_USER_MESSAGE } from './utils/delegate-turn.js';
+import {
+  buildDelegateTurnContextMessages,
+  filterDelegateTurnToolSet,
+  getDelegateKind,
+} from './utils/delegate-turn.js';
 import { createProviderSafeFallbackHandler } from './utils/model-fallback.js';
-import { isDelegateMessage, filterDelegateTurnTools } from './services/run-reply-guard.js';
+import { isDelegateMessage } from './services/run-reply-guard.js';
 import { collectCursorPages } from './utils/cursor-pages.js';
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
@@ -328,17 +332,18 @@ export class AiService {
       wakeReplyPolicy,
     );
     const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
-    const resolvedToolIds = filterDeprecatedToolIds([
-      ...new Set([...roleTools, ...baseAlwaysAvailable]),
-    ]);
-    const toolIds = isDelegateTurn ? filterDelegateTurnTools(resolvedToolIds) : resolvedToolIds;
-    const builtInToolDefs = buildToolDefinitions(toolIds, team, this.tools, {
-      organizationId: input.organizationId,
-      runId: input.runId,
-      memberId: input.agentId,
-      threadId: input.threadId,
-      repo: this.repo,
-    }) as ToolSet;
+    const builtInToolDefs = buildToolDefinitions(
+      filterDeprecatedToolIds([...new Set([...roleTools, ...baseAlwaysAvailable])]),
+      team,
+      this.tools,
+      {
+        organizationId: input.organizationId,
+        runId: input.runId,
+        memberId: input.agentId,
+        threadId: input.threadId,
+        repo: this.repo,
+      },
+    ) as ToolSet;
 
     // Attached MCPs layer on top of the built-in palette so wake-run
     // agents (this code path) get the same tools that the spirit-run
@@ -387,7 +392,9 @@ export class AiService {
     const mcpToolDefs = mcpResolution.toolSet;
     const attachedMcpServers = mcpResolution.servers;
     const availableConnectors = mcpResolution.catalogText;
-    const toolDefs: ToolSet = { ...builtInToolDefs, ...mcpToolDefs };
+    const toolDefs: ToolSet = isDelegateTurn
+      ? filterDelegateTurnToolSet({ ...builtInToolDefs, ...mcpToolDefs }, getDelegateKind(sourceMessage))
+      : { ...builtInToolDefs, ...mcpToolDefs };
 
     // The "Available tools:" line in the system prompt is what some
     // models actually read when deciding whether they CAN call a tool.
@@ -534,10 +541,7 @@ export class AiService {
     });
     contextMessages.push(...wakeContextMessages);
     if (isDelegateTurn) {
-      contextMessages.push({
-        role: 'user',
-        content: DELEGATE_TURN_USER_MESSAGE,
-      });
+      contextMessages.push(...buildDelegateTurnContextMessages(getDelegateKind(sourceMessage)));
     }
     const messages = buildPromptMessages({
       historyMessages: promptHistoryMessages,
