@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, Server, Trash2 } from "lucide-react";
+import { Pencil, Plus, Server, Trash2 } from "lucide-react";
 import { useState, useCallback, useMemo, memo } from "react";
 import type { ProviderSecretsUpsertResponse, ProviderStatus } from "@ujima/api-schema";
 import { settingsFetch } from "@/features/settings/shared/settings-api";
@@ -29,6 +29,7 @@ export const ProvidersTab = memo(function ProvidersTab({
   onProvidersChange: (providers: ProviderStatus[]) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [editTarget, setEditTarget] = useState<ProviderStatus | null>(null);
   const [testingName, setTestingName] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ name: string; ok: boolean; message: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export const ProvidersTab = memo(function ProvidersTab({
     [configured],
   );
 
-  const saveProvider = useCallback(async (name: string, apiKey: string, authMode: "apikey" | "codex") => {
+  const saveProvider = useCallback(async (name: string, apiKey: string, authMode: "apikey" | "codex", baseUrl: string) => {
     if (!orgId) return;
     const normalizedName = normalizeProviderKey(name);
     const backendAuthMode = authMode === "codex" ? "chatgpt" : "apikey";
@@ -54,6 +55,7 @@ export const ProvidersTab = memo(function ProvidersTab({
           organizationId: orgId,
           providerKeys: apiKey ? { [normalizedName]: apiKey } : {},
           providerAuthModes: { [normalizedName]: backendAuthMode },
+          providerBaseUrls: { [normalizedName]: baseUrl },
         }),
       },
       "Failed to save provider.",
@@ -129,35 +131,45 @@ export const ProvidersTab = memo(function ProvidersTab({
         />
       ) : (
         <SettingsList>
-          {configured.map((provider) => (
-            <SettingsListRow
-              key={provider.name}
-              leading={<SettingsRowIcon icon={Server} />}
-              primary={providerLabelFromToken(provider.name)}
-              secondary={credentialStatusLabel(provider.name, provider.hasKey, provider.authMode)}
-              badge={
-                <SettingsBadge variant={provider.hasKey ? "success" : "warning"}>
-                  {provider.hasKey ? (provider.authMode === "chatgpt" ? "Codex" : "Active") : "Needs login"}
-                </SettingsBadge>
-              }
-              actions={
-                <>
-                  <SettingsSecondaryButton
-                    disabled={testingName === provider.name}
-                    onClick={() => void testProvider(provider.name)}
-                  >
-                    {testingName === provider.name ? "…" : "Test"}
-                  </SettingsSecondaryButton>
-                  <SettingsGhostIconButton
-                    title="Remove provider"
-                    onClick={() => setDeleteTarget(provider.name)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </SettingsGhostIconButton>
-                </>
-              }
-            />
-          ))}
+          {configured.map((provider) => {
+            const statusLabel = credentialStatusLabel(provider.name, provider.hasKey, provider.authMode);
+            const secondary = provider.baseUrl ? `${statusLabel} · ${provider.baseUrl}` : statusLabel;
+            return (
+              <SettingsListRow
+                key={provider.name}
+                leading={<SettingsRowIcon icon={Server} />}
+                primary={providerLabelFromToken(provider.name)}
+                secondary={secondary}
+                badge={
+                  <SettingsBadge variant={provider.hasKey ? "success" : "warning"}>
+                    {provider.hasKey ? (provider.authMode === "chatgpt" ? "Codex" : "Active") : "Needs login"}
+                  </SettingsBadge>
+                }
+                actions={
+                  <>
+                    <SettingsSecondaryButton
+                      disabled={testingName === provider.name}
+                      onClick={() => void testProvider(provider.name)}
+                    >
+                      {testingName === provider.name ? "…" : "Test"}
+                    </SettingsSecondaryButton>
+                    <SettingsGhostIconButton
+                      title="Edit provider"
+                      onClick={() => setEditTarget(provider)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </SettingsGhostIconButton>
+                    <SettingsGhostIconButton
+                      title="Remove provider"
+                      onClick={() => setDeleteTarget(provider.name)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </SettingsGhostIconButton>
+                  </>
+                }
+              />
+            );
+          })}
         </SettingsList>
       )}
 
@@ -167,6 +179,16 @@ export const ProvidersTab = memo(function ProvidersTab({
         usedProviderNames={usedNames}
         onSave={saveProvider}
         mode="add"
+      />
+
+      <ProviderFormModal
+        isOpen={Boolean(editTarget)}
+        onClose={() => setEditTarget(null)}
+        usedProviderNames={usedNames}
+        onSave={saveProvider}
+        mode="update"
+        initialName={editTarget?.name ?? ""}
+        initialBaseUrl={editTarget?.baseUrl ?? ""}
       />
 
       <ConfirmDialog

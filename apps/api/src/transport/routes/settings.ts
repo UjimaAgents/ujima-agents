@@ -147,6 +147,7 @@ export function registerSettingsRoutes(
           req.body.organizationId,
           req.body.providerKeys,
           req.body.providerAuthModes,
+          req.body.providerBaseUrls,
         ),
       };
     } catch (err) {

@@ -65,6 +65,7 @@ export const ProviderStatusSchema = z.object({
   name: z.string(),
   hasKey: z.boolean(),
   authMode: z.enum(PROVIDER_AUTH_MODES).optional(),
+  baseUrl: z.string().optional(),
 });
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 
@@ -72,6 +73,7 @@ export const ProviderSecretsUpsertSchema = z.object({
   organizationId: IdSchema,
   providerKeys: z.record(z.string().min(1)).default({}),
   providerAuthModes: z.record(z.enum(PROVIDER_AUTH_MODES)).default({}),
+  providerBaseUrls: z.record(z.string()).default({}),
 });
 export type ProviderSecretsUpsertRequest = z.infer<typeof ProviderSecretsUpsertSchema>;
 

@@ -239,6 +239,7 @@ export class SettingsService {
     organizationId: string,
     providerKeys: Record<string, string>,
     providerAuthModes: Record<string, ProviderAuthMode> = {},
+    providerBaseUrls: Record<string, string> = {},
   ): ProviderStatus[] {
     const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
@@ -248,6 +249,9 @@ export class SettingsService {
     const normalizedProviderAuthModes = Object.fromEntries(
       Object.entries(providerAuthModes).map(([name, authMode]) => [normalizeProviderKey(name), authMode]),
     ) as Record<string, ProviderAuthMode>;
+    const normalizedProviderBaseUrls = Object.fromEntries(
+      Object.entries(providerBaseUrls).map(([name, baseUrl]) => [normalizeProviderKey(name), baseUrl.trim()]),
+    );
 
     const knownProviderSet = new Set(PROVIDER_KINDS);
 
@@ -256,6 +260,7 @@ export class SettingsService {
     for (const providerName of new Set([
       ...Object.keys(normalizedProviderKeys),
       ...Object.keys(normalizedProviderAuthModes),
+      ...Object.keys(normalizedProviderBaseUrls),
     ])) {
       if (!team.providers[providerName]) {
         if (knownProviderSet.has(providerName as typeof PROVIDER_KINDS[number])) {
@@ -269,7 +274,8 @@ export class SettingsService {
       throw new Error(`Unknown provider keys: ${unknownProviders.join(', ')}`);
     }
 
-    if (needsRegistration.length > 0) {
+    const hasBaseUrlChanges = Object.keys(normalizedProviderBaseUrls).length > 0;
+    if (needsRegistration.length > 0 || hasBaseUrlChanges) {
       const config = team.toJSON();
       for (const name of needsRegistration) {
         config.providers[name] = { kind: name as typeof PROVIDER_KINDS[number], models: [] };
@@ -279,6 +285,15 @@ export class SettingsService {
           ...(config.providers[name] ?? { kind: name as typeof PROVIDER_KINDS[number], models: [] }),
           authMode,
         };
+      }
+      for (const [name, baseUrl] of Object.entries(normalizedProviderBaseUrls)) {
+        const provider = config.providers[name] ?? { kind: name as typeof PROVIDER_KINDS[number], models: [] };
+        if (baseUrl) {
+          provider.baseUrl = baseUrl;
+        } else {
+          delete provider.baseUrl;
+        }
+        config.providers[name] = provider;
       }
       const updated = AgentTeam(config);
       this.teamStore.setTeam(updated, organizationId);
