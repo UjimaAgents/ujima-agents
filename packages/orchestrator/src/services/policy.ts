@@ -1,6 +1,5 @@
 import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
-import { AGENT_KIND } from '@ujima/shared';
 import type { ShellApprovalMode, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import {
@@ -10,11 +9,7 @@ import {
 } from '@ujima/shared/workspace';
 import { isInScopeFileTool } from '../path-scoped-tools.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
-import {
-  buildPassDenialReason,
-  isAgentOnlyDmThread,
-  resolveWakeReplyPolicy,
-} from '../utils/wake-reply-policy.js';
+import { buildPassDenialReason, resolveWakeReplyPolicy } from '../utils/wake-reply-policy.js';
 
 export interface PolicyResult {
   allowed: boolean;
@@ -47,6 +42,16 @@ export interface CheckToolPolicyOptions {
    */
   wakeReason?: WakeReason | null;
   threadId?: string;
+  /**
+   * Whether the DM peer is another agent, resolved by the caller via
+   * the authoritative `repo.getMember().kind` (the same source the
+   * wake-time palette uses in ai-service.ts / spirit-agent-run.ts).
+   * Resolving it here — rather than from `team.agents` names — keeps
+   * the gate in agreement with the palette even when member ids differ
+   * from configured agent names. Restores `channel.pass` for agent↔agent
+   * DMs; omitted/false keeps the human-DM forced-reply contract.
+   */
+  dmPeerIsAgent?: boolean;
   effectiveShellApprovalMode?: ShellApprovalMode;
 }
 
@@ -81,14 +86,13 @@ export function checkToolPolicy(
   // L3 — wake/DM reply contract (palette + policy share resolveWakeReplyPolicy).
   // The gate MUST agree with the palette in ai-service.ts / spirit-agent-run.ts
   // on `suppressPassTool`, or the model is offered a `channel.pass` the gate
-  // then rejects. Agents are exactly the members declared in the team config;
-  // humans never appear there, so `team.agents` membership is the agent test.
+  // then rejects. `dmPeerIsAgent` is resolved by the caller from the
+  // authoritative member roster (`repo.getMember().kind`), the same source the
+  // palette uses, so the two never drift.
   const wakeReplyPolicy = resolveWakeReplyPolicy({
     threadId: options.threadId ?? '',
     wakeReason: options.wakeReason,
-    dmPeerIsAgent: isAgentOnlyDmThread(options.threadId ?? '', (memberId) =>
-      team.agents.some((agent) => agent.name === memberId && agent.kind === AGENT_KIND),
-    ),
+    dmPeerIsAgent: options.dmPeerIsAgent,
   });
 
   if (wakeReplyPolicy.suppressPassTool && toolId === 'channel.pass') {

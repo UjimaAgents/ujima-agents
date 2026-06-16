@@ -338,47 +338,24 @@ describe('checkToolPolicy', () => {
 
     // The gate must agree with the wake-time palette on peer-aware pass:
     // agent↔agent DMs keep channel.pass (so the self-chatter loop can
-    // terminate); human DMs keep the forced-reply contract.
-    function buildTeamWithAgents(): AgentTeamHandle {
-      return loadAgentTeam({
-        name: 'Peer Org',
-        workspace: { root: workspaceRoot },
-        providers: {
-          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
-        },
-        roles: [
-          {
-            name: 'engineer',
-            title: 'Engineer',
-            instructions: 'Reply when tagged.',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            workspaceScopes: ['apps/web'],
-            tools: ['channel.read', 'channel.reply'],
-            channels: ['general'],
-          },
-        ],
-        agents: [
-          { name: 'layla', roleName: 'engineer' },
-          { name: 'phoebe', roleName: 'engineer' },
-        ],
-        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
-      } as Record<string, unknown>);
-    }
-
-    it('allows channel.pass in an agent↔agent DM thread', () => {
-      const team = buildTeamWithAgents();
+    // terminate); human DMs keep the forced-reply contract. The caller
+    // resolves `dmPeerIsAgent` from the authoritative member roster, so
+    // the gate simply honours that flag.
+    it('allows channel.pass in an agent↔agent DM (dmPeerIsAgent: true)', () => {
+      const team = buildTeam();
       expect(
         checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
-          threadId: 'dm:layla:phoebe',
+          threadId: 'dm:m-1:m-2',
+          dmPeerIsAgent: true,
         }),
       ).toEqual({ allowed: true, requiresApproval: false });
     });
 
-    it('rejects channel.pass in a human DM thread', () => {
-      const team = buildTeamWithAgents();
+    it('rejects channel.pass in a human DM (dmPeerIsAgent: false)', () => {
+      const team = buildTeam();
       const result = checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
-        threadId: 'dm:human-9:layla',
+        threadId: 'dm:m-1:m-9',
+        dmPeerIsAgent: false,
       });
       expect(result.allowed).toBe(false);
       expect(result.reason).toMatch(/direct-message/);
