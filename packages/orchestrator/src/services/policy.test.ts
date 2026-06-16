@@ -335,5 +335,53 @@ describe('checkToolPolicy', () => {
       );
       expect(result.allowed).toBe(true);
     });
+
+    // The gate must agree with the wake-time palette on peer-aware pass:
+    // agent↔agent DMs keep channel.pass (so the self-chatter loop can
+    // terminate); human DMs keep the forced-reply contract.
+    function buildTeamWithAgents(): AgentTeamHandle {
+      return loadAgentTeam({
+        name: 'Peer Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
+        },
+        roles: [
+          {
+            name: 'engineer',
+            title: 'Engineer',
+            instructions: 'Reply when tagged.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: ['apps/web'],
+            tools: ['channel.read', 'channel.reply'],
+            channels: ['general'],
+          },
+        ],
+        agents: [
+          { name: 'layla', roleName: 'engineer' },
+          { name: 'phoebe', roleName: 'engineer' },
+        ],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+    }
+
+    it('allows channel.pass in an agent↔agent DM thread', () => {
+      const team = buildTeamWithAgents();
+      expect(
+        checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+          threadId: 'dm:layla:phoebe',
+        }),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('rejects channel.pass in a human DM thread', () => {
+      const team = buildTeamWithAgents();
+      const result = checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+        threadId: 'dm:human-9:layla',
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/direct-message/);
+    });
   });
 });

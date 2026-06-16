@@ -1,5 +1,5 @@
 import type { ConversationKind, WakeReason } from '@ujima/shared';
-import { isDirectMessageThread } from '@ujima/shared';
+import { isDirectMessageThread, parseDmThreadId } from '@ujima/shared';
 
 export interface WakeReplyPolicy {
   conversationKind: ConversationKind;
@@ -58,7 +58,19 @@ const DM_WAKE_SCAFFOLD = [
   'This is a direct message (1:1) thread. Messages from your conversation partner are addressed to you — reply when they ask you to do something or expect a response.',
   'If the peer is another agent and the conversation has reached a natural stopping point, call channel.ack instead of sending a filler reply.',
   'Do not call channel.pass in a DM because you think you were not @mentioned; that rule applies to shared channels only.',
-  'Use a posting tool (channel.reply, channel.dm, or message) to respond.',
+  'Use a posting tool (channel.reply or channel.dm) to respond.',
+].join('\n');
+
+// Agent↔agent DM scaffold. Unlike a human DM (where the human is owed a
+// reply), a 1:1 between two agents is exactly where the self-chatter
+// loop forms, so `channel.pass` is RESTORED here: the agent is allowed
+// — and expected — to stand down the moment it has nothing substantive
+// to add. Mirrors the `channel-read`-demotion scaffold below.
+const AGENT_DM_WAKE_SCAFFOLD = [
+  SCAFFOLD_RULES.readThreadState,
+  'This is a direct message (1:1) thread with ANOTHER AGENT, not a human.',
+  'Reply only when you have substantive new information, a concrete deliverable, or a question that moves the work forward.',
+  'You are allowed — and expected — to call channel.pass to stand down and break the loop. If you have no constructive/new response, call channel.pass with a descriptive note immediately instead of sending a filler reply.',
 ].join('\n');
 
 export const CHANNEL_WAKE_SCAFFOLD_LINES: readonly string[] = Object.freeze([
@@ -101,16 +113,45 @@ const CHANNEL_WAKE_SCAFFOLD = CHANNEL_WAKE_SCAFFOLD_LINES.join('\n');
 export const ANTI_MIRROR_SCAFFOLD_LINE =
   'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.';
 
+/**
+ * True when both participants of a 1:1 DM thread are agents. For a
+ * pairwise DM "the peer is an agent" is equivalent to "both
+ * participants are agents" (the acting member is always an agent on a
+ * wake run), so this needs no self-member id. `isAgentMember` is the
+ * caller's roster lookup — `repo.getMember(id)?.kind === 'agent'` on
+ * the run paths, `team.agents` membership in the policy gate.
+ */
+export function isAgentOnlyDmThread(
+  threadId: string,
+  isAgentMember: (memberId: string) => boolean,
+): boolean {
+  const parsed = parseDmThreadId(threadId);
+  if (!parsed) return false;
+  return isAgentMember(parsed.participantA) && isAgentMember(parsed.participantB);
+}
+
 export function resolveWakeReplyPolicy(input: {
   threadId: string;
   wakeReason?: WakeReason | null;
+  /**
+   * Set by callers when the DM peer is another agent. Restores
+   * `channel.pass` in agent↔agent DMs so the self-chatter loop can
+   * terminate; human DMs keep the mandatory-reply contract. Defaults
+   * to the pre-existing behaviour (treat as human DM) when omitted.
+   */
+  dmPeerIsAgent?: boolean;
 }): WakeReplyPolicy {
   const conversationKind: ConversationKind = isDirectMessageThread(input.threadId) ? 'dm' : 'channel';
   const mandatoryReply = input.wakeReason === 'mention';
+  const isAgentDm = conversationKind === 'dm' && input.dmPeerIsAgent === true;
   const suppressPassTool =
-    mandatoryReply || (conversationKind === 'dm' && input.wakeReason !== 'channel-read');
+    mandatoryReply ||
+    (conversationKind === 'dm' && !isAgentDm && input.wakeReason !== 'channel-read');
 
   let scaffoldBlock = conversationKind === 'dm' ? DM_WAKE_SCAFFOLD : CHANNEL_WAKE_SCAFFOLD;
+  if (isAgentDm && input.wakeReason !== 'channel-read') {
+    scaffoldBlock = AGENT_DM_WAKE_SCAFFOLD;
+  }
   if (conversationKind === 'dm' && input.wakeReason === 'channel-read') {
     scaffoldBlock = [
       SCAFFOLD_RULES.readThreadState,
@@ -132,19 +173,32 @@ export function buildPassDenialReason(
   policy: Pick<WakeReplyPolicy, 'mandatoryReply' | 'conversationKind'>,
 ): string {
   if (policy.mandatoryReply) {
-    return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply, channel.dm, or message.';
+    return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply or channel.dm.';
   }
-  return 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply, channel.dm, or message.';
+  return 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply or channel.dm.';
 }
 
 export function filterToolsForWakeReplyPolicy(
   toolIds: readonly string[],
-  policy: Pick<WakeReplyPolicy, 'suppressPassTool'>,
+  policy: Pick<WakeReplyPolicy, 'suppressPassTool' | 'conversationKind'>,
 ): string[] {
-  if (!policy.suppressPassTool) {
-    return [...toolIds];
-  }
-  return toolIds.filter((toolId) => toolId !== 'channel.pass');
+  return toolIds.filter((toolId) => {
+    // Mandatory-reply / human-DM contract: the model literally cannot
+    // opt out of replying.
+    if (policy.suppressPassTool && toolId === 'channel.pass') {
+      return false;
+    }
+    // Keep channel-originated conversations IN the channel. An agent
+    // woken by channel activity has no `channel.dm` in its palette, so
+    // it can only reply on the shared surface where the team can see
+    // it — it cannot peel a teammate (or a human) into a siloed 1:1.
+    // DMs remain reachable on DM wakes. The agent→agent hard block in
+    // channelDmTool is the leakproof backstop for existing DM threads.
+    if (policy.conversationKind === 'channel' && toolId === 'channel.dm') {
+      return false;
+    }
+    return true;
+  });
 }
 
 /**

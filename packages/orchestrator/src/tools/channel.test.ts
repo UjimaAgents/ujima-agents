@@ -79,6 +79,83 @@ describe('channel.* tools — toInvocation()', () => {
     expect(byName.success).toBe(true);
   });
 
+  // Hard block on agent→agent free-form DMs — the self-chatter
+  // pathology. Self-DM and agent→human DMs must still go through.
+  describe('channel.dm agent→agent hard block', () => {
+    const baseInvocation = (memberId: string) => ({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId,
+      toolCallId: 'call-1',
+      toolId: 'channel.dm',
+      action: 'message',
+      resourceType: 'message',
+    });
+
+    const repoWith = (members: Record<string, { id: string; name: string; kind: string }>) =>
+      ({
+        getMember: (_orgId: string, id: string) => members[id] ?? null,
+      }) as never;
+
+    it('blocks an agent DMing another agent (no message sent)', async () => {
+      let sent = false;
+      const result = await channelDmTool.execute({
+        invocation: { ...baseInvocation('agent-1'), input: { member_id: 'agent-2', body: 'hi', mentions: [] } } as never,
+        team: {} as never,
+        repo: repoWith({
+          'agent-1': { id: 'agent-1', name: 'Layla', kind: 'agent' },
+          'agent-2': { id: 'agent-2', name: 'Phoebe', kind: 'agent' },
+        }),
+        conversations: {
+          tryMirrorSuppress: () => false,
+          sendDirectMessage: () => {
+            sent = true;
+            return { id: 'm1' };
+          },
+        } as never,
+      });
+      expect(sent).toBe(false);
+      expect(result).toMatchObject({ status: 'dm_blocked', message_sent: false });
+    });
+
+    it('allows an agent DMing a human', async () => {
+      let sent = false;
+      await channelDmTool.execute({
+        invocation: { ...baseInvocation('agent-1'), input: { member_id: 'human-1', body: 'hi', mentions: [] } } as never,
+        team: {} as never,
+        repo: repoWith({
+          'agent-1': { id: 'agent-1', name: 'Layla', kind: 'agent' },
+          'human-1': { id: 'human-1', name: 'Pat', kind: 'human' },
+        }),
+        conversations: {
+          tryMirrorSuppress: () => false,
+          sendDirectMessage: () => {
+            sent = true;
+            return { id: 'm1' };
+          },
+        } as never,
+      });
+      expect(sent).toBe(true);
+    });
+
+    it('allows a self-DM (scratchpad)', async () => {
+      let sent = false;
+      await channelDmTool.execute({
+        invocation: { ...baseInvocation('agent-1'), input: { member_id: 'self', body: 'note', mentions: [] } } as never,
+        team: {} as never,
+        repo: repoWith({ 'agent-1': { id: 'agent-1', name: 'Layla', kind: 'agent' } }),
+        conversations: {
+          tryMirrorSuppress: () => false,
+          sendDirectMessage: () => {
+            sent = true;
+            return { id: 'm1' };
+          },
+        } as never,
+      });
+      expect(sent).toBe(true);
+    });
+  });
+
   it('channel.list is tagged as a read', () => {
     const inv = channelListTool.toInvocation({ scope: 'mine' });
     expect(inv.action).toBe('read');
@@ -219,7 +296,6 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'memory.forget',
         'memory.recall',
         'memory.write',
-        'message',
         'question.ask',
         'schedule',
         'procedure.list',

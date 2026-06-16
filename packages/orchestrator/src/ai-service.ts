@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { type ModelMessage, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import {
+  AGENT_KIND,
   DEFAULT_SPIRIT_TEMPERATURE,
   type ReasoningEffort,
   type SpiritRole,
@@ -40,6 +41,7 @@ import { buildWorkspaceStateBlock } from './utils/workspace-state.js';
 import { buildPromptMessages } from './utils/prompt-assembly.js';
 import {
   filterToolsForWakeReplyPolicy,
+  isAgentOnlyDmThread,
   resolveWakeReplyPolicy,
 } from './utils/wake-reply-policy.js';
 import { selectPromptContextMessages } from './utils/prompt-context.js';
@@ -317,15 +319,19 @@ export class AiService {
     // included via @all expansion), `channel.pass`
     // is stripped so the model literally cannot opt out of
     // replying. Posting tools (`channel.reply`, `channel.post`,
-    // `channel.dm`, `message`) stay available via
-    // `ALWAYS_AVAILABLE_AGENT_TOOLS`, so the model has a clear
-    // path to comply with the "you must reply" contract regardless
-    // of how the role config declares its `tools`.
+    // `channel.dm`) stay available via `ALWAYS_AVAILABLE_AGENT_TOOLS`,
+    // so the model has a clear path to comply with the "you must
+    // reply" contract regardless of how the role config declares its
+    // `tools`.
     const isDelegateTurn = isDelegateMessage(sourceMessage);
     const wakeReasonForPalette = (runRow?.wakeReason ?? null) as WakeReason | null;
     const wakeReplyPolicy = resolveWakeReplyPolicy({
       threadId: input.threadId,
       wakeReason: wakeReasonForPalette,
+      dmPeerIsAgent: isAgentOnlyDmThread(
+        input.threadId,
+        (memberId) => this.repo.getMember(input.organizationId, memberId)?.kind === AGENT_KIND,
+      ),
     });
     const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(
       ALWAYS_AVAILABLE_AGENT_TOOLS,

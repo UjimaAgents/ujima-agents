@@ -13,6 +13,7 @@ import {
   type McpServerSummary,
 } from './spirit-mcp-helpers.js';
 import {
+  AGENT_KIND,
   SocketEventNames,
   SpiritSchema,
   channelRoom,
@@ -25,6 +26,7 @@ import {
 import { buildAgentSystemPrompt, type AgentTeamHandle } from '@ujima/framework';
 import {
   filterToolsForWakeReplyPolicy,
+  isAgentOnlyDmThread,
   resolveWakeReplyPolicy,
 } from '../utils/wake-reply-policy.js';
 import { requireTeam } from '../utils/require-team.js';
@@ -146,6 +148,10 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     const supervisorWakePolicy = resolveWakeReplyPolicy({
       threadId: session.channelId,
       wakeReason: supervisorRunRow?.wakeReason as WakeReason | undefined,
+      dmPeerIsAgent: isAgentOnlyDmThread(
+        session.channelId,
+        (memberId) => this.repo.getMember(input.organizationId, memberId)?.kind === AGENT_KIND,
+      ),
     });
     const baseAllowedToolIds = filterToolsForWakeReplyPolicy(
       resolvedAllowlist,

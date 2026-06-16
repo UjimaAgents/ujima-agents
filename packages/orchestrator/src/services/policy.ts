@@ -1,5 +1,6 @@
 import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
+import { AGENT_KIND } from '@ujima/shared';
 import type { ShellApprovalMode, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
 import {
@@ -9,7 +10,11 @@ import {
 } from '@ujima/shared/workspace';
 import { isInScopeFileTool } from '../path-scoped-tools.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
-import { buildPassDenialReason, resolveWakeReplyPolicy } from '../utils/wake-reply-policy.js';
+import {
+  buildPassDenialReason,
+  isAgentOnlyDmThread,
+  resolveWakeReplyPolicy,
+} from '../utils/wake-reply-policy.js';
 
 export interface PolicyResult {
   allowed: boolean;
@@ -74,9 +79,16 @@ export function checkToolPolicy(
   }
 
   // L3 — wake/DM reply contract (palette + policy share resolveWakeReplyPolicy).
+  // The gate MUST agree with the palette in ai-service.ts / spirit-agent-run.ts
+  // on `suppressPassTool`, or the model is offered a `channel.pass` the gate
+  // then rejects. Agents are exactly the members declared in the team config;
+  // humans never appear there, so `team.agents` membership is the agent test.
   const wakeReplyPolicy = resolveWakeReplyPolicy({
     threadId: options.threadId ?? '',
     wakeReason: options.wakeReason,
+    dmPeerIsAgent: isAgentOnlyDmThread(options.threadId ?? '', (memberId) =>
+      team.agents.some((agent) => agent.name === memberId && agent.kind === AGENT_KIND),
+    ),
   });
 
   if (wakeReplyPolicy.suppressPassTool && toolId === 'channel.pass') {
