@@ -335,5 +335,30 @@ describe('checkToolPolicy', () => {
       );
       expect(result.allowed).toBe(true);
     });
+
+    // The gate must agree with the wake-time palette on peer-aware pass:
+    // agent↔agent DMs keep channel.pass (so the self-chatter loop can
+    // terminate); human DMs keep the forced-reply contract. The caller
+    // resolves `dmPeerIsAgent` from the authoritative member roster, so
+    // the gate simply honours that flag.
+    it('allows channel.pass in an agent↔agent DM (dmPeerIsAgent: true)', () => {
+      const team = buildTeam();
+      expect(
+        checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+          threadId: 'dm:m-1:m-2',
+          dmPeerIsAgent: true,
+        }),
+      ).toEqual({ allowed: true, requiresApproval: false });
+    });
+
+    it('rejects channel.pass in a human DM (dmPeerIsAgent: false)', () => {
+      const team = buildTeam();
+      const result = checkToolPolicy(team, 'engineer', 'channel.pass', 'message', undefined, {
+        threadId: 'dm:m-1:m-9',
+        dmPeerIsAgent: false,
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/direct-message/);
+    });
   });
 });

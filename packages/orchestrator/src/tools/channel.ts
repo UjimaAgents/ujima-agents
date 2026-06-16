@@ -616,6 +616,26 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     const recipientRef = String(invocation.input.member_id);
     const recipientId =
       recipientRef === 'self' ? 'self' : resolveMemberId(repo, invocation.organizationId, recipientRef);
+
+    // Hard block on agent→agent free-form DMs. This is the pathology
+    // behind "agents chatting with themselves": two agents peel into a
+    // private 1:1 and loop. Self-DM (scratchpad) and agent→human DMs
+    // stay open. Structured hand-offs go through agent.delegate / goal
+    // notifications, which call ConversationService directly and never
+    // reach this tool — so blocking here doesn't touch delegation.
+    if (recipientId !== 'self') {
+      const sender = repo.getMember(invocation.organizationId, invocation.memberId);
+      const recipient = repo.getMember(invocation.organizationId, recipientId);
+      if (sender?.kind === AGENT_KIND && recipient?.kind === AGENT_KIND) {
+        return {
+          status: 'dm_blocked',
+          message_sent: false,
+          error:
+            'Direct messages between agents are disabled. Reply in the channel where this started so the whole team can see it, or use agent.delegate for a task hand-off.',
+        };
+      }
+    }
+
     const dmThreadId =
       recipientId === 'self'
         ? `self:${invocation.memberId}`

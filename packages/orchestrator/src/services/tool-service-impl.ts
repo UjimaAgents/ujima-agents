@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { AgentTeamHandle } from "@ujima/framework";
 import {
+  AGENT_KIND,
   SocketEventNames,
   classifyTool,
   evaluatePolicy,
@@ -20,6 +21,7 @@ import type { RealtimeService } from "./context.js";
 import type { ConversationService } from "./conversation.js";
 import type { GoalSystemService } from "./goal-system.js";
 import { requireTeam } from "../utils/require-team.js";
+import { isAgentOnlyDmThread } from "../utils/wake-reply-policy.js";
 import { checkToolPolicy } from "./policy.js";
 import { isToolApprovalSatisfied } from "./tool-approval-gate.js";
 import type { ApiRepository } from "./repository-reader.js";
@@ -254,6 +256,17 @@ export class ToolServiceImpl implements ToolService {
             spiritRole: preparedInvocation.spiritRole,
             wakeReason,
             threadId,
+            // Resolve DM-peer kind from the authoritative member roster so
+            // the gate's `channel.pass` decision matches the wake-time
+            // palette (which uses the same `repo.getMember().kind`). A
+            // name-only `team.agents` check would misclassify any org whose
+            // member ids differ from configured agent names.
+            dmPeerIsAgent: isAgentOnlyDmThread(
+              threadId ?? '',
+              (memberId) =>
+                this.repo.getMember(preparedInvocation.organizationId, memberId)?.kind ===
+                AGENT_KIND,
+            ),
             effectiveShellApprovalMode,
           },
         );

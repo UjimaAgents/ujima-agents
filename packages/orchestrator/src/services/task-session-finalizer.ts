@@ -83,6 +83,13 @@ export function maybeFinalizeTaskSession(input: {
   organizationId: string;
   taskSessionId: string;
   preferredSummary?: string;
+  /**
+   * Broadcast the completion linkback card into #general in addition
+   * to the task's origin channel/thread. Default OFF: task summaries
+   * land where the work started, not in everyone's #general. Opt in
+   * only when an org genuinely wants a firmwide completion feed.
+   */
+  linkBackToGeneral?: boolean;
 }): void {
   const session = input.repo.getTaskSession(input.organizationId, input.taskSessionId);
   if (!session || TERMINAL_TASK_SESSION_STATUSES.has(session.status)) return;
@@ -115,12 +122,14 @@ export function maybeFinalizeTaskSession(input: {
     card: baseCard,
   });
 
-  const general = input.repo
-    .listAllChannels(nextSession.organizationId)
-    .find((channel) => channel.kind === 'general' || channel.id === 'general' || channel.name === 'general');
   const linkbackTargets = new Map<string, { threadId: string; channelId?: string }>();
-  if (general && general.id !== nextSession.channelId) {
-    linkbackTargets.set(general.id, { threadId: general.id, channelId: general.id });
+  if (input.linkBackToGeneral) {
+    const general = input.repo
+      .listAllChannels(nextSession.organizationId)
+      .find((channel) => channel.kind === 'general' || channel.id === 'general' || channel.name === 'general');
+    if (general && general.id !== nextSession.channelId) {
+      linkbackTargets.set(general.id, { threadId: general.id, channelId: general.id });
+    }
   }
   if (nextSession.origin.channelId && nextSession.origin.channelId !== nextSession.channelId) {
     linkbackTargets.set(nextSession.origin.channelId, {

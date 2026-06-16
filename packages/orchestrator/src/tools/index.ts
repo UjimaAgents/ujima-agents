@@ -115,9 +115,19 @@ const DEPRECATED_TOOL_ALIASES: Record<string, string> = {
   'memory.save': 'memory.write',
 };
 
+// Tool ids removed from the agent-facing palette entirely. `message`
+// is the legacy generic send primitive that the first-class `channel.*`
+// family superseded: it duplicated `channel.post`/`channel.reply`/
+// `channel.dm` and — unlike `channel.dm` — bypassed the mirror-loop
+// guard, giving agents a side-door around the anti-self-chatter
+// machinery. Dropped here so any `role.tools` listing it is also
+// stripped (the tool stays registered in ORCHESTRATOR_TOOLS and in
+// RUN_TERMINATING_TOOL_NAMES so in-flight runs degrade safely).
+const REMOVED_TOOL_IDS = new Set(['self.note', 'message']);
+
 export function filterDeprecatedToolIds(toolIds: readonly string[]): string[] {
   const normalized = toolIds.map((toolId) => {
-    if (toolId === 'self.note') return null;
+    if (REMOVED_TOOL_IDS.has(toolId)) return null;
     return DEPRECATED_TOOL_ALIASES[toolId] ?? toolId;
   });
   return [...new Set(normalized.filter((toolId): toolId is string => toolId !== null))];
@@ -136,7 +146,6 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'channel.post',
   'channel.dm',
   'channel.recall',
-  'message',
   'channel.read',
   'channel.list',
   'view',
