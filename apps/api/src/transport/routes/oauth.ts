@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 interface CodexLoginSession {
-  child: any;
+  child: ReturnType<typeof spawn>;
   loginId: string;
   verificationUrl: string;
   userCode: string;
@@ -25,7 +25,9 @@ setInterval(() => {
     if (now - session.lastUpdated > 5 * 60 * 1000) {
       try {
         session.child.kill('SIGKILL');
-      } catch {}
+      } catch (error) {
+        void error;
+      }
       activeLoginSessions.delete(loginId);
     }
   }
@@ -45,7 +47,7 @@ function startCodexLogin(): Promise<{ loginId: string; verificationUrl: string; 
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        try { child.kill('SIGKILL'); } catch {}
+        try { child.kill('SIGKILL'); } catch (error) { void error; }
         reject(new Error('Timeout starting Codex login flow'));
       }
     }, 15000);
@@ -87,12 +89,12 @@ function startCodexLogin(): Promise<{ loginId: string; verificationUrl: string; 
             resolved = true;
             clearTimeout(timeout);
             if (msg.error) {
-              try { child.kill('SIGTERM'); } catch {}
+              try { child.kill('SIGTERM'); } catch (error) { void error; }
               reject(new Error(msg.error.message || 'Failed to start login'));
             } else {
               const { loginId, verificationUrl, userCode } = msg.result || {};
               if (!loginId || !verificationUrl || !userCode) {
-                try { child.kill('SIGTERM'); } catch {}
+                try { child.kill('SIGTERM'); } catch (error) { void error; }
                 reject(new Error('Invalid response from Codex App Server'));
               } else {
                 loginIdRef = loginId;
@@ -120,7 +122,7 @@ function startCodexLogin(): Promise<{ loginId: string; verificationUrl: string; 
                 session.status = success ? 'completed' : 'failed';
                 if (error) session.error = error;
                 session.lastUpdated = Date.now();
-                try { child.kill('SIGTERM'); } catch {}
+                try { child.kill('SIGTERM'); } catch (error) { void error; }
               }
             }
           }
@@ -214,7 +216,7 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
     if (hasCodexAccessToken()) {
       const session = activeLoginSessions.get(loginId);
       if (session) {
-        try { session.child.kill('SIGTERM'); } catch {}
+        try { session.child.kill('SIGTERM'); } catch (error) { void error; }
         activeLoginSessions.delete(loginId);
       }
       return { status: 'completed' as const };
@@ -278,4 +280,3 @@ function renderLoginHelpHtml(signedIn: boolean): string {
 </body>
 </html>`;
 }
-

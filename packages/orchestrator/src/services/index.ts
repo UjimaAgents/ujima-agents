@@ -51,6 +51,7 @@ import { TaskSessionService } from './task-session.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { TeamStore } from './team-store.js';
 import type { DelegateKind } from '../utils/delegate-turn.js';
+import { getDelegateKind } from '../utils/delegate-turn.js';
 import {
   createPermissionGatedToolService,
   saveBlockedToolRunStep,
@@ -904,7 +905,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       metadata: {
         delegate: {
           parentRunId: ctx.msg.metadata?.delegate?.parentRunId,
-          kind: ctx.msg.metadata?.delegate?.kind ?? 'worker',
+          kind: getDelegateKind(ctx.msg),
         },
       },
     });
