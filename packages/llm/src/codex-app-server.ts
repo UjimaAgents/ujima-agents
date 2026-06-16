@@ -361,7 +361,9 @@ function connectCodexAppServer(child: CodexChildProcess) {
       rl.close();
       try {
         child.kill('SIGTERM');
-      } catch {}
+      } catch {
+        // ignore
+      }
     },
   };
 }

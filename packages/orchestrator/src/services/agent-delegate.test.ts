@@ -120,6 +120,30 @@ describe('agent delegation', () => {
     });
   });
 
+  it('tags explorer delegates in metadata', async () => {
+    const { repo, conversations, createRun } = repoFixture();
+
+    await runAgentDelegateTurn({
+      repo: repo as unknown as ApiRepository,
+      conversations: conversations as unknown as ConversationService,
+      wakeMember: vi.fn(),
+      createRun,
+      organizationId: orgId,
+      fromMemberId: caller.id,
+      to: target.name,
+      message: 'inspect this',
+      kind: 'explorer',
+      runId: 'run-1',
+      mode: 'non_blocking',
+    });
+
+    expect(conversations.sendDirectMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        delegate: expect.objectContaining({ kind: 'explorer' }),
+      }),
+    }));
+  });
+
   it('rejects self-delegation', async () => {
     const { repo, conversations, createRun } = repoFixture();
     repo.listMembers.mockReturnValue([caller]);

@@ -36,19 +36,6 @@ export function isDelegateMessage(message: { metadata?: unknown } | null | undef
   return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;
 }
 
-export function filterDelegateTurnTools(toolIds: readonly string[]): string[] {
-  const postingTools = new Set([
-    'channel.post',
-    'channel.reply',
-    'channel.dm',
-    'channel.handoff',
-    'channel.pass',
-    'channel.ack',
-    'message',
-  ]);
-  return toolIds.filter((toolId) => !postingTools.has(toolId) && !postingTools.has(normalizeToDottedToolName(toolId)));
-}
-
 function collectToolNamesFromList(list: unknown, out: Set<string>): void {
   if (!Array.isArray(list)) return;
   for (const item of list) {

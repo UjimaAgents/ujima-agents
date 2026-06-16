@@ -17,6 +17,7 @@ export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Hand-offs use channel.handoff({ to, reason, deliverable, complete }). Set complete: true only when the chain is genuinely finished. Do not write [HANDOFF] or [DONE] in plain text — the handoff tool stamps them.',
   'Never call a posting tool and also produce assistant chat text in the same turn. Either tool or text, not both. If you used a posting tool, leave the final assistant text empty.',
   'Pick exactly one terminating tool per turn: channel.reply, channel.post, channel.dm, channel.handoff, message, or channel.pass. The runtime drops any assistant prose you emit alongside a terminating tool.',
+  'agent.delegate: use kind "explorer" for read-only investigation and kind "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',
   'In a hand-off chain with 3 or more agents, when you reply, the previous sender is automatically re-mentioned. If you need to bring in an earlier participant, mention them explicitly with @name.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
 ] as const;
