@@ -8,6 +8,7 @@ import {
   ApiErrorSchema,
   ChannelOperationParamsSchema,
   ChannelUpdateSchema,
+  DiscoverModelsResponseSchema,
   ListOrganizationsResponseSchema,
   OrganizationQuerySchema,
   OrganizationSettingsQuerySchema,
@@ -262,6 +263,40 @@ export function registerSettingsRoutes(
       if (forbidden) return forbidden;
       return settings.testProvider(req.query.organizationId, req.params.providerName);
     } catch (err) {
+      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
+    }
+  });
+
+  app.get('/settings/providers/:providerName/models', {
+    schema: {
+      description: 'Discover models from a provider\'s /v1/models endpoint',
+      tags: ['Settings'],
+      params: ProviderTestParamsSchema,
+      querystring: OrganizationQuerySchema,
+      response: {
+        200: DiscoverModelsResponseSchema,
+        400: ApiErrorSchema,
+        401: ApiErrorSchema,
+        403: ApiErrorSchema,
+        404: ApiErrorSchema,
+        502: ApiErrorSchema,
+        503: ApiErrorSchema,
+      },
+    },
+  }, async (req, reply) => {
+    try {
+      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
+      if (forbidden) return forbidden;
+      const models = await settings.discoverModels(req.query.organizationId, req.params.providerName);
+      return { models };
+    } catch (err) {
+      const message = errorMessage(err);
+      if (message.startsWith('Unknown provider')) {
+        return apiError(reply, 404, message);
+      }
+      if (message.startsWith('Discovery failed')) {
+        return apiError(reply, 502, message);
+      }
       return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
     }
   });

@@ -82,6 +82,16 @@ export const ProviderSecretsUpsertResponseSchema = z.object({
 });
 export type ProviderSecretsUpsertResponse = z.infer<typeof ProviderSecretsUpsertResponseSchema>;
 
+export const DiscoveredModelSchema = z.object({
+  id: z.string(),
+});
+export type DiscoveredModel = z.infer<typeof DiscoveredModelSchema>;
+
+export const DiscoverModelsResponseSchema = z.object({
+  models: z.array(DiscoveredModelSchema),
+});
+export type DiscoverModelsResponse = z.infer<typeof DiscoverModelsResponseSchema>;
+
 export const TeamSettingsQuerySchema = z.object({
   organizationId: IdSchema.optional(),
 });

@@ -34,7 +34,7 @@ Define persistent agent members, assign roles, and work in channels — the same
 
 ## Quick Start (npm)
 
-**Prerequisites:** Node.js 20+ or Bun 1.3+, LLM API keys (Anthropic, OpenAI, DeepSeek)
+**Prerequisites:** Node.js 20+ or Bun 1.3+, plus an LLM provider — either a hosted API key (Anthropic, OpenAI, DeepSeek) **or a local OpenAI-compatible server** (Ollama, vLLM, LM Studio, llama.cpp's server)
 
 ```bash
 npm install -g @ujima/agents
@@ -74,6 +74,101 @@ Or set via environment variables before `ujima start`:
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
 ```
+
+---
+
+## Local & self-hosted models
+
+Ujima talks to any **OpenAI-compatible** endpoint, so your team can run on local
+inference servers instead of (or alongside) hosted APIs. The flow is the same
+for **Ollama**, **vLLM**, **LM Studio**, **llama.cpp's server**, or any remote
+OpenAI-compatible service: start the server, then add it through the web UI as
+a provider.
+
+### Walkthrough — Ollama (easiest)
+
+**1. Install Ollama and pull a model**
+
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Start the daemon and pull a small model to try
+ollama serve &
+ollama pull qwen2.5:0.5b
+```
+
+Ollama listens on `http://127.0.0.1:11434` and exposes an OpenAI-compatible
+endpoint at `/v1`. Confirm with:
+
+```bash
+curl http://127.0.0.1:11434/v1/models
+```
+
+**2. Wire it into Ujima**
+
+Open `http://localhost:3452` → **Settings → Organization → Providers** → **Add**:
+
+- **Provider**: Ollama
+- **API key**: any string (Ollama doesn't validate it — `ollama` is fine)
+- **Base URL**: `http://127.0.0.1:11434/v1`
+
+Click **Test** — you should see "Connected".
+
+**3. Assign it to an agent**
+
+Go to **Settings → Organization → Agents**, edit any agent (or create a new
+one), and set:
+
+- **LLM provider**: Ollama
+- **Model**: the dropdown queries your local Ollama and shows the actual tags
+  you've pulled (e.g. `qwen2.5:0.5b`). Pick one.
+
+Save, DM the agent, and you should get a response generated on your machine.
+
+### Walkthrough — vLLM (production self-host)
+
+**1. Start vLLM with an OpenAI-compatible name and an API key**
+
+```bash
+vllm serve <hf-repo-or-local-path> \
+  --quantization awq \
+  --served-model-name <short-name> \
+  --api-key <your-bearer-token> \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+`--served-model-name` is what shows up in Ujima's Model dropdown — keep it
+short and readable.
+
+**2. Wire it into Ujima**
+
+**Settings → Providers → Add**:
+
+- **Provider**: Ollama (we use the same OpenAI-compat kind for any custom endpoint)
+- **API key**: the Bearer token you passed as `--api-key`
+- **Base URL**: `http://127.0.0.1:8000/v1`
+
+Test the connection, then assign the model to an agent the same way as above.
+
+> For a full **production self-host runbook** — single-box deployment with
+> Tailscale Serve for the UI and Tailscale Funnel for a public model URL —
+> see [`ujima_selfhost_runbook.md`](./ujima_selfhost_runbook.md) in the
+> repository root.
+
+### Notes
+
+- Everything else (channels, approvals, workspace-bounded execution, MCP
+  tools, role scoping) works identically against local models.
+- You can mix and match — e.g. local Qwen for routine agents, Claude for
+  your `code-reviewer`. Each agent picks its own provider + model in the
+  edit modal.
+- Discovery falls back to the static catalog if your server is offline or
+  doesn't expose `/v1/models`, so the UI never gets stuck.
 
 ---
 

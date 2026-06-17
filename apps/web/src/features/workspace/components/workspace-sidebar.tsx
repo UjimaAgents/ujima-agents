@@ -675,6 +675,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         initialProvider={initialProvider}
         channels={visibleChannels.map((channel) => ({ id: channel.id, name: channel.name }))}
         primaryChannelId={primaryChannel?.id}
+        orgId={orgId}
         onCreateAgent={onCreateAgent}
         onSelect={onSelect}
       />
@@ -700,6 +701,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           teamSettings={teamSettings}
           rolePresets={rolePresets}
           visibleChannels={visibleChannels}
+          orgId={orgId}
           onClose={() => onAgentEditorHandled?.()}
           onSelect={onSelect}
           onUpdateAgent={onUpdateAgent}
