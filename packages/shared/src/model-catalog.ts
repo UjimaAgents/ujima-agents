@@ -125,7 +125,7 @@ export const SAFE_FALLBACK_MODELS: Record<string, string> = {
   mistral: "mistral-large-latest",
   kimi: "kimi-k2.5",
   zhipu: "glm-4.5",
-  "openai-codex": "gpt-4o",
+  "openai-codex": "gpt-5.4",
   openrouter: "openai/gpt-4o",
   ollama: "llama3.1",
 };

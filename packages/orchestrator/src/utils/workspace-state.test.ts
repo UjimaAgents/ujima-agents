@@ -3,7 +3,7 @@ import type { MemoryEntry } from '@ujima/shared';
 import { buildWorkspaceStateBlock } from './workspace-state.js';
 
 describe('buildWorkspaceStateBlock', () => {
-  it('prefers memory linked to the active thread', () => {
+  it('prefers memory linked to the active thread', async () => {
     const entry = (
       key: string,
       createdAt: string,
@@ -25,7 +25,7 @@ describe('buildWorkspaceStateBlock', () => {
       ],
     };
 
-    const block = buildWorkspaceStateBlock({
+    const block = await buildWorkspaceStateBlock({
       organizationId: 'org-1',
       memberId: 'agent-1',
       threadId: 'thread-1',

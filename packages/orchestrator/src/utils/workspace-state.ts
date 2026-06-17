@@ -26,7 +26,7 @@ export interface BuildWorkspaceStateInput {
   repo: ApiRepository;
 }
 
-export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): string | null {
+export async function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): Promise<string | null> {
   const sections: string[] = [];
 
   // --- Recent artifacts (write/edit tool calls in the lookback) -----
@@ -85,7 +85,7 @@ export function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput): strin
 
   // --- Persistent memory (Bet 5) ----------------------------------
   try {
-    const entries = recallMemoryEntries(input.repo, {
+    const entries = await recallMemoryEntries(input.repo, {
       organizationId: input.organizationId,
       memberId: input.memberId,
       limit: 20,

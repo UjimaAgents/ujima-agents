@@ -565,7 +565,7 @@ export interface ApiRepository extends ConversationRepository {
   // Bet 5 — memory_entries KV. All optional because the in-memory
   // test repos don't implement them; services degrade gracefully
   // when absent.
-  upsertMemoryEntry?(entry: MemoryEntry): MemoryEntry;
+  upsertMemoryEntry?(entry: MemoryEntry): Promise<MemoryEntry> | MemoryEntry;
   recallMemoryEntries?(input: {
     organizationId: string;
     memberId?: string;
@@ -574,12 +574,12 @@ export interface ApiRepository extends ConversationRepository {
     query?: string;
     limit?: number;
     touch?: boolean;
-  }): MemoryEntry[];
+  }): Promise<MemoryEntry[]> | MemoryEntry[];
   deleteMemoryEntry?(
     organizationId: string,
     memberId: string | null,
     key: string,
-  ): boolean;
+  ): Promise<boolean> | boolean;
   deleteExpiredMemoryEntries?(nowIso: string): number;
 
   // Bet 4 — workspace files FTS index.
@@ -696,11 +696,11 @@ export interface ApiRepository extends ConversationRepository {
   revokeAuthSession(sessionId: string, revokedAt?: string): AuthSession | null;
   touchAuthSession(sessionId: string, lastSeenAt?: string): AuthSession | null;
   getBootstrapSnapshot(organizationId?: string): BootstrapSnapshot;
-  saveMemory(entry: MemoryEntry): MemoryEntry;
+  saveMemory(entry: MemoryEntry): Promise<MemoryEntry> | MemoryEntry;
   getMemory(organizationId: string, memoryId: string): MemoryEntry | null;
   listMemories(organizationId: string, memberId: string): MemoryEntry[];
   listOrgMemories(organizationId: string): MemoryEntry[];
-  deleteMemory(organizationId: string, memoryId: string): void;
+  deleteMemory(organizationId: string, memoryId: string): Promise<void> | void;
   listGovernanceRules?(organizationId: string, state?: string): GovernanceRuleRow[];
   deleteGovernanceRule?(
     organizationId: string,

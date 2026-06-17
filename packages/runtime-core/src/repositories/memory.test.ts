@@ -28,9 +28,9 @@ describe('memory entries repository', () => {
     });
   }
 
-  it('creates and retrieves a memory entry', () => {
+  it('creates and retrieves a memory entry', async () => {
     const memory = baseMemory({ id: 'mem-1', key: 'quinn.lang', content: 'Quinn knows python.' });
-    repo.upsertMemoryEntry(memory);
+    await repo.upsertMemoryEntry(memory);
 
     const stored = repo.getMemory(organizationId, 'mem-1');
     expect(stored).not.toBeNull();
@@ -38,11 +38,11 @@ describe('memory entries repository', () => {
     expect(stored?.key).toBe('quinn.lang');
   });
 
-  it('deletes a memory entry', () => {
-    repo.upsertMemoryEntry(baseMemory({ id: 'd1', key: 'temp.note' }));
-    expect(repo.deleteMemoryEntry(organizationId, memberId, 'temp.note')).toBe(true);
+  it('deletes a memory entry', async () => {
+    await repo.upsertMemoryEntry(baseMemory({ id: 'd1', key: 'temp.note' }));
+    expect(await repo.deleteMemoryEntry(organizationId, memberId, 'temp.note')).toBe(true);
     expect(
-      repo.recallMemoryEntries({ organizationId, memberId, keyPrefix: 'temp.', limit: 5 }),
+      await repo.recallMemoryEntries({ organizationId, memberId, keyPrefix: 'temp.', limit: 5 }),
     ).toHaveLength(0);
   });
 });
