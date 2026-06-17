@@ -155,11 +155,6 @@ short and readable.
 
 Test the connection, then assign the model to an agent the same way as above.
 
-> For a full **production self-host runbook** — single-box deployment with
-> Tailscale Serve for the UI and Tailscale Funnel for a public model URL —
-> see [`ujima_selfhost_runbook.md`](./ujima_selfhost_runbook.md) in the
-> repository root.
-
 ### Notes
 
 - Everything else (channels, approvals, workspace-bounded execution, MCP

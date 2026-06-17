@@ -98,6 +98,7 @@ function ProviderFormModalActive({
   const handleProviderChange = (next: string) => {
     setUiProvider(next);
     setApiKey("");
+    setBaseUrl("");
     setCodexConnected(false);
     // Reset auth mode when switching away from OpenAI
     if (!isOpenAIProvider(next)) setAuthMode("apikey");
@@ -106,6 +107,8 @@ function ProviderFormModalActive({
   const handleAuthModeChange = (mode: OpenAIAuthMode) => {
     setAuthMode(mode);
     setCodexConnected(false);
+    // Base URL is hidden under Codex auth; clear so it isn't persisted invisibly.
+    if (mode === "codex") setBaseUrl("");
   };
 
   return (

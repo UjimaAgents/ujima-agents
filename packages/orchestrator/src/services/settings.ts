@@ -343,6 +343,7 @@ export class SettingsService {
     const config = team.toJSON();
     if (config.providers[normalizedName]) {
       delete config.providers[normalizedName].authMode;
+      delete config.providers[normalizedName].baseUrl;
       const updated = AgentTeam(config);
       this.teamStore.setTeam(updated, organizationId);
       persistTeamConfig(this.repo, organizationId, updated);
