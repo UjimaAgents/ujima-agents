@@ -1,10 +1,12 @@
-import { readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Channel, Member, OrganizationChart, SkillInstall } from '@ujima/shared';
 import {
   buildCollaborationProtocol,
   buildSharedAgentSystemPrompt,
   type ConversationKind,
   buildEnvironmentContext,
+  shouldSkipWorkspaceTreeDirectory,
 } from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
 import type { AgentConfig, RoleConfig } from './schemas.js';
@@ -285,6 +287,11 @@ export function buildAgentSystemPrompt(
    * text and threads it through.
    */
   availableConnectors?: string,
+  /**
+   * Optional active language model descriptor, used to select
+   * model-specific rules files (e.g. `claude.md`, `gemini.md`).
+   */
+  model?: { provider?: string; modelId?: string } | string | any,
 ): string {
   const sortedMembers = [...members].sort((left, right) =>
     left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
@@ -309,6 +316,44 @@ export function buildAgentSystemPrompt(
         }))
     : undefined;
   const personality = getPersonalityPreset(agent.personalityName);
+
+  // Load rules files if they exist at any level in workspaceRoot (up to depth 5)
+  const agentsRules = findWorkspaceRuleFile(workspaceRoot, ['Agents.md', 'agents.md']);
+  const cursorRules = findWorkspaceRuleFile(workspaceRoot, ['cursor.md', 'Cursor.md']);
+
+  let providerName = '';
+  let modelId = '';
+  if (typeof model === 'string') {
+    providerName = model.split('/')[0] || '';
+    modelId = model.split('/')[1] || '';
+  } else if (model && typeof model === 'object') {
+    providerName = model.provider || '';
+    modelId = model.modelId || '';
+  }
+  providerName = providerName.toLowerCase();
+  modelId = modelId.toLowerCase();
+  const isClaude = providerName === 'anthropic' || modelId.includes('claude');
+  const isGemini = providerName === 'google' || modelId.includes('gemini');
+
+  let modelRules: string | undefined = undefined;
+  if (isClaude) {
+    modelRules = findWorkspaceRuleFile(workspaceRoot, ['claude.md', 'Claude.md']);
+  } else if (isGemini) {
+    modelRules = findWorkspaceRuleFile(workspaceRoot, ['gemini.md', 'Gemini.md']);
+  }
+
+  const rulesBlocks: string[] = [];
+  if (agentsRules) {
+    rulesBlocks.push(`### Agent Guidelines (Agents.md)\n${agentsRules}`);
+  }
+  if (cursorRules) {
+    rulesBlocks.push(`### Editor Guidelines (cursor.md)\n${cursorRules}`);
+  }
+  if (modelRules) {
+    const fileName = isClaude ? 'claude.md' : 'gemini.md';
+    rulesBlocks.push(`### Model-Specific Guidelines (${fileName})\n${modelRules}`);
+  }
+  const rulesBlock = rulesBlocks.length > 0 ? ['## Workspace Rules', ...rulesBlocks].join('\n\n') : '';
 
   return [
     `You are ${currentMemberName}, an employee of ${organizationName}, acting as ${role.title} (${role.name}).`,
@@ -353,7 +398,67 @@ export function buildAgentSystemPrompt(
     formatAvailableConnectors(availableConnectors),
     formatMissingCapabilities(sortedToolIds),
     `Available channels: ${listChannels(role)}`,
+    rulesBlock ? `\n${rulesBlock}` : '',
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function findWorkspaceRuleFile(
+  currentDir: string,
+  filenames: string[],
+  maxDepth = 5
+): string | undefined {
+  // 1. Check current directory first
+  for (const filename of filenames) {
+    const filePath = join(currentDir, filename);
+    if (existsSync(filePath)) {
+      try {
+        const stat = statSync(filePath);
+        if (!stat.isDirectory()) {
+          return readFileSync(filePath, 'utf8');
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+  }
+
+  // Check .agents directory in currentDir
+  const agentsDir = join(currentDir, '.agents');
+  if (existsSync(agentsDir)) {
+    try {
+      const stat = statSync(agentsDir);
+      if (stat.isDirectory()) {
+        for (const filename of filenames) {
+          const filePath = join(agentsDir, filename);
+          if (existsSync(filePath)) {
+            const fileStat = statSync(filePath);
+            if (!fileStat.isDirectory()) {
+              return readFileSync(filePath, 'utf8');
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  // 2. Recursive search
+  if (maxDepth <= 0) return undefined;
+
+  try {
+    const entries = readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !shouldSkipWorkspaceTreeDirectory(entry.name) && !entry.name.startsWith('.')) {
+        const result = findWorkspaceRuleFile(join(currentDir, entry.name), filenames, maxDepth - 1);
+        if (result) return result;
+      }
+    }
+  } catch (err) {
+    // ignore
+  }
+
+  return undefined;
 }

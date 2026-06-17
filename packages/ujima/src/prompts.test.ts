@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtemp } from 'node:fs/promises';
 import { buildAgentSystemPrompt, createAgent, defineRole, getPersonalityPreset } from './index.js';
 
 describe('buildAgentSystemPrompt', () => {
@@ -161,5 +160,82 @@ describe('buildAgentSystemPrompt', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reads and injects workspace rules files (Agents.md, cursor.md, model-specific files) recursively', async () => {
+    root = await mkdtemp(join(tmpdir(), 'ujima-prompt-rules-'));
+    
+    // Create nested directory structure
+    const nestedDir = join(root, 'src', 'nested');
+    await mkdir(join(root, '.agents'), { recursive: true });
+    await mkdir(nestedDir, { recursive: true });
+    await mkdir(join(nestedDir, '.agents'), { recursive: true });
+
+    // Write mock rules files at different levels
+    await writeFile(join(root, 'Agents.md'), 'General agent behavior rules.');
+    await writeFile(join(nestedDir, 'cursor.md'), 'Cursor specific editor instructions.');
+    await writeFile(join(nestedDir, '.agents', 'claude.md'), 'Claude-only guidelines.');
+    await writeFile(join(root, '.agents', 'gemini.md'), 'Gemini-only guidelines.');
+
+    const agent = createAgent('frontend-alice', 'frontend-engineer', 'thoughtful');
+    const role = defineRole({
+      name: 'frontend-engineer',
+      title: 'Frontend Engineer',
+      instructions: 'Build the frontend.',
+    });
+
+    // Test with Claude model
+    const systemClaude = buildAgentSystemPrompt(
+      root,
+      'Ujima Demo',
+      'frontend-alice',
+      'Frontend Alice',
+      'thread-1',
+      agent,
+      role,
+      [] as never,
+      [] as never,
+      [] as never,
+      { reportsTo: {} },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { provider: 'anthropic', modelId: 'claude-3-5-sonnet' }
+    );
+
+    expect(systemClaude).toContain('## Workspace Rules');
+    expect(systemClaude).toContain('### Agent Guidelines (Agents.md)\nGeneral agent behavior rules.');
+    expect(systemClaude).toContain('### Editor Guidelines (cursor.md)\nCursor specific editor instructions.');
+    expect(systemClaude).toContain('### Model-Specific Guidelines (claude.md)\nClaude-only guidelines.');
+    expect(systemClaude).not.toContain('gemini.md');
+
+    // Test with Gemini model
+    const systemGemini = buildAgentSystemPrompt(
+      root,
+      'Ujima Demo',
+      'frontend-alice',
+      'Frontend Alice',
+      'thread-1',
+      agent,
+      role,
+      [] as never,
+      [] as never,
+      [] as never,
+      { reportsTo: {} },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { provider: 'google', modelId: 'gemini-2.5-flash' }
+    );
+
+    expect(systemGemini).toContain('## Workspace Rules');
+    expect(systemGemini).toContain('### Agent Guidelines (Agents.md)\nGeneral agent behavior rules.');
+    expect(systemGemini).toContain('### Editor Guidelines (cursor.md)\nCursor specific editor instructions.');
+    expect(systemGemini).toContain('### Model-Specific Guidelines (gemini.md)\nGemini-only guidelines.');
+    expect(systemGemini).not.toContain('claude.md');
   });
 });

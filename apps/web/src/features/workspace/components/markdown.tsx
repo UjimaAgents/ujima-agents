@@ -99,6 +99,7 @@ function createRenderer(mentionNames: string[]) {
 }
 
 export function highlightFileReferences(text: string): string {
+  ASSET_REF_PATTERN.lastIndex = 0;
   return text.replace(ASSET_REF_PATTERN, (_match, kind, encodedPath) => {
     const path = decodeAssetReference(encodedPath);
     const icon = ASSET_REFERENCE_ICONS[kind] ?? '';
@@ -110,8 +111,7 @@ export function highlightFileReferences(text: string): string {
 }
 
 export function highlightMentions(text: string, mentionNames: string[]): string {
-  if (!mentionNames.length) return h(text);
-  const uniqueNames = [...new Set(mentionNames.filter((name) => name.length > 0))].sort(
+  const uniqueNames = [...new Set(["all", ...mentionNames].filter((name) => name.length > 0))].sort(
     (a, b) => b.length - a.length,
   );
   if (!uniqueNames.length) return h(text);
@@ -131,7 +131,7 @@ export function highlightMentions(text: string, mentionNames: string[]): string 
     const mentionEnd = mentionStart + 1 + name.length;
     result += h(text.slice(cursor, matchStart));
     result += h(prefix);
-    result += `<span class="font-semibold text-foreground">@${h(name)}</span>`;
+    result += `<span class="inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">@${h(name)}</span>`;
     cursor = mentionEnd;
   }
   result += h(text.slice(cursor));

@@ -2,7 +2,7 @@ import type { MemoryEntry } from '@ujima/shared';
 import type { ApiRepository } from '../services/repository-reader.js';
 
 type MemoryRepo = Pick<ApiRepository, 'listMemories' | 'listOrgMemories' | 'saveMemory' | 'deleteMemory'> & {
-  upsertMemoryEntry?: (entry: MemoryEntry) => MemoryEntry;
+  upsertMemoryEntry?: (entry: MemoryEntry) => Promise<MemoryEntry> | MemoryEntry;
   recallMemoryEntries?: (input: {
     organizationId: string;
     memberId?: string;
@@ -11,19 +11,19 @@ type MemoryRepo = Pick<ApiRepository, 'listMemories' | 'listOrgMemories' | 'save
     query?: string;
     limit?: number;
     touch?: boolean;
-  }) => MemoryEntry[];
+  }) => Promise<MemoryEntry[]> | MemoryEntry[];
   deleteMemoryEntry?: (
     organizationId: string,
     memberId: string | null,
     key: string,
-  ) => boolean;
+  ) => Promise<boolean> | boolean;
 };
 
-export function writeMemoryEntry(repo: MemoryRepo, entry: MemoryEntry): MemoryEntry {
-  return repo.upsertMemoryEntry ? repo.upsertMemoryEntry(entry) : repo.saveMemory(entry);
+export async function writeMemoryEntry(repo: MemoryRepo, entry: MemoryEntry): Promise<MemoryEntry> {
+  return repo.upsertMemoryEntry ? await repo.upsertMemoryEntry(entry) : await repo.saveMemory(entry);
 }
 
-export function recallMemoryEntries(repo: MemoryRepo, input: {
+export async function recallMemoryEntries(repo: MemoryRepo, input: {
   organizationId: string;
   memberId?: string;
   kind?: MemoryEntry['kind'];
@@ -31,9 +31,9 @@ export function recallMemoryEntries(repo: MemoryRepo, input: {
   query?: string;
   limit?: number;
   touch?: boolean;
-}): MemoryEntry[] {
+}): Promise<MemoryEntry[]> {
   if (repo.recallMemoryEntries) {
-    return repo.recallMemoryEntries(input);
+    return await repo.recallMemoryEntries(input);
   }
 
   const nowIso = new Date().toISOString();
@@ -61,9 +61,9 @@ export function recallMemoryEntries(repo: MemoryRepo, input: {
     for (const entry of filtered) {
       const touched = { ...entry, lastRecalledAt: nowIso };
       if (repo.upsertMemoryEntry) {
-        repo.upsertMemoryEntry(touched);
+        await repo.upsertMemoryEntry(touched);
       } else {
-        repo.saveMemory(touched);
+        await repo.saveMemory(touched);
       }
     }
   }
@@ -71,15 +71,15 @@ export function recallMemoryEntries(repo: MemoryRepo, input: {
   return filtered;
 }
 
-export function forgetMemoryEntry(
+export async function forgetMemoryEntry(
   repo: MemoryRepo,
   organizationId: string,
   memberId: string,
   key: string,
   scope: 'self' | 'org',
-): boolean {
+): Promise<boolean> {
   if (repo.deleteMemoryEntry) {
-    return repo.deleteMemoryEntry(organizationId, scope === 'org' ? null : memberId, key);
+    return await repo.deleteMemoryEntry(organizationId, scope === 'org' ? null : memberId, key);
   }
 
   const entries = scope === 'org'
@@ -88,7 +88,7 @@ export function forgetMemoryEntry(
   let removed = false;
   for (const entry of entries) {
     if (entry.key === key && (scope === 'org' ? entry.memberId === undefined : entry.memberId === memberId)) {
-      repo.deleteMemory(organizationId, entry.id);
+      await repo.deleteMemory(organizationId, entry.id);
       removed = true;
     }
   }

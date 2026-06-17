@@ -4,6 +4,8 @@ import { MemoryEntryKindSchema, MemoryEntrySchema } from '@ujima/shared';
 import type { OrchestratorTool } from './types.js';
 import { forgetMemoryEntry, recallMemoryEntries, writeMemoryEntry } from '../utils/memory.js';
 
+const MEMORY_UNAVAILABLE_MESSAGE = 'memory is not available';
+
 /**
  * Bet 5 — durable agent memory.
  *
@@ -57,7 +59,7 @@ export const memoryWriteTool: OrchestratorTool<typeof MemoryWriteSchema> = {
     bypassPermission: true,
     input: args,
   }),
-  execute: ({ invocation, repo }) => {
+  execute: async ({ invocation, repo }) => {
     const input = invocation.input as z.infer<typeof MemoryWriteSchema>;
     const expiresAt = input.expires_in_days
       ? new Date(Date.now() + input.expires_in_days * 24 * 60 * 60 * 1000).toISOString()
@@ -79,14 +81,21 @@ export const memoryWriteTool: OrchestratorTool<typeof MemoryWriteSchema> = {
       lastRecalledAt: undefined,
       createdAt: now,
     });
-    const saved = writeMemoryEntry(repo, entry);
-    return {
-      ok: true,
-      key: saved.key,
-      kind: saved.kind,
-      scope: input.scope,
-      expiresAt: saved.expiresAt,
-    };
+    try {
+      const saved = await writeMemoryEntry(repo, entry);
+      return {
+        ok: true,
+        key: saved.key,
+        kind: saved.kind,
+        scope: input.scope,
+        expiresAt: saved.expiresAt,
+      };
+    } catch (error) {
+      if ((error as Error).message === MEMORY_UNAVAILABLE_MESSAGE) {
+        return { ok: false, error: MEMORY_UNAVAILABLE_MESSAGE };
+      }
+      throw error;
+    }
   },
 };
 
@@ -99,27 +108,34 @@ export const memoryRecallTool: OrchestratorTool<typeof MemoryRecallSchema> = {
     bypassPermission: true,
     input: args,
   }),
-  execute: ({ invocation, repo }) => {
+  execute: async ({ invocation, repo }) => {
     const input = invocation.input as z.infer<typeof MemoryRecallSchema>;
-    const entries = recallMemoryEntries(repo, {
-      organizationId: invocation.organizationId,
-      memberId: invocation.memberId,
-      kind: input.kind,
-      keyPrefix: input.key_prefix,
-      query: input.query,
-      limit: input.limit,
-      touch: true,
-    });
-    return {
-      entries: entries.map((e) => ({
-        key: e.key,
-        value: e.content,
-        kind: e.kind,
-        scope: e.memberId ? 'self' : 'org',
-        expiresAt: e.expiresAt,
-        createdAt: e.createdAt,
-      })),
-    };
+    try {
+      const entries = await recallMemoryEntries(repo, {
+        organizationId: invocation.organizationId,
+        memberId: invocation.memberId,
+        kind: input.kind,
+        keyPrefix: input.key_prefix,
+        query: input.query,
+        limit: input.limit,
+        touch: true,
+      });
+      return {
+        entries: entries.map((e) => ({
+          key: e.key,
+          value: e.content,
+          kind: e.kind,
+          scope: e.memberId ? 'self' : 'org',
+          expiresAt: e.expiresAt,
+          createdAt: e.createdAt,
+        })),
+      };
+    } catch (error) {
+      if ((error as Error).message === MEMORY_UNAVAILABLE_MESSAGE) {
+        return { ok: false, error: MEMORY_UNAVAILABLE_MESSAGE, entries: [] };
+      }
+      throw error;
+    }
   },
 };
 
@@ -132,15 +148,22 @@ export const memoryForgetTool: OrchestratorTool<typeof MemoryForgetSchema> = {
     bypassPermission: true,
     input: args,
   }),
-  execute: ({ invocation, repo }) => {
+  execute: async ({ invocation, repo }) => {
     const input = invocation.input as z.infer<typeof MemoryForgetSchema>;
-    const removed = forgetMemoryEntry(
-      repo,
-      invocation.organizationId,
-      invocation.memberId,
-      input.key,
-      input.scope,
-    );
-    return { ok: removed, key: input.key };
+    try {
+      const removed = await forgetMemoryEntry(
+        repo,
+        invocation.organizationId,
+        invocation.memberId,
+        input.key,
+        input.scope,
+      );
+      return { ok: removed, key: input.key };
+    } catch (error) {
+      if ((error as Error).message === MEMORY_UNAVAILABLE_MESSAGE) {
+        return { ok: false, error: MEMORY_UNAVAILABLE_MESSAGE, key: input.key };
+      }
+      throw error;
+    }
   },
 };

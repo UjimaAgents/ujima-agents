@@ -23,6 +23,8 @@
     "@ujima/orchestrator": "workspace:*",
     "@ujima/permissions": "workspace:*",
     "@ujima/shared": "workspace:*",
-    "ai": "^6.0.174"
+    "ai": "^6.0.174",
+    "chromadb": "^3.0.0",
+    "@chroma-core/default-embed": "*"
   }
 }

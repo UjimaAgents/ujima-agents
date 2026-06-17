@@ -238,6 +238,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       supervisorWakePolicy.conversationKind,
       availableConnectors,
+      model,
     );
     const systemPromptSuffix = this.resolveSystemPromptSuffix({
       organizationId: input.organizationId,
@@ -264,7 +265,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     if (threadStateBlock) {
       contextMessages.push({ role: 'user', content: threadStateBlock });
     }
-    const workspaceStateBlock = buildWorkspaceStateBlock({
+    const workspaceStateBlock = await buildWorkspaceStateBlock({
       organizationId: input.organizationId,
       memberId: member.id,
       channelId: session.channelId,

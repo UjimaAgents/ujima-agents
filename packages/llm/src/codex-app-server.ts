@@ -8,12 +8,35 @@ import type {
   LanguageModelV3FinishReason,
   LanguageModelV3FunctionTool,
   LanguageModelV3GenerateResult,
+  LanguageModelV3Message,
   LanguageModelV3Prompt,
   LanguageModelV3StreamPart,
+  LanguageModelV3ToolResultPart,
   LanguageModelV3Usage,
 } from '@ai-sdk/provider';
 
 type SpawnCodexAppServer = typeof spawn;
+const CODEX_APP_SERVER_ARGS = [
+  'app-server',
+  '--stdio',
+  '--disable',
+  'apps',
+  '--disable',
+  'plugins',
+  '--disable',
+  'plugin_sharing',
+  '--disable',
+  'browser_use',
+  '--disable',
+  'browser_use_external',
+  '--disable',
+  'computer_use',
+  '--disable',
+  'image_generation',
+  '--disable',
+  'memories',
+];
+
 let spawnCodexAppServer: SpawnCodexAppServer = spawn;
 let sharedRpc: Promise<CodexRpc> | undefined;
 
@@ -46,6 +69,11 @@ interface CodexStreamHandlers {
 }
 
 type CodexRpc = ReturnType<typeof connectCodexAppServer>;
+type CodexUserInput = { type: 'text'; text: string; text_elements: [] };
+type CodexResponseItem =
+  | { type: 'message'; role: string; content: Array<{ type: 'input_text' | 'output_text'; text: string }> }
+  | { type: 'function_call'; name: string; arguments: string; call_id: string }
+  | { type: 'function_call_output'; call_id: string; output: string };
 
 export function setCodexAppServerSpawn(spawnImpl: SpawnCodexAppServer | undefined): void {
   void sharedRpc?.then((rpc) => rpc.close()).catch(() => undefined);
@@ -108,12 +136,14 @@ async function generateWithCodex(
   const rpc = await rpcPromise;
   const tools = functionTools(callOptions.tools);
   const toolNames = new Map(tools.map((tool) => [codexToolName(tool.name), tool.name]));
+  const prompt = splitPrompt(callOptions.prompt);
   const thread = await rpc.request<{ thread: { id: string } }>('thread/start', {
     model: options.modelId,
     cwd: options.cwd ?? process.cwd(),
     ephemeral: true,
-    baseInstructions: 'Follow the supplied instructions and use available Ujima tools when needed.',
-    developerInstructions: promptToText(callOptions.prompt.slice(0, -1)),
+    serviceName: 'ujima',
+    baseInstructions: prompt.baseInstructions,
+    developerInstructions: 'Use available Ujima dynamic tools when an action is needed.',
     dynamicTools: tools.map((tool) => ({
       name: codexToolName(tool.name),
       description: tool.description ?? '',
@@ -121,20 +151,23 @@ async function generateWithCodex(
     })),
   });
   const threadId = thread.thread.id;
-  const prompt = promptToText(callOptions.prompt.slice(-1));
+  if (prompt.historyItems.length > 0) {
+    await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
+  }
   const state = {
     text: '',
     toolCalls: [] as Extract<LanguageModelV3Content, { type: 'tool-call' }>[],
     done: false,
     responseId: undefined as string | undefined,
     error: undefined as Error | undefined,
+    usage: undefined as LanguageModelV3Usage | undefined,
   };
   const offRequest = rpc.onRequest(async (msg) => {
     if (msg.method !== 'item/tool/call') return;
     const params = msg.params as { threadId?: string; callId?: string; tool?: string; arguments?: unknown };
     if (params.threadId !== threadId) return;
     if (!params.callId || !params.tool) {
-      rpc.respond(msg.id, { contentItems: [{ type: 'inputText', text: 'Invalid tool call' }], success: false });
+      rpc.respond(msg.id, { contentItems: [{ type: 'input_text', text: 'Invalid tool call' }], success: false });
       return;
     }
     const call = {
@@ -146,7 +179,7 @@ async function generateWithCodex(
     state.toolCalls.push(call);
     handlers?.onToolCall(call);
     rpc.respond(msg.id, {
-      contentItems: [{ type: 'inputText', text: 'Tool call delegated to Ujima.' }],
+      contentItems: [{ type: 'input_text', text: 'Tool call delegated to Ujima.' }],
       success: true,
     });
     if (state.responseId) {
@@ -178,11 +211,27 @@ async function generateWithCodex(
       state.done = true;
       state.responseId = turn?.id;
     }
+    if (msg.method === 'thread/tokenUsage/updated') {
+      const last = (msg.params as {
+        threadId?: string;
+        tokenUsage?: {
+          last?: {
+            inputTokens?: number;
+            cachedInputTokens?: number;
+            outputTokens?: number;
+            reasoningOutputTokens?: number;
+          };
+        };
+      } | undefined)?.tokenUsage?.last;
+      if (last && (!params?.threadId || params.threadId === threadId)) {
+        state.usage = usageFromCodex(last);
+      }
+    }
   });
   try {
     const started = await rpc.request<{ turn: { id: string } }>('turn/start', {
       threadId,
-      input: [{ type: 'text', text: prompt }],
+      input: prompt.input,
       cwd: options.cwd ?? process.cwd(),
       effort: codexReasoningEffort(options.reasoningEffort),
     });
@@ -199,7 +248,7 @@ async function generateWithCodex(
       finishReason: state.toolCalls.length > 0
         ? { unified: 'tool-calls', raw: 'tool-calls' }
         : finishReason(state.text),
-      usage: emptyUsage(),
+      usage: state.usage ?? emptyUsage(),
       response: state.responseId ? { id: state.responseId } : undefined,
       warnings: [],
     };
@@ -210,7 +259,7 @@ async function generateWithCodex(
 }
 
 async function createCodexRpc(options: CodexAppServerModelOptions): Promise<CodexRpc> {
-  const child = spawnCodexAppServer('codex', ['app-server', '--stdio'], {
+  const child = spawnCodexAppServer('codex', CODEX_APP_SERVER_ARGS, {
     cwd: options.cwd ?? process.cwd(),
     env: process.env,
     stdio: ['pipe', 'pipe', 'inherit'],
@@ -239,6 +288,7 @@ function functionTools(tools: LanguageModelV3CallOptions['tools']): LanguageMode
 function codexReasoningEffort(
   effort: CodexAppServerModelOptions['reasoningEffort'],
 ): 'none' | 'low' | 'medium' | 'high' | 'xhigh' | undefined {
+  if (!effort) return 'none';
   return effort === 'extra_high' ? 'xhigh' : effort;
 }
 
@@ -250,24 +300,138 @@ function finishReason(text: string): LanguageModelV3FinishReason {
   return { unified: text ? 'stop' : 'other', raw: text ? 'completed' : undefined };
 }
 
+function splitPrompt(prompt: LanguageModelV3Prompt): {
+  baseInstructions: string;
+  historyItems: CodexResponseItem[];
+  input: CodexUserInput[];
+} {
+  const system = prompt.filter((message) => message.role === 'system');
+  const messages = prompt.filter((message) => message.role !== 'system');
+  const current = messages.at(-1);
+  const history = current ? messages.slice(0, -1) : [];
+  const historyItems = promptToResponseItems(history);
+  let input = current ? messageToInput(current) : [];
+  if (current?.role === 'tool') {
+    historyItems.push(...promptToResponseItems([current]));
+    input = textInput('Continue.');
+  }
+  return {
+    baseInstructions: system.map((message) => message.content).join('\n\n') ||
+      'Follow the supplied instructions and use available Ujima tools when needed.',
+    historyItems,
+    input: input.length > 0 ? input : textInput('Continue.'),
+  };
+}
+
+function promptToResponseItems(prompt: LanguageModelV3Prompt): CodexResponseItem[] {
+  return prompt.flatMap((message) => {
+    if (message.role === 'system') return [];
+    if (message.role === 'user') {
+      return textResponseItem('user', contentText(message));
+    }
+    if (message.role === 'assistant') {
+      const items: CodexResponseItem[] = [];
+      const text = contentText(message, ['text', 'reasoning']);
+      if (text) items.push(...textResponseItem('assistant', text));
+      for (const part of message.content) {
+        if (part.type === 'tool-call') {
+          items.push({
+            type: 'function_call',
+            name: codexToolName(part.toolName),
+            arguments: stringifyJson(part.input ?? {}),
+            call_id: part.toolCallId,
+          });
+        }
+        if (part.type === 'tool-result') {
+          items.push({
+            type: 'function_call_output',
+            call_id: part.toolCallId,
+            output: toolResultText(part.output),
+          });
+        }
+      }
+      return items;
+    }
+    return message.content.flatMap((part) =>
+      part.type === 'tool-result'
+        ? [{ type: 'function_call_output' as const, call_id: part.toolCallId, output: toolResultText(part.output) }]
+        : [],
+    );
+  });
+}
+
+function textResponseItem(role: string, text: string): CodexResponseItem[] {
+  return text ? [{ type: 'message', role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }] }] : [];
+}
+
+function messageToInput(message: LanguageModelV3Message): CodexUserInput[] {
+  const text = contentText(message);
+  return text ? textInput(text) : [];
+}
+
+function textInput(text: string): CodexUserInput[] {
+  return [{ type: 'text', text, text_elements: [] }];
+}
+
+function contentText(message: LanguageModelV3Message, allowed = ['text']): string {
+  if (message.role === 'system') return message.content;
+  return message.content
+    .flatMap((part) => {
+      if (allowed.includes(part.type) && 'text' in part && typeof part.text === 'string') return [part.text];
+      return [];
+    })
+    .join('\n');
+}
+
+function toolResultText(output: LanguageModelV3ToolResultPart['output']): string {
+  if (output.type === 'text' || output.type === 'error-text') return output.value;
+  if (output.type === 'json' || output.type === 'error-json') return stringifyJson(output.value);
+  if (output.type === 'execution-denied') return output.reason ?? 'Execution denied.';
+  if (output.type === 'content') {
+    return output.value.map((item) => item.type === 'text' ? item.text : '').filter(Boolean).join('\n');
+  }
+  return stringifyJson(output);
+}
+
+function stringifyJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function usageFromCodex(last: {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+}): LanguageModelV3Usage {
+  return {
+    inputTokens: {
+      total: last.inputTokens,
+      noCache: last.inputTokens !== undefined && last.cachedInputTokens !== undefined
+        ? Math.max(last.inputTokens - last.cachedInputTokens, 0)
+        : last.inputTokens,
+      cacheRead: last.cachedInputTokens,
+      cacheWrite: undefined,
+    },
+    outputTokens: {
+      total: last.outputTokens,
+      text: last.outputTokens !== undefined && last.reasoningOutputTokens !== undefined
+        ? Math.max(last.outputTokens - last.reasoningOutputTokens, 0)
+        : last.outputTokens,
+      reasoning: last.reasoningOutputTokens,
+    },
+    raw: last,
+  };
+}
+
 function emptyUsage(): LanguageModelV3Usage {
   return {
     inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
     outputTokens: { total: undefined, text: undefined, reasoning: undefined },
   };
-}
-
-function promptToText(prompt: LanguageModelV3Prompt): string {
-  return prompt.map((message) => {
-    const content = Array.isArray(message.content)
-      ? message.content.map((part) => {
-          if (part.type === 'text') return part.text;
-          if (part.type === 'reasoning') return part.text;
-          return JSON.stringify(part);
-        }).join('\n')
-      : String(message.content);
-    return `${message.role}: ${content}`;
-  }).join('\n\n');
 }
 
 function connectCodexAppServer(child: CodexChildProcess) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -25,6 +25,8 @@ import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { AttachmentSchema, type AttachmentCategory } from "@ujima/shared/browser";
 import {
   clampReasoningEffortForProvider,
+  ASSET_REF_PATTERN,
+  decodeAssetReference,
   getReasoningEffortsForProvider,
   type ReasoningEffort,
 } from "@ujima/shared/browser";
@@ -40,6 +42,8 @@ import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
 import { useComposerVoiceInput } from "./use-composer-voice-input";
 import { VoiceInputWaves } from "./voice-input-waves";
+
+
 
 const assetKinds = ["file", "folder", "mcp", "skill", "task", "culture"] as const;
 type AssetMentionKind = (typeof assetKinds)[number];
@@ -101,7 +105,6 @@ const BUILTIN_SLASH_COMMANDS: {
   },
 ];
 
-const MAX_COMPOSER_ROWS = 3;
 const SLASH_MENU_PREVIEW_COUNT = 5;
 function reasoningLabel(value: ReasoningEffort): string {
   return value === "extra_high" ? "Extra High" : value.charAt(0).toUpperCase() + value.slice(1);
@@ -199,6 +202,250 @@ function AssetSuggestionIcon({ kind }: { kind?: MentionSuggestion["kind"] }) {
   return <Icon className={`h-3.5 w-3.5 shrink-0 ${color}`} />;
 }
 
+interface AtomicTokenRange {
+  start: number;
+  end: number;
+}
+
+type ComposerPart =
+  | { type: "text"; start: number; end: number; text: string }
+  | {
+      type: "asset";
+      start: number;
+      end: number;
+      raw: string;
+      trailingSpace: boolean;
+      kind: AssetMentionKind;
+      label: string;
+    }
+  | {
+      type: "mention";
+      start: number;
+      end: number;
+      raw: string;
+      trailingSpace: boolean;
+      name: string;
+    };
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+const ASSET_ICON_SVG: Record<AssetMentionKind, string> = {
+  file: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-blue-500" style="display:inline-block;vertical-align:middle;"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+  folder: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-amber-500" style="display:inline-block;vertical-align:middle;"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+  mcp: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-emerald-500" style="display:inline-block;vertical-align:middle;"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
+  skill: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-purple-500" style="display:inline-block;vertical-align:middle;"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>',
+  task: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-rose-500" style="display:inline-block;vertical-align:middle;"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>',
+  culture: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-sky-500" style="display:inline-block;vertical-align:middle;"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>',
+};
+
+function renderPartsToHtml(parts: ComposerPart[]): string {
+  let html = "";
+  for (const part of parts) {
+    if (part.type === "text") {
+      html += escapeHtml(part.text);
+    } else if (part.type === "asset") {
+      const margin = part.trailingSpace ? " margin-right:0.25rem;" : "";
+      html += `<span contenteditable="false" data-composer-token data-raw="${escapeHtml(part.raw)}" data-start="${part.start}" data-end="${part.end}" class="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" style="user-select:all;${margin}">${ASSET_ICON_SVG[part.kind]}<span>${escapeHtml(part.label)}</span></span>\u200B`;
+    } else {
+      const margin = part.trailingSpace ? " margin-right:0.25rem;" : "";
+      html += `<span contenteditable="false" data-composer-token data-raw="${escapeHtml(part.raw)}" data-start="${part.start}" data-end="${part.end}" class="inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" style="user-select:all;${margin}">@${escapeHtml(part.name)}</span>\u200B`;
+    }
+  }
+  return html;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function memberMentionNames(suggestions: MentionSuggestion[]): string[] {
+  return [...new Set(["all", ...suggestions
+    .filter((item) => !item.kind || item.kind === "member")
+    .map((item) => item.name)
+    .filter(Boolean)])].sort((a, b) => b.length - a.length);
+}
+
+function memberMentionPattern(suggestions: MentionSuggestion[]): RegExp {
+  const names = memberMentionNames(suggestions);
+  return new RegExp(`(^|[^@\\w])@(${names.map(escapeRegex).join("|")})(?=\\s|[^\\w]|$)`, "g");
+}
+
+function composerParts(value: string, suggestions: MentionSuggestion[]): ComposerPart[] {
+  const tokens: Extract<ComposerPart, { type: "asset" | "mention" }>[] = [];
+  let match: RegExpExecArray | null;
+
+  ASSET_REF_PATTERN.lastIndex = 0;
+  while ((match = ASSET_REF_PATTERN.exec(value))) {
+    const kind = match[1] as AssetMentionKind | undefined;
+    const encodedPath = match[2];
+    if (!kind || !encodedPath) continue;
+    const rawEnd = match.index + match[0].length;
+    const trailingSpace = value[rawEnd] === " ";
+    const path = decodeAssetReference(encodedPath);
+    tokens.push({
+      type: "asset",
+      start: match.index,
+      end: rawEnd + (trailingSpace ? 1 : 0),
+      raw: value.slice(match.index, rawEnd + (trailingSpace ? 1 : 0)),
+      trailingSpace,
+      kind,
+      label: path.split("/").pop() || path,
+    });
+  }
+
+  const mentionPattern = memberMentionPattern(suggestions);
+  while ((match = mentionPattern.exec(value))) {
+    const prefix = match[1] ?? "";
+    const name = match[2] ?? "";
+    const start = match.index + prefix.length;
+    const rawEnd = start + name.length + 1;
+    const trailingSpace = value[rawEnd] === " ";
+    tokens.push({
+      type: "mention",
+      start,
+      end: rawEnd + (trailingSpace ? 1 : 0),
+      raw: value.slice(start, rawEnd + (trailingSpace ? 1 : 0)),
+      trailingSpace,
+      name,
+    });
+  }
+
+  tokens.sort((a, b) => a.start - b.start);
+  const parts: ComposerPart[] = [];
+  let cursor = 0;
+  for (const token of tokens) {
+    if (token.start < cursor) continue;
+    if (token.start > cursor) {
+      parts.push({ type: "text", start: cursor, end: token.start, text: value.slice(cursor, token.start) });
+    }
+    parts.push(token);
+    cursor = token.end;
+  }
+  if (cursor < value.length) {
+    parts.push({ type: "text", start: cursor, end: value.length, text: value.slice(cursor) });
+  }
+  return parts;
+}
+
+function atomicDeleteRange(
+  value: string,
+  start: number,
+  end: number,
+  key: string,
+  suggestions: MentionSuggestion[],
+): AtomicTokenRange | null {
+  if (key !== "Backspace" && key !== "Delete" && key !== "Clear") return null;
+  const ranges = composerParts(value, suggestions).filter((part) => part.type !== "text");
+  if (start !== end) {
+    const touched = ranges.filter((range) => start < range.end && end > range.start);
+    if (!touched.length) return null;
+    return {
+      start: Math.min(start, ...touched.map((range) => range.start)),
+      end: Math.max(end, ...touched.map((range) => range.end)),
+    };
+  }
+
+  if (key === "Backspace") {
+    return ranges.find((range) => start > range.start && start <= range.end) ?? null;
+  }
+  if (key === "Delete" || key === "Clear") {
+    return ranges.find((range) => start >= range.start && start < range.end) ?? null;
+  }
+  return null;
+}
+
+
+
+function rawLength(node: Node): number {
+  if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? "").replace(/\u200B/g, "").length;
+  if (!(node instanceof HTMLElement)) return 0;
+  if (node.dataset.raw !== undefined) return node.dataset.raw.length;
+  return Array.from(node.childNodes).reduce((sum, child) => sum + rawLength(child), 0);
+}
+
+function rawBefore(editor: HTMLElement, node: Node): number {
+  let total = 0;
+  let current: Node | null = node;
+  while (current && current !== editor) {
+    let sibling = current.previousSibling;
+    while (sibling) {
+      total += rawLength(sibling);
+      sibling = sibling.previousSibling;
+    }
+    current = current.parentNode;
+  }
+  return total;
+}
+
+function rawOffset(editor: HTMLElement, container: Node, offset: number): number {
+  if (container.nodeType === Node.TEXT_NODE) {
+    const textUpToOffset = (container.textContent ?? "").slice(0, offset).replace(/\u200B/g, "");
+    return rawBefore(editor, container) + textUpToOffset.length;
+  }
+  if (container instanceof HTMLElement && container.dataset.raw !== undefined) {
+    return rawBefore(editor, container) + (offset > 0 ? container.dataset.raw.length : 0);
+  }
+  return rawBefore(editor, container) + Array.from(container.childNodes)
+    .slice(0, offset)
+    .reduce((sum, child) => sum + rawLength(child), 0);
+}
+
+function editorSelection(editor: HTMLElement): { start: number; end: number } | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) return null;
+  return {
+    start: rawOffset(editor, range.startContainer, range.startOffset),
+    end: rawOffset(editor, range.endContainer, range.endOffset),
+  };
+}
+
+function boundaryForOffset(parent: Node, offset: number): { node: Node; offset: number } {
+  let remaining = offset;
+  const children = Array.from(parent.childNodes);
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    const length = rawLength(child);
+    if (remaining <= length) {
+      if (child.nodeType === Node.TEXT_NODE) return { node: child, offset: remaining };
+      if (child instanceof HTMLElement && child.dataset.raw !== undefined) {
+        return { node: parent, offset: remaining <= 0 ? index : index + 1 };
+      }
+      return boundaryForOffset(child, remaining);
+    }
+    remaining -= length;
+  }
+  return { node: parent, offset: children.length };
+}
+
+function placeEditorCaret(editor: HTMLElement, offset: number) {
+  const boundary = boundaryForOffset(editor, Math.max(0, offset));
+  const range = document.createRange();
+  range.setStart(boundary.node, boundary.offset);
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function readEditorRaw(editor: HTMLElement): string {
+  return Array.from(editor.childNodes)
+    .map((node) => {
+      if (node instanceof HTMLElement && node.dataset.raw !== undefined) return node.dataset.raw;
+      return node.textContent ?? "";
+    })
+    .join("")
+    .replace(/\u00a0/g, " ")
+    .replace(/\u200B/g, "");
+}
+
 async function loadWorkspaceAssetSuggestions(searchQuery: string): Promise<MentionSuggestion[]> {
   const url = searchQuery
     ? `/api/workspaces/search?q=${encodeURIComponent(searchQuery)}`
@@ -286,7 +533,7 @@ function ChatInputComponent({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef(content);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
@@ -316,6 +563,59 @@ function ChatInputComponent({
   });
   const stopVoiceListening = voice.stopListening;
 
+  const focusEditorAt = useCallback((offset: number) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    placeEditorCaret(editor, offset);
+  }, []);
+
+  const updateSelectionFromEditor = useCallback(() => {
+    const editor = editorRef.current;
+    const next = editor ? editorSelection(editor) : null;
+    if (next) setSelection(next);
+  }, []);
+
+  const selectionRef = useRef(selection);
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
+
+  const lastRenderedHtmlRef = useRef("");
+  const pendingCaretRef = useRef<number | null>(null);
+
+  // DOM-sync effect: rebuild innerHTML only when token structure changes
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const parts = composerParts(content, mentionSuggestions);
+    const nextHtml = renderPartsToHtml(parts);
+
+    // Only rebuild the DOM when the rendered HTML actually differs.
+    // During normal typing the browser handles its own text nodes;
+    // we only intervene for programmatic updates (inserts, deletes, pastes).
+    if (nextHtml !== lastRenderedHtmlRef.current) {
+      lastRenderedHtmlRef.current = nextHtml;
+      editor.innerHTML = nextHtml;
+
+      const caret = pendingCaretRef.current ?? content.length;
+      pendingCaretRef.current = null;
+      requestAnimationFrame(() => {
+        editor.focus();
+        placeEditorCaret(editor, caret);
+      });
+    } else if (pendingCaretRef.current !== null) {
+      // HTML didn't change but a programmatic action needs the caret placed
+      const caret = pendingCaretRef.current;
+      pendingCaretRef.current = null;
+      requestAnimationFrame(() => {
+        editor.focus();
+        placeEditorCaret(editor, caret);
+      });
+    }
+  }, [content, mentionSuggestions]);
+
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
@@ -332,18 +632,9 @@ function ChatInputComponent({
 
   useEffect(() => {
     if (replyTo && !readOnly) {
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => focusEditorAt(contentRef.current.length));
     }
-  }, [readOnly, replyTo]);
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 20;
-    const maxHeight = lineHeight * MAX_COMPOSER_ROWS;
-    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
-  }, [content]);
+  }, [focusEditorAt, readOnly, replyTo]);
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
@@ -698,13 +989,10 @@ function ChatInputComponent({
       : `@${suggestion.name} `;
     const next = `${before}${mentionValue}${after}`;
     const nextCaret = before.length + mentionValue.length;
+    pendingCaretRef.current = nextCaret;
     setContent(next);
     setSelection({ start: nextCaret, end: nextCaret });
     setActiveMentionIndex(0);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
-    });
   };
 
   const send = async () => {
@@ -741,9 +1029,7 @@ function ChatInputComponent({
       setContent("");
       setSelection({ start: 0, end: 0 });
       setClearConfirmation(false);
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-      });
+      requestAnimationFrame(() => focusEditorAt(0));
       return;
     }
     if (command.kind === "builtin" && command.command === "clear") {
@@ -1017,10 +1303,7 @@ function ChatInputComponent({
                   if (readOnly) return;
                   setContent((value) => (value.trim().length === 0 ? "/" : value));
                   setClearConfirmation(false);
-                  requestAnimationFrame(() => {
-                    textareaRef.current?.focus();
-                    textareaRef.current?.setSelectionRange(1, 1);
-                  });
+                  requestAnimationFrame(() => focusEditorAt(1));
                 }}
                 className="text-zinc-400 transition hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-zinc-300"
               >
@@ -1036,41 +1319,75 @@ function ChatInputComponent({
                 <Paperclip className="h-4 w-4" />
               </button>
             </div>
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              placeholder={composerPlaceholder}
-              value={content}
-              disabled={readOnly}
-              onChange={(event) => {
-                setContent(event.target.value);
-                setSelection({
-                  start: event.target.selectionStart ?? event.target.value.length,
-                  end: event.target.selectionEnd ?? event.target.value.length,
-                });
-                setActiveMentionIndex(0);
-              }}
-              onSelect={(event) => {
-                setSelection({
-                  start: event.currentTarget.selectionStart ?? 0,
-                  end: event.currentTarget.selectionEnd ?? 0,
-                });
-              }}
-              onClick={(event) => {
-                setSelection({
-                  start: event.currentTarget.selectionStart ?? 0,
-                  end: event.currentTarget.selectionEnd ?? 0,
-                });
-                setActiveMentionIndex(0);
-              }}
-              onKeyUp={(event) => {
-                setSelection({
-                  start: event.currentTarget.selectionStart ?? 0,
-                  end: event.currentTarget.selectionEnd ?? 0,
-                });
-              }}
-              onKeyDown={(event) => {
-                if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
+            <div className="relative min-h-6 min-w-0 flex-1">
+              {!content ? (
+                <span className="pointer-events-none absolute inset-0 text-sm leading-6 text-zinc-400">
+                  {composerPlaceholder}
+                </span>
+              ) : null}
+              <div
+                ref={editorRef}
+                role="textbox"
+                aria-multiline="true"
+                contentEditable={!readOnly}
+                suppressContentEditableWarning
+                className="relative z-10 max-h-[4.5rem] min-h-6 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent py-0 text-sm leading-6 text-zinc-900 caret-foreground outline-none [overflow-wrap:anywhere] dark:text-zinc-100"
+
+                onInput={(event) => {
+                  const editor = event.currentTarget;
+                  const next = readEditorRaw(editor);
+                  const nextSelection = editorSelection(editor) ?? { start: next.length, end: next.length };
+
+                  // Compute what the rendered HTML *would* be for this new text.
+                  // If it matches what we last wrote, the browser handled the
+                  // edit natively and we only need to sync React state — no
+                  // innerHTML rebuild needed (the DOM-sync useEffect will
+                  // see matching HTML and skip the write).
+                  const parts = composerParts(next, mentionSuggestions);
+                  const html = renderPartsToHtml(parts);
+                  lastRenderedHtmlRef.current = html;
+
+                  setContent(next);
+                  setSelection(nextSelection);
+                  setActiveMentionIndex(0);
+                }}
+                onPaste={(event) => {
+                  event.preventDefault();
+                  const liveSelection = editorSelection(event.currentTarget) ?? selection;
+                  const pasteText = event.clipboardData.getData("text/plain");
+                  const current = contentRef.current;
+                  const next = current.slice(0, liveSelection.start) + pasteText + current.slice(liveSelection.end);
+                  const nextCaret = liveSelection.start + pasteText.length;
+                  pendingCaretRef.current = nextCaret;
+                  setContent(next);
+                  setSelection({ start: nextCaret, end: nextCaret });
+                  setActiveMentionIndex(0);
+                }}
+                onSelect={updateSelectionFromEditor}
+                onClick={() => {
+                  updateSelectionFromEditor();
+                  setActiveMentionIndex(0);
+                }}
+                onKeyUp={updateSelectionFromEditor}
+                onKeyDown={(event) => {
+                  const liveSelection = editorSelection(event.currentTarget) ?? selection;
+                  const tokenDelete = atomicDeleteRange(
+                    content,
+                    liveSelection.start,
+                    liveSelection.end,
+                    event.key,
+                    mentionSuggestions,
+                  );
+                  if (tokenDelete) {
+                    event.preventDefault();
+                    const next = content.slice(0, tokenDelete.start) + content.slice(tokenDelete.end);
+                    pendingCaretRef.current = tokenDelete.start;
+                    setContent(next);
+                    setSelection({ start: tokenDelete.start, end: tokenDelete.start });
+                    setActiveMentionIndex(0);
+                    return;
+                  }
+                  if (exactSlashCommand && event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void runSlashCommand(exactSlashCommand);
                   return;
@@ -1100,6 +1417,7 @@ function ChatInputComponent({
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
+                    pendingCaretRef.current = 0;
                     setContent("");
                     return;
                   }
@@ -1138,9 +1456,9 @@ function ChatInputComponent({
                   event.preventDefault();
                   void submitComposer();
                 }
-              }}
-              className="min-h-5 min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-5 focus:outline-none"
-            />
+                }}
+              />
+            </div>
           {!readOnly && mentionMenuOpen ? (
             <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
               {mentionMenuSections.map((section, sectionIndex) => (

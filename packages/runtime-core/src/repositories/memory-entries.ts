@@ -1,6 +1,12 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { MemoryEntrySchema, type MemoryEntry, type MemoryEntryKind } from '@ujima/shared';
 import { optionalRowString, rowString } from './common.js';
+import {
+  deleteChromaMemory,
+  getChromaMemoriesByMetadata,
+  queryChromaMemories,
+  upsertChromaMemory,
+} from './chroma.js';
 
 type Row = Record<string, unknown>;
 
@@ -59,8 +65,9 @@ function rowToMemoryEntry(row: Row): MemoryEntry {
  * 027 enforces one row per (org, member, key) tuple, so this is a
  * safe write path for the `memory.write` tool.
  */
-export function upsertMemoryEntry(db: DbHandle, entry: MemoryEntry): MemoryEntry {
+export async function upsertMemoryEntry(db: DbHandle, entry: MemoryEntry): Promise<MemoryEntry> {
   const payload = MemoryEntrySchema.parse(entry);
+  await upsertChromaMemory(payload);
   db.prepare(
     `INSERT INTO memory_entries (
        id, organization_id, member_id, kind, key, content, metadata,
@@ -93,14 +100,12 @@ export function upsertMemoryEntry(db: DbHandle, entry: MemoryEntry): MemoryEntry
 }
 
 /**
- * Recall memory entries for an agent. `keyPrefix` does a prefix match
- * on the key; `query` runs a LIKE against content (cheap fallback for
- * non-FTS callers). Excludes expired entries. Ordered by
- * last_recalled_at DESC then created_at DESC so frequently-touched
- * memories stay hot. Touches `last_recalled_at` on read so the
- * surface order in the next wake reflects what the agent uses.
+ * Recall memory entries for an agent. Chroma selects candidate ids;
+ * SQLite stores row metadata and content. Excludes expired entries.
+ * Touches `last_recalled_at` on read so the surface order in the next
+ * wake reflects what the agent uses.
  */
-export function recallMemoryEntries(
+export async function recallMemoryEntries(
   db: DbHandle,
   input: {
     organizationId: string;
@@ -111,38 +116,38 @@ export function recallMemoryEntries(
     limit?: number;
     touch?: boolean;
   },
-): MemoryEntry[] {
+): Promise<MemoryEntry[]> {
   const now = new Date().toISOString();
   const limit = input.limit ?? 20;
-  const params: (string | number)[] = [input.organizationId, now];
-  let sql =
-    'SELECT * FROM memory_entries WHERE organization_id = ? AND (expires_at IS NULL OR expires_at > ?) AND key IS NOT NULL';
-  if (input.memberId !== undefined) {
-    // Caller is asking for their own per-member entries — surface
-    // those AND any org-scoped entries (sentinel) that apply to all
-    // members. Sentinel is internal; never leaks to callers via
-    // rowToMemoryEntry (which coalesces it back to undefined).
-    sql += ' AND (member_id = ? OR member_id = ?)';
-    params.push(input.memberId, ORG_SCOPE_MEMBER_SENTINEL);
-  }
-  if (input.kind) {
-    sql += ' AND kind = ?';
-    params.push(input.kind);
-  }
-  if (input.keyPrefix) {
-    sql += ' AND key LIKE ?';
-    params.push(`${input.keyPrefix}%`);
-  }
-  if (input.query) {
-    sql += ' AND content LIKE ?';
-    params.push(`%${input.query}%`);
-  }
-  sql += ` ORDER BY COALESCE(last_recalled_at, created_at) DESC LIMIT ?`;
-  params.push(limit);
 
-  const rows = db.prepare(sql).all(...params) as Row[];
-  const entries = rows.map(rowToMemoryEntry);
-
+  const matchedIds = input.query
+    ? await queryChromaMemories(
+        input.organizationId,
+        input.memberId,
+        input.query,
+        limit,
+        input.kind,
+      )
+    : await getChromaMemoriesByMetadata(input.organizationId, input.memberId, limit, input.kind);
+  const entries = matchedIds
+    .map((id) =>
+      db
+        .prepare('SELECT * FROM memory_entries WHERE id = ? AND organization_id = ?')
+        .get(id, input.organizationId) as Row | null,
+    )
+    .filter((row): row is Row => row !== null)
+    .map(rowToMemoryEntry)
+    .filter(
+      (entry) =>
+        (!entry.expiresAt || entry.expiresAt > now) &&
+        (!input.keyPrefix || entry.key.startsWith(input.keyPrefix)),
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.lastRecalledAt ?? right.createdAt) -
+        Date.parse(left.lastRecalledAt ?? left.createdAt),
+    )
+    .slice(0, limit);
   if (input.touch && entries.length > 0) {
     const stmt = db.prepare('UPDATE memory_entries SET last_recalled_at = ? WHERE id = ?');
     for (const e of entries) stmt.run(now, e.id);
@@ -164,12 +169,13 @@ export function deleteExpiredMemoryEntries(db: DbHandle, nowIso: string): number
   return result.changes ?? 0;
 }
 
-export function deleteMemoryEntry(
+export async function deleteMemoryEntry(
   db: DbHandle,
   organizationId: string,
   memberId: string | null,
   key: string,
-): boolean {
+): Promise<boolean> {
+  await deleteChromaMemory(organizationId, memberId, key);
   const stored = toStoredMemberId(memberId);
   const result = db
     .prepare(

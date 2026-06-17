@@ -742,7 +742,7 @@ export class Repository {
   ): InteractiveQuestion[] => readInteractiveQuestionsByRunId(this.db, organizationId, runId);
 
   // Bet 5 — memory_entries KV
-  upsertMemoryEntry = (entry: MemoryEntry): MemoryEntry =>
+  upsertMemoryEntry = (entry: MemoryEntry): Promise<MemoryEntry> =>
     writeMemoryEntry(this.db, entry);
   recallMemoryEntries = (input: {
     organizationId: string;
@@ -752,12 +752,12 @@ export class Repository {
     query?: string;
     limit?: number;
     touch?: boolean;
-  }): MemoryEntry[] => readMemoryEntries(this.db, input);
+  }): Promise<MemoryEntry[]> => readMemoryEntries(this.db, input);
   deleteMemoryEntry = (
     organizationId: string,
     memberId: string | null,
     key: string,
-  ): boolean => removeMemoryEntry(this.db, organizationId, memberId, key);
+  ): Promise<boolean> => removeMemoryEntry(this.db, organizationId, memberId, key);
   deleteExpiredMemoryEntries = (nowIso: string): number =>
     removeExpiredMemoryEntries(this.db, nowIso);
 
@@ -1021,14 +1021,14 @@ export class Repository {
     mcpServerId?: string,
   ): void => removeToolAttachmentsForAgent(this.db, organizationId, memberId, mcpServerId);
 
-  saveMemory = (entry: MemoryEntry): MemoryEntry => writeMemory(this.db, entry);
+  saveMemory = (entry: MemoryEntry): Promise<MemoryEntry> => writeMemory(this.db, entry);
   getMemory = (organizationId: string, memoryId: string): MemoryEntry | null =>
     readMemory(this.db, organizationId, memoryId);
   listMemories = (organizationId: string, memberId: string): MemoryEntry[] =>
     readMemories(this.db, organizationId, memberId);
   listOrgMemories = (organizationId: string): MemoryEntry[] =>
     readOrgMemories(this.db, organizationId);
-  deleteMemory = (organizationId: string, memoryId: string): void =>
+  deleteMemory = (organizationId: string, memoryId: string): Promise<void> =>
     removeMemory(this.db, organizationId, memoryId);
 
   getBootstrapSnapshot = (organizationId?: string): BootstrapSnapshot =>

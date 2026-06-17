@@ -211,6 +211,8 @@ export class AiService {
       Object.keys(toolDefs),
       [],
       'channel',
+      undefined,
+      model,
     );
 
     const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
@@ -233,7 +235,7 @@ export class AiService {
     ).data, input.contextSize ?? 10);
     const messages = toModelMessages(recentThreadMessages, input.memberId);
     const channelId = this.repo.getThread(input.organizationId, input.threadId)?.channelId;
-    const workspaceStateBlock = buildWorkspaceStateBlock({
+    const workspaceStateBlock = await buildWorkspaceStateBlock({
       organizationId: input.organizationId,
       memberId: member.id,
       channelId,
@@ -433,6 +435,7 @@ export class AiService {
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       wakeReplyPolicy.conversationKind,
       availableConnectors,
+      model,
     );
 
     // Bet 1 + Bet 7 — cache-stable system prompt assembly.
@@ -516,7 +519,7 @@ export class AiService {
     const currentChannelIdForState = input.threadId
       ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
       : undefined;
-    const workspaceStateBlock = buildWorkspaceStateBlock({
+    const workspaceStateBlock = await buildWorkspaceStateBlock({
       organizationId: input.organizationId,
       memberId: member.id,
       channelId: currentChannelIdForState,
