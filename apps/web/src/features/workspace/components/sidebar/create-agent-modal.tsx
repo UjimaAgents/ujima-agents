@@ -29,6 +29,7 @@ interface CreateAgentModalProps {
   initialProvider: string;
   channels: ChannelPickerOption[];
   primaryChannelId?: string;
+  orgId?: string;
   onCreateAgent: CreateAgentHandler;
   onSelect: (created: SelectedConversation) => void;
 }
@@ -44,6 +45,7 @@ function CreateAgentModalActive({
   initialProvider,
   channels,
   primaryChannelId,
+  orgId,
   onCreateAgent,
   onSelect,
 }: CreateAgentModalProps) {
@@ -218,6 +220,7 @@ function CreateAgentModalActive({
                 setSelectedModel(defaultModelForProvider(provider));
               }}
               onModelChange={setSelectedModel}
+              orgId={orgId}
               providerLabel="LLM provider"
               modelLabel="Model"
               providerId="agentProvider"

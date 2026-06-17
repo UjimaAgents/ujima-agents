@@ -13,6 +13,25 @@ const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
 
+/**
+ * Default OpenAI-compatible base URL for kinds that expose a `/v1/models`
+ * endpoint. Returns `undefined` for kinds whose model list is not discoverable
+ * via the OpenAI shape (anthropic, google native SDKs, codex).
+ */
+export function getDefaultOpenAiCompatBaseUrl(kind: ProviderKind): string | undefined {
+  switch (kind) {
+    case 'openai': return 'https://api.openai.com/v1';
+    case 'openrouter': return OPENROUTER_BASE_URL;
+    case 'ollama': return DEFAULT_OLLAMA_BASE_URL;
+    case 'deepseek': return DEEPSEEK_BASE_URL;
+    case 'xai': return 'https://api.x.ai/v1';
+    case 'mistral': return 'https://api.mistral.ai/v1';
+    case 'kimi': return 'https://api.moonshot.ai/v1';
+    case 'zhipu': return 'https://open.bigmodel.cn/api/paas/v4';
+    default: return undefined;
+  }
+}
+
 function reasoningSettings(
   kind: ProviderKind,
   reasoningEffort?: ReasoningEffort,

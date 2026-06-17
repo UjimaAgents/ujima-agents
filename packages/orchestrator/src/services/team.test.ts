@@ -75,6 +75,16 @@ describe('validateProviderKeys', () => {
     }
   });
 
+  it('includes baseUrl in provider status when configured', () => {
+    const team = makeCodexTeam(
+      { ollama: { kind: 'ollama', baseUrl: 'http://127.0.0.1:8000/v1' } as unknown as { kind: string } },
+      [{ name: 'local', provider: 'ollama' }],
+    );
+    expect(listProviderStatuses(team, { ollama: true })).toEqual([
+      { name: 'ollama', hasKey: true, authMode: undefined, baseUrl: 'http://127.0.0.1:8000/v1' },
+    ]);
+  });
+
   it('uses the local Codex login for openai-codex', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'ujima-codex-auth-'));
     try {

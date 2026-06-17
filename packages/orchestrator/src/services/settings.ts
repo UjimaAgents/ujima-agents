@@ -15,6 +15,7 @@ import {
   resolveChannelMemberIds,
 } from '@ujima/shared';
 import { AgentTeam, createAgent, defineRole, loadAgentTeam, normalizeProviderKey, type RoleConfig } from '@ujima/framework';
+import { getDefaultOpenAiCompatBaseUrl, type ProviderKind } from '@ujima/llm';
 import type { ProviderAuthMode } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
@@ -239,6 +240,7 @@ export class SettingsService {
     organizationId: string,
     providerKeys: Record<string, string>,
     providerAuthModes: Record<string, ProviderAuthMode> = {},
+    providerBaseUrls: Record<string, string> = {},
   ): ProviderStatus[] {
     const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
@@ -248,6 +250,9 @@ export class SettingsService {
     const normalizedProviderAuthModes = Object.fromEntries(
       Object.entries(providerAuthModes).map(([name, authMode]) => [normalizeProviderKey(name), authMode]),
     ) as Record<string, ProviderAuthMode>;
+    const normalizedProviderBaseUrls = Object.fromEntries(
+      Object.entries(providerBaseUrls).map(([name, baseUrl]) => [normalizeProviderKey(name), baseUrl.trim()]),
+    );
 
     const knownProviderSet = new Set(PROVIDER_KINDS);
 
@@ -256,6 +261,7 @@ export class SettingsService {
     for (const providerName of new Set([
       ...Object.keys(normalizedProviderKeys),
       ...Object.keys(normalizedProviderAuthModes),
+      ...Object.keys(normalizedProviderBaseUrls),
     ])) {
       if (!team.providers[providerName]) {
         if (knownProviderSet.has(providerName as typeof PROVIDER_KINDS[number])) {
@@ -269,7 +275,8 @@ export class SettingsService {
       throw new Error(`Unknown provider keys: ${unknownProviders.join(', ')}`);
     }
 
-    if (needsRegistration.length > 0) {
+    const hasBaseUrlChanges = Object.keys(normalizedProviderBaseUrls).length > 0;
+    if (needsRegistration.length > 0 || hasBaseUrlChanges) {
       const config = team.toJSON();
       for (const name of needsRegistration) {
         config.providers[name] = { kind: name as typeof PROVIDER_KINDS[number], models: [] };
@@ -279,6 +286,15 @@ export class SettingsService {
           ...(config.providers[name] ?? { kind: name as typeof PROVIDER_KINDS[number], models: [] }),
           authMode,
         };
+      }
+      for (const [name, baseUrl] of Object.entries(normalizedProviderBaseUrls)) {
+        const provider = config.providers[name] ?? { kind: name as typeof PROVIDER_KINDS[number], models: [] };
+        if (baseUrl) {
+          provider.baseUrl = baseUrl;
+        } else {
+          delete provider.baseUrl;
+        }
+        config.providers[name] = provider;
       }
       const updated = AgentTeam(config);
       this.teamStore.setTeam(updated, organizationId);
@@ -327,6 +343,7 @@ export class SettingsService {
     const config = team.toJSON();
     if (config.providers[normalizedName]) {
       delete config.providers[normalizedName].authMode;
+      delete config.providers[normalizedName].baseUrl;
       const updated = AgentTeam(config);
       this.teamStore.setTeam(updated, organizationId);
       persistTeamConfig(this.repo, organizationId, updated);
@@ -363,6 +380,39 @@ export class SettingsService {
     }
 
     return { provider: providerKey, ok: true, message: 'Key present' };
+  }
+
+  /**
+   * Discover models from a provider's `/v1/models` endpoint using the
+   * configured baseUrl (or the kind's default) and saved API key. Returns
+   * an empty list rather than throwing for "no baseUrl resolvable" so the
+   * UI can transparently fall back to the static catalog.
+   */
+  async discoverModels(organizationId: string, providerName: string): Promise<{ id: string }[]> {
+    const team = this.loadTeamForOrganization(organizationId);
+    requireOrganization(this.repo, organizationId);
+    const normalizedName = normalizeProviderKey(providerName);
+    const provider = team.providers[normalizedName];
+    if (!provider) {
+      throw new Error(`Unknown provider "${normalizedName}"`);
+    }
+
+    const baseUrl = provider.baseUrl ?? getDefaultOpenAiCompatBaseUrl(provider.kind as ProviderKind);
+    if (!baseUrl) return [];
+
+    const apiKey = this.repo.getProviderCredential(organizationId, normalizedName);
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, { headers });
+    if (!response.ok) {
+      throw new Error(`Discovery failed: HTTP ${response.status} from ${baseUrl}/models`);
+    }
+    const body = (await response.json()) as { data?: { id?: unknown }[] };
+    const ids = (body.data ?? [])
+      .map((entry) => (typeof entry?.id === 'string' ? entry.id : ''))
+      .filter((id): id is string => id.length > 0);
+    return ids.map((id) => ({ id }));
   }
 
   addMember(input: AddMemberInput): Member {

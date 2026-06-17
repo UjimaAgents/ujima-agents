@@ -5,5 +5,6 @@ export {
 } from './types.js';
 export {
   selectLanguageModel,
+  getDefaultOpenAiCompatBaseUrl,
   type SelectLanguageModelInput,
 } from './select.js';

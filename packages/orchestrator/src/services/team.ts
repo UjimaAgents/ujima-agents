@@ -24,6 +24,7 @@ export interface ProviderStatus {
   name: string;
   hasKey: boolean;
   authMode?: ProviderAuthMode;
+  baseUrl?: string;
 }
 
 function providerAuthMode(team: AgentTeamHandle, providerName: string): ProviderAuthMode | undefined {
@@ -39,10 +40,12 @@ export function listProviderStatuses(
 
   for (const name of Object.keys(team.providers)) {
     const authMode = providerAuthMode(team, name);
+    const baseUrl = team.providers[name]?.baseUrl;
     providers.push({
       name,
       hasKey: authMode === 'chatgpt' ? hasCodexAccessToken() : Boolean(credentials[name]),
       authMode,
+      ...(baseUrl ? { baseUrl } : {}),
     });
   }
 

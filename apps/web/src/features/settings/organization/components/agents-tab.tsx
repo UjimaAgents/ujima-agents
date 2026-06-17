@@ -240,6 +240,7 @@ export function AgentsTab({
         rolePresets={rolePresets}
         initialProvider={initialProvider}
         channels={channels.map((c) => ({ id: c.id, name: c.name }))}
+        orgId={orgId}
         onCreateAgent={onCreateAgent}
         onSelect={() => setShowCreate(false)}
       />
@@ -250,6 +251,7 @@ export function AgentsTab({
           teamSettings={teamSettings}
           rolePresets={rolePresets}
           visibleChannels={channels}
+          orgId={orgId}
           onClose={() => setEditingAgent(null)}
           onSelect={() => setEditingAgent(null)}
           onUpdateAgent={onUpdateAgent}
