@@ -554,6 +554,12 @@ function inferToolAction(args?: Record<string, unknown>): {
   url?: string;
   jobId?: string;
   wait?: boolean;
+  channelId?: string;
+  memberId?: string;
+  messageId?: string;
+  body?: string;
+  reason?: string;
+  note?: string;
 } {
   const input = toObject(args?.input);
   const nested = input;
@@ -593,6 +599,12 @@ function inferToolAction(args?: Record<string, unknown>): {
   const url = readStringArg(args, nested, "url");
   const jobId = readStringArg(args, nested, "job_id") ?? readStringArg(args, nested, "jobId");
   const wait = readBooleanArg(args, nested, "wait");
+  const channelId = readStringArg(args, nested, "channel_id") ?? readStringArg(args, nested, "channelId");
+  const memberId = readStringArg(args, nested, "member_id") ?? readStringArg(args, nested, "memberId");
+  const messageId = readStringArg(args, nested, "message_id") ?? readStringArg(args, nested, "messageId");
+  const body = readStringArg(args, nested, "body") ?? readStringArg(args, nested, "content");
+  const reason = readStringArg(args, nested, "reason");
+  const note = readStringArg(args, nested, "note");
   return {
     action: typeof args?.action === "string" ? args.action : undefined,
     resourceType: typeof args?.resourceType === "string" ? args.resourceType : undefined,
@@ -619,6 +631,12 @@ function inferToolAction(args?: Record<string, unknown>): {
     url,
     jobId,
     wait,
+    channelId,
+    memberId,
+    messageId,
+    body,
+    reason,
+    note,
   };
 }
 
@@ -757,6 +775,41 @@ function deriveToolLine(
   const isUpdateOp =
     lowerOp === "update" || lowerOp === "edit" || lowerOp === "patch" || lowerOp === "write";
   const isReadOp = lowerOp === "read" || lowerOp === "view";
+  const messageDetail = (label: string, body?: string) => ({
+    title: `${actorLabel} ${label}`,
+    detail: body?.trim() ? `${sentenceCase(label)}\n${body.trim()}` : sentenceCase(label),
+  });
+
+  if (toolName === "channel.dm") {
+    return messageDetail(
+      `sent a DM${parsed.memberId ? ` to ${parsed.memberId}` : ""}`,
+      parsed.body,
+    );
+  }
+  if (toolName === "channel.reply") {
+    return messageDetail(
+      `replied${parsed.messageId ? ` to ${parsed.messageId}` : ""}`,
+      parsed.body,
+    );
+  }
+  if (toolName === "channel.post") {
+    return messageDetail(
+      `posted${parsed.channelId ? ` to ${parsed.channelId}` : ""}`,
+      parsed.body,
+    );
+  }
+  if (toolName === "channel.pass") {
+    return messageDetail(
+      `stood down${parsed.reason ? `: ${parsed.reason}` : ""}`,
+      parsed.note,
+    );
+  }
+  if (toolName === "channel.ack") {
+    return messageDetail("acknowledged", parsed.note);
+  }
+  if (toolName === "channel.handoff") {
+    return messageDetail("handed off", parsed.body);
+  }
 
   if (parsed.action === "write" && parsed.resourceType === "file" && path) {
     return {
@@ -949,6 +1002,16 @@ function formatStructuredToolDetail(
   const nestedInput = argsRecord.input && typeof argsRecord.input === "object"
     ? (argsRecord.input as Record<string, unknown>)
     : argsRecord;
+  if (
+    name === "channel.dm" ||
+    name === "channel.reply" ||
+    name === "channel.post" ||
+    name === "channel.pass" ||
+    name === "channel.ack" ||
+    name === "channel.handoff"
+  ) {
+    return narrativeDetail || `${name} executed.`;
+  }
 
   if (name.includes("memory.write")) {
     const value = nestedInput.value ?? nestedInput.content;
@@ -1411,6 +1474,7 @@ function buildToolStep(
   return {
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
     title: line.title,
+    toolName: name,
     detail: hasRich
       ? ""
       : formatStructuredToolDetail(

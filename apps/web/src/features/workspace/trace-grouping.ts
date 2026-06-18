@@ -58,7 +58,7 @@ function toolStepToOperation(step: TraceStepData): AggregatedOperation {
   }
 
   const calledIdx = step.title.indexOf(" called tool ");
-  const toolName = calledIdx >= 0 ? step.title.slice(calledIdx + " called tool ".length).trim() : "tool";
+  const toolName = step.toolName ?? (calledIdx >= 0 ? step.title.slice(calledIdx + " called tool ".length).trim() : "tool");
   if (toolName.startsWith("memory.")) {
     return { ...base, type: "memory", toolName, detail: step.detail || "" };
   }
@@ -73,6 +73,9 @@ function toolStepToOperation(step: TraceStepData): AggregatedOperation {
   }
   if (toolName === "schedule") {
     return { ...base, type: "schedule", toolName, detail: step.detail || "" };
+  }
+  if (toolName === "message" || toolName.startsWith("channel.")) {
+    return { ...base, type: "message", toolName, detail: step.detail || toolName };
   }
   return { ...base, type: "tool", toolName, detail: step.detail || "" };
 }

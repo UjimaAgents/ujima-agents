@@ -79,9 +79,7 @@ describe('channel.* tools — toInvocation()', () => {
     expect(byName.success).toBe(true);
   });
 
-  // Hard block on agent→agent free-form DMs — the self-chatter
-  // pathology. Self-DM and agent→human DMs must still go through.
-  describe('channel.dm agent→agent hard block', () => {
+  describe('channel.dm delivery', () => {
     const baseInvocation = (memberId: string) => ({
       organizationId: 'org-1',
       runId: 'run-1',
@@ -97,8 +95,9 @@ describe('channel.* tools — toInvocation()', () => {
         getMember: (_orgId: string, id: string) => members[id] ?? null,
       }) as never;
 
-    it('blocks an agent DMing another agent (no message sent)', async () => {
+    it('allows an agent DMing another agent', async () => {
       let sent = false;
+      let recipientId: string | undefined;
       const result = await channelDmTool.execute({
         invocation: { ...baseInvocation('agent-1'), input: { member_id: 'agent-2', body: 'hi', mentions: [] } } as never,
         team: {} as never,
@@ -108,14 +107,16 @@ describe('channel.* tools — toInvocation()', () => {
         }),
         conversations: {
           tryMirrorSuppress: () => false,
-          sendDirectMessage: () => {
+          sendDirectMessage: (input: { recipientId: string }) => {
             sent = true;
+            recipientId = input.recipientId;
             return { id: 'm1' };
           },
         } as never,
       });
-      expect(sent).toBe(false);
-      expect(result).toMatchObject({ status: 'dm_blocked', message_sent: false });
+      expect(sent).toBe(true);
+      expect(recipientId).toBe('agent-2');
+      expect(result).toMatchObject({ id: 'm1' });
     });
 
     it('allows an agent DMing a human', async () => {

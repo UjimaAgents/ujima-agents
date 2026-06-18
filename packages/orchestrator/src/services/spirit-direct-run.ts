@@ -44,7 +44,7 @@ function isDelegateRun(run: RunState, repo: { getMessage(organizationId: string,
   return !!(source?.metadata as { delegate?: unknown } | undefined)?.delegate;
 }
 
-const VISIBLE_TERMINATING_TOOLS = new Set(['message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.handoff']);
+const VISIBLE_TERMINATING_TOOLS = new Set(['message', 'channel.post', 'channel.reply', 'channel.handoff']);
 
 export class SpiritService extends SpiritServiceSupervisor {
   async resumeAfterApproval(

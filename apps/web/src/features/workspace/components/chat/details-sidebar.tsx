@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { CheckCircle2, X, ChevronDown, ChevronRight, Pencil, Search, Terminal, Brain, Target, HelpCircle, BookOpen, Clock } from "lucide-react";
+import { CheckCircle2, X, ChevronDown, ChevronRight, Pencil, Search, Terminal, Brain, Target, HelpCircle, BookOpen, Clock, MessageSquare } from "lucide-react";
 import {Markdown} from "../markdown";
 import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
 import {TerminalPane} from "./terminal-pane";
@@ -12,7 +12,7 @@ import { UnifiedDiffView, looksLikeUnifiedDiff } from "./unified-diff-view";
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 interface AggregatedOperation {
   id: string;
-  type: "edit" | "delete" | "read" | "search" | "shell" | "tool" | "memory" | "goal" | "question" | "procedure" | "schedule";
+  type: "edit" | "delete" | "read" | "search" | "shell" | "tool" | "memory" | "goal" | "question" | "procedure" | "schedule" | "message";
   file?: string;
   additions: number;
   deletions: number;
@@ -47,6 +47,7 @@ export interface TraceStepData {
   actorName: string;
   /** Owning run id when this step was emitted inside an agent run. Absent on user messages and other non-run events. */
   runId?: string;
+  toolName?: string;
   aggregatedOperations?: AggregatedOperation[];
   /** Integrated terminal (cwd + command + scrollable output). */
   terminal?: {
@@ -175,7 +176,7 @@ function AggregatedRunPanel({
 
   const counts = operations.reduce<Record<AggregatedOperation["type"], number>>(
     (acc, op) => ({ ...acc, [op.type]: (acc[op.type] ?? 0) + 1 }),
-    { edit: 0, delete: 0, read: 0, search: 0, shell: 0, tool: 0, memory: 0, goal: 0, question: 0, procedure: 0, schedule: 0 },
+    { edit: 0, delete: 0, read: 0, search: 0, shell: 0, tool: 0, memory: 0, goal: 0, question: 0, procedure: 0, schedule: 0, message: 0 },
   );
   const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
   const summaryParts = [
@@ -189,6 +190,7 @@ function AggregatedRunPanel({
     counts.question && `asked ${counts.question} ${plural(counts.question, "question")}`,
     counts.procedure && `updated procedures ${counts.procedure} ${plural(counts.procedure, "time")}`,
     counts.schedule && `updated schedules ${counts.schedule} ${plural(counts.schedule, "time")}`,
+    counts.message && `sent ${counts.message} ${plural(counts.message, "message")}`,
     counts.tool && `called ${counts.tool} ${plural(counts.tool, "tool")}`,
   ].filter(Boolean);
   const summaryText = summaryParts.join(", ");
@@ -209,11 +211,13 @@ function AggregatedRunPanel({
             ? BookOpen
             : counts.schedule > 0
               ? Clock
-              : counts.memory > 0
-                ? Brain
-                : counts.search > 0 && counts.shell === 0
-                  ? Search
-                  : Terminal;
+              : counts.message > 0
+                ? MessageSquare
+                : counts.memory > 0
+                  ? Brain
+                  : counts.search > 0 && counts.shell === 0
+                    ? Search
+                    : Terminal;
 
   return (
     <div className="w-full">
@@ -423,6 +427,29 @@ function AggregatedRunPanel({
               );
             }
 
+            if (op.type === "message") {
+              const [label, ...rest] = (op.detail || "Sent message").split("\n");
+              const body = rest.join("\n").trim();
+              return (
+                <ExpandableRow
+                  key={op.id}
+                  expanded={isExpanded}
+                  onToggle={toggle(op.id)}
+                  header={
+                    <span className="break-words">
+                      {label || "Sent message"}
+                    </span>
+                  }
+                >
+                  {body ? (
+                    <div className={`mt-1.5 p-2.5 select-text text-[11px] leading-relaxed ${TERMINAL_PANEL}`}>
+                      {body}
+                    </div>
+                  ) : null}
+                </ExpandableRow>
+              );
+            }
+
             if (op.type === "tool") {
               return (
                 <ExpandableRow
@@ -581,7 +608,9 @@ function splitTraceTitle(title: string): {subject: string; remainder: string} {
 
   const separators = [
     " sent a message ",
+    " sent a DM",
     " responded to ",
+    " replied ",
     " called tool ",
     " used ",
     " updated ",

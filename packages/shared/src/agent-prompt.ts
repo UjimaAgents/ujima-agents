@@ -155,7 +155,7 @@ const COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS = [
 
 const COLLABORATION_PROTOCOL_DM_ONLY_BULLETS = [
   "- In a direct message, messages from your conversation partner are addressed to you. Reply when they ask you to do something or expect a response.",
-  "- Do not call channel.pass in a DM because you think you were not @mentioned; that rule applies to shared channels only.",
+  "- In a human DM, do not call channel.pass just because you were not @mentioned. In an agent-to-agent DM, channel.pass is allowed when no useful reply remains.",
 ] as const;
 
 const DELEGATION_GUIDANCE = [

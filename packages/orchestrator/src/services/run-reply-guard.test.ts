@@ -7,14 +7,14 @@ import {
 } from './run-reply-guard.js';
 
 describe('runUsedThreadPublishingTool', () => {
-  it('returns true when toolResults include channel.dm', () => {
+  it('returns false when toolResults include channel.dm', () => {
     expect(
       runUsedThreadPublishingTool({
         text: 'Done.',
         toolResults: [{ toolName: 'channel.dm', output: {} }],
         steps: [],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('returns true when a step has channel.reply toolCalls', () => {
