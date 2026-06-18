@@ -1,4 +1,5 @@
-import { ChromaClient, Collection } from 'chromadb';
+import { ChromaClient } from 'chromadb';
+import type { Collection, Where } from 'chromadb';
 import { DefaultEmbeddingFunction } from '@chroma-core/default-embed';
 import type { MemoryEntry } from '@ujima/shared';
 
@@ -139,8 +140,8 @@ export async function getChromaMemoriesByMetadata(
   }
 }
 
-function buildWhereFilter(organizationId: string, memberId?: string, kind?: string): any {
-  const conditions: any[] = [{ organizationId: { $eq: organizationId } }];
+function buildWhereFilter(organizationId: string, memberId?: string, kind?: string): Where {
+  const conditions: Where[] = [{ organizationId: { $eq: organizationId } }];
 
   if (memberId !== undefined) {
     conditions.push({
@@ -155,8 +156,9 @@ function buildWhereFilter(organizationId: string, memberId?: string, kind?: stri
     conditions.push({ kind: { $eq: kind } });
   }
 
-  if (conditions.length === 1) {
-    return conditions[0];
+  const [firstCondition] = conditions;
+  if (conditions.length === 1 && firstCondition) {
+    return firstCondition;
   }
 
   return { $and: conditions };

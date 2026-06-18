@@ -88,17 +88,19 @@ export function buildSharedAgentSystemPrompt(
 // ---------------------------------------------------------------------------
 
 /**
- * Build a markdown block with environment context: current date/time,
- * timezone, OS, working directory, and (optionally) the system user.
+ * Build a markdown block with environment context: timezone, OS, working
+ * directory, and (optionally) the system user.
+ *
+ * NOTE: the current date/time is deliberately excluded from this block so the
+ * system prompt stays cache-stable across wakes. The timestamp is emitted
+ * separately as a per-wake user message via {@link buildEnvironmentTimestamp}.
  *
  * Both prompt systems call this so the grounding is identical.
  */
 export function buildEnvironmentContext(): string {
-  const now = new Date();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const lines = [
     "## Environment",
-    `- Current Date & Time: ${now.toLocaleString()} (${now.toISOString()})`,
     `- Timezone: ${tz}`,
     `- OS: ${process.platform}`,
     `- Working Directory: ${process.cwd()}`,
@@ -107,6 +109,19 @@ export function buildEnvironmentContext(): string {
     lines.push(`- System User: ${process.env.USER}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Returns a single-line string with the current date/time for use as a
+ * per-wake user message. Split from {@link buildEnvironmentContext} so the
+ * system prompt stays cache-stable — the timestamp changes every wake and
+ * would invalidate the Anthropic prefix cache.
+ *
+ * Intended to be placed AFTER the cache breakpoint in the messages array.
+ */
+export function buildEnvironmentTimestamp(): string {
+  const now = new Date();
+  return `- Current Date & Time: ${now.toLocaleString()} (${now.toISOString()})`;
 }
 
 // ---------------------------------------------------------------------------

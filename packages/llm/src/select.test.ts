@@ -51,8 +51,13 @@ function createFakeAppServer(): {
         stdout.write(`${JSON.stringify({ id: msg.id, result: {} })}\n`);
         continue;
       }
+      if (msg.method === 'turn/interrupt') {
+        stdout.write(`${JSON.stringify({ id: msg.id, result: {} })}\n`);
+        stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+        continue;
+      }
       if (msg.method === 'turn/start') {
-        const text = (((msg.params as { input?: Array<{ text?: string }> }).input ?? [])[0]?.text) ?? '';
+        const text = (((msg.params as { input?: { text?: string }[] }).input ?? [])[0]?.text) ?? '';
         stdout.write(`${JSON.stringify({ id: msg.id, result: { turn: { id: 'turn_1' } } })}\n`);
         stdout.write(`${JSON.stringify({ method: 'turn/started', params: { turn: { id: 'turn_1', status: 'inProgress', items: [] } } })}\n`);
         if (text === 'call tool') {
@@ -68,7 +73,26 @@ function createFakeAppServer(): {
               arguments: { body: 'hi' },
             },
           })}\n`);
-          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
+        if (text === 'call tools') {
+          for (const [id, callId, body] of [
+            [99, 'call_1', 'hi'],
+            [100, 'call_2', 'bye'],
+          ] as const) {
+            stdout.write(`${JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              method: 'item/tool/call',
+              params: {
+                threadId: 'thr_1',
+                turnId: 'turn_1',
+                callId,
+                tool: 'ujima_channel_reply',
+                arguments: { body },
+              },
+            })}\n`);
+          }
           continue;
         }
         stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hello from app-server' } })}\n`);
@@ -195,8 +219,46 @@ describe('selectLanguageModel', () => {
       input: '{"body":"hi"}',
     }]);
     const response = child.requests.find((req) => (req as { id?: number; method?: string }).id === 99 && !(req as { method?: string }).method) as {
-      result?: { contentItems?: Array<{ type?: string }> };
+      result?: { contentItems?: { type?: string; text?: string }[] };
     };
     expect(response.result?.contentItems?.[0]?.type).toBe('input_text');
+    expect(response.result?.contentItems?.[0]?.text).toBe('');
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/interrupt')).toHaveLength(1);
+  });
+
+  it('coalesces parallel Codex dynamic tool calls into one model step', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'call tools' }] }],
+      tools: [{
+        type: 'function',
+        name: 'channel.reply',
+        description: 'Reply',
+        inputSchema: { type: 'object' },
+      }],
+    });
+
+    expect(result.content).toEqual([
+      {
+        type: 'tool-call',
+        toolCallId: 'call_1',
+        toolName: 'channel.reply',
+        input: '{"body":"hi"}',
+      },
+      {
+        type: 'tool-call',
+        toolCallId: 'call_2',
+        toolName: 'channel.reply',
+        input: '{"body":"bye"}',
+      },
+    ]);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/interrupt')).toHaveLength(1);
   });
 });

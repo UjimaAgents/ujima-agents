@@ -696,18 +696,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   hydrateMessages: (messages, toMessage, toActivity) =>
     set((state) => {
       const converted = messages.map((message) => toMessage(message));
-      const lookup = new Map(state.messages.map((m) => [m.id, m]));
-      for (const chat of converted) {
-        lookup.set(chat.id, chat);
-      }
-      for (const chat of converted) {
-        if (chat.parentMessageId && !chat.replyPreview) {
-          const parent = lookup.get(chat.parentMessageId);
-          if (parent) {
-            chat.replyPreview = { name: parent.name, content: parent.content };
-          }
-        }
-      }
       const mergedMessages = ensureReplyPreviews(mergeChatMessages(state.messages, converted));
       return {
         messages: mergedMessages,

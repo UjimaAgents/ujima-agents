@@ -12,7 +12,7 @@ import {
 import type { ApiRepository } from './repository-reader.js';
 import { ConversationService } from './conversation.js';
 
-function createConversationFixture() {
+function createConversationFixture(options: { autoCompactConversations?: boolean } = {}) {
   const organization = OrganizationSchema.parse({
     id: 'org-1',
     name: 'Org',
@@ -221,6 +221,7 @@ function createConversationFixture() {
     summarizeConversation: async (messages, mode) =>
       `${mode === 'archive' ? '[[CONVERSATION_ARCHIVE_V1]]' : '[[CONVERSATION_SUMMARY_V2]]'} # AI summarized ${messages.length} messages.`,
     contextWindowTokens: () => 1_000,
+    autoCompactConversations: options.autoCompactConversations,
   });
 
   return {
@@ -457,8 +458,26 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toContain('agent-1');
   });
 
-  it('auto-compacts a conversation after 500 messages', async () => {
-    const { emits, repo, service } = createConversationFixture();
+  it('does not auto-compact conversation history by default', async () => {
+    const { repo, service } = createConversationFixture();
+    for (let i = 1; i <= 501; i += 1) {
+      service.sendMessage({
+        organizationId: 'org-1',
+        threadId: 'general',
+        channelId: 'general',
+        senderId: 'human-1',
+        content: `auto-${i}`,
+      });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const stored = repo.listChannelMessages('org-1', 'general', { limit: 1_000 });
+    expect(stored.data.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'))).toBe(false);
+    expect(stored.data.some((message) => message.metadata?.compactedInto)).toBe(false);
+  });
+
+  it('auto-compacts a conversation after 500 messages when enabled', async () => {
+    const { emits, repo, service } = createConversationFixture({ autoCompactConversations: true });
     service.publishMessage({
       id: 'rich-1',
       organizationId: 'org-1',

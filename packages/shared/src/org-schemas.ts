@@ -10,7 +10,7 @@ export type Timestamp = z.infer<typeof TimestampSchema>;
 
 export const PaginationQuerySchema = z.object({
   cursor: z.string().optional(),
-  limit: z.coerce.number().min(1).max(100).default(50),
+  limit: z.coerce.number().min(1).max(500).default(50),
 });
 export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;
 

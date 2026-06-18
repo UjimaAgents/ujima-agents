@@ -105,15 +105,16 @@ function useDiscoveredModels(orgId: string | undefined, provider: string) {
     loading: false,
     error: null,
   });
+  const emptyState = { models: [], loading: false, error: null };
+  const activeState = !orgId || !provider ? emptyState : state;
 
   useEffect(() => {
-    if (!orgId || !provider) {
-      setState({ models: [], loading: false, error: null });
-      return;
-    }
+    if (!orgId || !provider) return;
     const normalized = normalizeProviderKey(provider);
     const controller = new AbortController();
-    setState({ models: [], loading: true, error: null });
+    queueMicrotask(() => {
+      setState({ models: [], loading: true, error: null });
+    });
     fetch(
       `/api/settings/providers/${encodeURIComponent(normalized)}/models?organizationId=${encodeURIComponent(orgId)}`,
       { signal: controller.signal, cache: "no-store" },
@@ -134,5 +135,5 @@ function useDiscoveredModels(orgId: string | undefined, provider: string) {
     return () => controller.abort();
   }, [orgId, provider]);
 
-  return state;
+  return activeState;
 }

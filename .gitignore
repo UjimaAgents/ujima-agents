@@ -99,3 +99,7 @@ apps/api/example-dot-com.png
 apps/api/hackernews-top.png
 apps/api/page-2026-06-11-example.png
 screenshots/test.png
+
+# Debug agent loop logs
+.agent-loop/
+**/.agent-loop/

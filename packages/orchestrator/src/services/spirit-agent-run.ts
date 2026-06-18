@@ -16,6 +16,7 @@ import {
   AGENT_KIND,
   SocketEventNames,
   SpiritSchema,
+  buildEnvironmentTimestamp,
   channelRoom,
   orgRoom,
   type Message,
@@ -69,6 +70,7 @@ import type {
   RunSpiritOutcome,
 } from './spirit-types.js';
 import { SpiritServiceBase } from './spirit-service-base.js';
+import { AgentLoopLogger } from '../debug/agent-loop-logger.js';
 
 export class SpiritServiceAgentRun extends SpiritServiceBase {
   async run(input: RunSpiritInput): Promise<RunSpiritOutcome> {
@@ -249,6 +251,10 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       goalMode: input.promptGoalMode,
     });
     const contextMessages: ModelMessage[] = [
+      // Per-wake timestamp — outside the system prompt so the Anthropic
+      // prefix cache stays valid across wakes (the timestamp changes
+      // every turn and would bust the cache if it were in the system prompt).
+      { role: 'user' as const, content: `<wake-context>\n${buildEnvironmentTimestamp()}\n</wake-context>` },
       ...(systemPromptSuffix ? [{ role: 'user' as const, content: systemPromptSuffix }] : []),
       ...(sourceMessage && input.extraPrompt
         ? [{ role: 'user' as const, content: input.extraPrompt }]
@@ -314,6 +320,20 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     const abortKey = this.runKey(input.organizationId, runId);
     const abortController = new AbortController();
     this.runAbortControllers.set(abortKey, abortController);
+
+    const debugLogger = new AgentLoopLogger();
+    debugLogger.setWorkspaceRoot(team.workspace.root);
+    debugLogger.setContext({
+      agentId: input.memberId,
+      threadId: session.channelId,
+      channelId: session.channelId,
+      organizationId: input.organizationId,
+      model,
+      systemPrompt,
+      messages,
+      tools: toolDefs,
+    });
+
     try {
       const result = await runAgentWithRetry({
         model,
@@ -329,6 +349,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         detectExternalPause: () => this.detectRunPauseForHuman(input.organizationId, runId),
         onChunk: (chunk) => {
           if (chunk.kind === 'reasoning') streamedReasoning += chunk.delta;
+          debugLogger.handleChunk(chunk);
           this.emitRunChunk(
             {
               organizationId: input.organizationId,
@@ -340,6 +361,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
           );
         },
         onStepFinish: async (_step, currentSteps) => {
+          debugLogger.handleStepFinish(_step);
           const unpersisted = currentSteps.slice(persistedStepCount);
           for (const s of unpersisted) {
             persistedStepCount++;
@@ -384,6 +406,13 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         memberLabel: input.memberId,
       });
       const { steps, usage } = result;
+
+      debugLogger.setTokenUsage({
+        inputTokens: usage?.inputTokens,
+        outputTokens: usage?.outputTokens,
+        totalTokens: usage?.totalTokens,
+      });
+      debugLogger.flush().catch();
 
       // Compute token counts early so they're available when persisting
       // the last step's message below.
@@ -503,6 +532,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         terminatingTool: finalTerminatingTool,
       };
     } catch (err) {
+      debugLogger.flush().catch();
       const latestRun = this.repo.getRun(input.organizationId, runId);
       if (latestRun?.status === 'cancelled') {
         const cancelled: Spirit = SpiritSchema.parse({
@@ -630,6 +660,8 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       }
       this.emit(SocketEventNames.spiritCompleted, failed);
       this.maybeFinalizeTaskSession(failed.organizationId, failed.taskSessionId, message);
+      debugLogger.setError(message);
+      debugLogger.flush().catch();
       throw err;
     } finally {
       this.runAbortControllers.delete(abortKey);

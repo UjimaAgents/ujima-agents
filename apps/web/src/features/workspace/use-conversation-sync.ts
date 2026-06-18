@@ -530,7 +530,7 @@ async function loadHistory(
     const params = new URLSearchParams({
       organizationId,
       threadId,
-      limit: "100",
+      limit: "500",
     });
     if (cursor) params.set("cursor", cursor);
 

@@ -65,7 +65,6 @@ describe('conversation-compact selection', () => {
       messages,
       summaryMarker: CONVERSATION_ARCHIVE_MARKER,
       compactedMarker: CONVERSATION_ARCHIVE_MARKER,
-      keepRawCount: 0,
       batchSize: 35,
       mode: 'archive',
     });

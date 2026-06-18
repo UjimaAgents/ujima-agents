@@ -104,6 +104,7 @@ export interface ConversationServiceOptions {
     mode: 'summary' | 'archive',
   ) => Promise<string>;
   contextWindowTokens?: (organizationId: string, threadId: string) => number;
+  autoCompactConversations?: boolean;
 }
 
 export class ConversationService {
@@ -112,6 +113,7 @@ export class ConversationService {
   private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
   private readonly summarizeConversation?: ConversationServiceOptions['summarizeConversation'];
   private readonly contextWindowTokens: NonNullable<ConversationServiceOptions['contextWindowTokens']>;
+  private readonly autoCompactConversations: boolean;
   private readonly mentionFanoutCap: number;
   private readonly mentionWindowMs: number;
   private readonly mentionQuota: MentionQuota;
@@ -130,6 +132,7 @@ export class ConversationService {
     this.onMessagePublished = options.onMessagePublished;
     this.summarizeConversation = options.summarizeConversation;
     this.contextWindowTokens = options.contextWindowTokens ?? (() => 128_000);
+    this.autoCompactConversations = options.autoCompactConversations ?? false;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
     this.mentionWindowMs = options.mentionWindowMs ?? 60_000;
     this.mentionQuota = new MentionQuota(this.mentionFanoutCap, this.mentionWindowMs);
@@ -459,6 +462,7 @@ export class ConversationService {
   }
 
   private scheduleConversationCompaction(message: Message): void {
+    if (!this.autoCompactConversations) return;
     if (!this.summarizeConversation) return;
     const key = `${message.organizationId}:${message.threadId}`;
     if (

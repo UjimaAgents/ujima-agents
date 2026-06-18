@@ -34,7 +34,7 @@ import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
-import { hasTokenUsage, normalizeTokenUsage } from './token-usage.js';
+import { normalizeTokenUsage } from './token-usage.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
@@ -612,8 +612,17 @@ export class SpiritServiceBase {
     agentId: string,
     steps: readonly { usage?: unknown }[],
   ): void {
-    const usage = normalizeTokenUsage(steps.at(-1)?.usage);
-    if (!hasTokenUsage(usage)) return;
+    // Sum input and output tokens across all steps so the live counter
+    // doesn't blink out when the last step has zero tool usage.
+    let totalInput = 0;
+    let totalOutput = 0;
+    for (const step of steps) {
+      const u = normalizeTokenUsage(step.usage);
+      totalInput += u.inputTokens;
+      totalOutput += u.outputTokens;
+    }
+    if (totalInput === 0 && totalOutput === 0) return;
+    const usage = { inputTokens: totalInput, outputTokens: totalOutput, totalTokens: totalInput + totalOutput };
 
     const rooms = [orgRoom(organizationId), memberRoom(agentId), runRoom(runId)];
     if (threadId) {
