@@ -29,6 +29,7 @@ export function AgentEditorModal({
   teamSettings,
   rolePresets,
   visibleChannels,
+  orgId,
   onClose,
   onSelect,
   onUpdateAgent,
@@ -37,6 +38,7 @@ export function AgentEditorModal({
   teamSettings: WorkspaceSidebarProps["teamSettings"];
   rolePresets: RolePresetTemplate[];
   visibleChannels: BootstrapResponse["channels"];
+  orgId?: string;
   onClose: () => void;
   onSelect: (conv: SelectedConversation) => void;
   onUpdateAgent: UpdateAgentHandler;
@@ -154,6 +156,7 @@ export function AgentEditorModal({
           modelLabel="Model"
           providerId="agentEditProvider"
           modelId="agentEditModel"
+          orgId={orgId}
         />
 
         <div className="grid gap-4 md:grid-cols-2">

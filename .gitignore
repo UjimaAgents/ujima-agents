@@ -92,3 +92,10 @@ scripts/cut-tests.py
 scripts/remove-empty-describes.py
 scripts/strip-unused-imports.py
 mcp_phase2_plan.md
+apps/api/example-com-screenshot.png
+.gitignore
+ujima_selfhost_runbook.md
+apps/api/example-dot-com.png
+apps/api/hackernews-top.png
+apps/api/page-2026-06-11-example.png
+screenshots/test.png

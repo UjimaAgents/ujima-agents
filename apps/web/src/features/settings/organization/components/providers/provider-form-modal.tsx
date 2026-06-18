@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { TextInput } from "@/components/ui/form-fields";
 import {
   PROVIDER_OPTIONS,
   normalizeProviderKey,
@@ -20,9 +21,10 @@ export function ProviderFormModal(props: {
   isOpen: boolean;
   onClose: () => void;
   usedProviderNames: Set<string>;
-  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode) => Promise<void>;
+  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode, baseUrl: string) => Promise<void>;
   mode?: "add" | "update";
   initialName?: string;
+  initialBaseUrl?: string;
 }) {
   if (!props.isOpen) return null;
   return <ProviderFormModalActive {...props} />;
@@ -34,13 +36,15 @@ function ProviderFormModalActive({
   onSave,
   mode = "add",
   initialName = "",
+  initialBaseUrl = "",
 }: {
   isOpen: boolean;
   onClose: () => void;
   usedProviderNames: Set<string>;
-  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode) => Promise<void>;
+  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode, baseUrl: string) => Promise<void>;
   mode?: "add" | "update";
   initialName?: string;
+  initialBaseUrl?: string;
 }) {
   // UI dropdown shows "openai" for both openai and openai-codex
   const [uiProvider, setUiProvider] = useState(resolveUiProviderToken(initialName));
@@ -49,6 +53,7 @@ function ProviderFormModalActive({
     resolveAuthMode(initialName) ?? "apikey",
   );
   const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [codexConnected, setCodexConnected] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +64,7 @@ function ProviderFormModalActive({
   const internalToken = resolveInternalProviderToken(uiProvider, authMode);
   const isCodexMode = internalToken === "openai-codex";
   const canSave = Boolean(
-    internalToken && (apiKey.trim() || (isCodexMode && codexConnected)),
+    internalToken && (apiKey.trim() || (isCodexMode && codexConnected) || (isUpdate && baseUrl.trim() !== initialBaseUrl.trim())),
   );
 
   const handleClose = () => onClose();
@@ -69,7 +74,7 @@ function ProviderFormModalActive({
     setSaving(true);
     setError(null);
     try {
-      await onSave(internalToken, apiKey.trim(), authMode);
+      await onSave(internalToken, apiKey.trim(), authMode, baseUrl.trim());
       handleClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save.");
@@ -93,6 +98,7 @@ function ProviderFormModalActive({
   const handleProviderChange = (next: string) => {
     setUiProvider(next);
     setApiKey("");
+    setBaseUrl("");
     setCodexConnected(false);
     // Reset auth mode when switching away from OpenAI
     if (!isOpenAIProvider(next)) setAuthMode("apikey");
@@ -101,6 +107,8 @@ function ProviderFormModalActive({
   const handleAuthModeChange = (mode: OpenAIAuthMode) => {
     setAuthMode(mode);
     setCodexConnected(false);
+    // Base URL is hidden under Codex auth; clear so it isn't persisted invisibly.
+    if (mode === "codex") setBaseUrl("");
   };
 
   return (
@@ -141,6 +149,28 @@ function ProviderFormModalActive({
                 authMode={authMode}
                 onAuthModeChange={isUpdate ? undefined : handleAuthModeChange}
                 onCodexConnectionChange={setCodexConnected}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {uiProvider && !isCodexMode ? (
+          <div>
+            <label className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Base URL <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
+            </label>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              For self-hosted or OpenAI-compatible endpoints (vLLM, LM Studio, custom Ollama host).
+              Leave blank to use the provider&apos;s default.
+            </p>
+            <div className="mt-2">
+              <TextInput
+                type="url"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://example.com/v1"
+                autoComplete="off"
+                spellCheck={false}
               />
             </div>
           </div>
