@@ -93,7 +93,7 @@ describe('buildPromptMessages', () => {
     );
   });
 
-  it('keeps the prior request in the reusable prefix on the next wake', () => {
+  it('keeps prior requests and tool rounds in the reusable prefix on the next wake', () => {
     const base: Message = {
       id: 'human-1',
       organizationId: 'org-1',
@@ -113,13 +113,22 @@ describe('buildPromptMessages', () => {
       content: 'fix it',
       createdAt: '2026-06-07T00:00:01.000Z',
     };
-    const priorReply: Message = {
+    const toolReply: Message = {
       ...base,
       id: 'agent-1',
       senderId: 'agent-1',
       senderKind: 'agent',
       kind: 'agent',
-      content: 'fixed',
+      content: 'checking',
+      toolCalls: [
+        {
+          toolCallId: 'call-1',
+          toolName: 'shell',
+          args: { command: 'pwd' },
+          result: { stdout: '/tmp\n' },
+          isError: false,
+        },
+      ],
       createdAt: '2026-06-07T00:00:02.000Z',
     };
     const nextRequest: Message = {
@@ -128,21 +137,41 @@ describe('buildPromptMessages', () => {
       content: 'again',
       createdAt: '2026-06-07T00:00:03.000Z',
     };
+    const nextReply: Message = {
+      ...toolReply,
+      id: 'agent-2',
+      content: 'done',
+      toolCalls: [],
+      createdAt: '2026-06-07T00:00:04.000Z',
+    };
+    const thirdRequest: Message = {
+      ...base,
+      id: 'human-4',
+      content: 'one more',
+      createdAt: '2026-06-07T00:00:05.000Z',
+    };
 
     const firstWake = buildPromptMessages({
-      historyMessages: [base],
+      historyMessages: [base, priorRequest, toolReply],
       currentMemberId: 'agent-1',
-      currentRequestMessage: priorRequest,
+      currentRequestMessage: nextRequest,
       contextMessages: [{ role: 'user', content: '<wake-context>one</wake-context>' }],
     });
     const nextWake = buildPromptMessages({
-      historyMessages: [base, priorRequest, priorReply],
+      historyMessages: [base, priorRequest, toolReply, nextRequest, nextReply],
       currentMemberId: 'agent-1',
-      currentRequestMessage: nextRequest,
+      currentRequestMessage: thirdRequest,
       contextMessages: [{ role: 'user', content: '<wake-context>two</wake-context>' }],
     });
 
-    expect(nextWake.slice(0, 2)).toEqual(firstWake.slice(0, 2));
-    expect(nextWake[2]).toEqual({ role: 'assistant', content: 'fixed' });
+    expect(nextWake.slice(0, 5)).toEqual(firstWake.slice(0, 5));
+    expect(nextWake[2]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'checking' }, { type: 'tool-call', toolCallId: 'call-1' }],
+    });
+    expect(nextWake[3]).toMatchObject({
+      role: 'tool',
+      content: [{ type: 'tool-result', toolCallId: 'call-1' }],
+    });
   });
 });
