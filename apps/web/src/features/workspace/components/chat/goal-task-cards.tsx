@@ -1,5 +1,5 @@
 import { memo, useState, type ReactNode } from "react";
-import { ArrowRight, ChevronDown, ChevronUp, ExternalLink, KanbanSquare, Users } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronUp, Clock, ExternalLink, KanbanSquare, Users } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import {
   formatGoalStatusLabel,
@@ -14,6 +14,7 @@ type GoalTaskUpdatedCard = Extract<MessageCard, { kind: "goal.task.updated" }>;
 type TaskJoinCard = Extract<MessageCard, { kind: "task.join" }>;
 type TaskOriginLinkCard = Extract<MessageCard, { kind: "task.origin-link" }>;
 type TaskSummaryCard = Extract<MessageCard, { kind: "task.summary" }>;
+type ScheduleCard = Extract<MessageCard, { kind: "schedule" }>;
 
 type WorkspaceMember = BootstrapResponse["members"][number];
 
@@ -86,6 +87,22 @@ function ViewBoardButton({ onOpenTasksTab }: { onOpenTasksTab?: () => void }) {
       View board
     </button>
   );
+}
+
+function formatScheduleTime(value?: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function scheduleActionLabel(card: ScheduleCard): string {
+  if (card.action === "created") return "Schedule created";
+  if (card.action === "cancelled") return card.removed === false ? "Schedule not found" : "Schedule cancelled";
+  return "Schedules listed";
 }
 
 export const GoalBoardCreatedCardView = memo(function GoalBoardCreatedCardView({
@@ -265,6 +282,83 @@ export const TaskSummaryCardView = memo(function TaskSummaryCardView({
   );
 });
 
+export const ScheduleCardView = memo(function ScheduleCardView({
+  card,
+  onNavigateChannel,
+}: { card: ScheduleCard } & GoalTaskCardActions) {
+  const nextRun = formatScheduleTime(card.nextRunAt);
+  const listedJobs = card.jobs.slice(0, 4);
+  const title =
+    card.action === "listed"
+      ? `${card.jobs.length} ${card.jobs.length === 1 ? "schedule" : "schedules"}`
+      : card.name ?? "Schedule";
+
+  return (
+    <CardShell
+      footer={
+        card.channelId && onNavigateChannel ? (
+          <button
+            type="button"
+            onClick={() => onNavigateChannel(card.channelId!)}
+            className="inline-flex items-center gap-1 font-mono text-[10px] text-violet-700 dark:text-violet-300"
+          >
+            Open channel
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        ) : null
+      }
+    >
+      <div className="flex items-start gap-2.5">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-100/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+          <Clock className="h-3.5 w-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              {scheduleActionLabel(card)}
+            </p>
+            {card.status ? (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold capitalize text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {card.status}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {title}
+          </p>
+          {card.cronExpression ? (
+            <p className="mt-1 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+              {card.cronExpression}
+              {nextRun ? ` · next ${nextRun}` : ""}
+              {card.runCount ? ` · runs ${card.runCount}` : ""}
+            </p>
+          ) : null}
+          {card.prompt ? (
+            <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+              {card.prompt}
+            </p>
+          ) : null}
+          {listedJobs.length > 0 ? (
+            <ul className="mt-2 space-y-1.5">
+              {listedJobs.map((job) => (
+                <li key={job.id} className="flex min-w-0 items-center gap-2 text-xs">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                  <span className="min-w-0 flex-1 truncate text-zinc-800 dark:text-zinc-200">
+                    {job.name}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {job.cronExpression}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </div>
+    </CardShell>
+  );
+});
+
 export const MessageCardsView = memo(function MessageCardsView({
   cards,
   ...actions
@@ -283,6 +377,8 @@ export const MessageCardsView = memo(function MessageCardsView({
             return <TaskOriginLinkCardView key={card.cardId} card={card} {...actions} />;
           case "task.summary":
             return <TaskSummaryCardView key={card.cardId} card={card} {...actions} />;
+          case "schedule":
+            return <ScheduleCardView key={card.cardId} card={card} {...actions} />;
           case "artifact.file":
           case "approval":
           case "task.promotion-confirm":

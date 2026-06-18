@@ -3,6 +3,7 @@ import { extractReasoningChunk } from '../utils/extract-reasoning.js';
 import { normalizeRunStepToolCalls } from '../utils/step-tool-calls.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { appendGoalTaskToolCalls } from './goal-task-card.js';
+import { appendScheduleToolCalls } from './schedule-card.js';
 import type { AgentLoopStep } from './agent-loop.js';
 import { runUsedThreadPublishingTool, stepContainsSilentTerminator } from './run-reply-guard.js';
 
@@ -24,7 +25,7 @@ export interface PrepareAgentStepPublicationInput {
 export interface PreparedAgentStepPublication {
   content: string;
   stepToolCalls: MessageToolCall[];
-  goalCards: MessageToolCall[];
+  cards: MessageToolCall[];
   artifact?: MessageToolCall;
   reasoningContent?: string;
   artifactPublished: boolean;
@@ -35,7 +36,7 @@ export interface PreparedAgentStepPublication {
 export function composedStepToolCalls(prepared: PreparedAgentStepPublication): MessageToolCall[] {
   return [
     ...prepared.stepToolCalls,
-    ...prepared.goalCards,
+    ...prepared.cards,
     ...(prepared.artifact ? [prepared.artifact] : []),
   ];
 }
@@ -49,9 +50,13 @@ export async function prepareAgentStepPublication(
   if (!stepText && stepToolCalls.length === 0) return null;
 
   let artifact: MessageToolCall | undefined;
-  let goalCards: MessageToolCall[] = [];
+  let cards: MessageToolCall[] = [];
+  let hasScheduleCard = false;
   if (stepToolCalls.length > 0) {
-    goalCards = appendGoalTaskToolCalls(stepToolCalls, stepToolResults);
+    const goalCards = appendGoalTaskToolCalls(stepToolCalls, stepToolResults);
+    const scheduleCards = appendScheduleToolCalls(stepToolCalls, stepToolResults);
+    cards = [...goalCards, ...scheduleCards];
+    hasScheduleCard = scheduleCards.length > 0;
     artifact = await appendArtifactFileToolCall(stepToolCalls, input.teamRoot, stepToolResults);
     if (!artifact && input.resolveRunStepArtifact) {
       artifact = await input.resolveRunStepArtifact(stepToolCalls.at(-1)?.toolCallId);
@@ -63,7 +68,7 @@ export async function prepareAgentStepPublication(
     : runUsedThreadPublishingTool({ steps: [input.step] });
   const terminatorState = input.terminatorState;
   if (terminatorState) {
-    if (terminatorState.sawTerminatingTool || (stepTerminatedRun && !artifact && goalCards.length === 0)) {
+    if (terminatorState.sawTerminatingTool || (stepTerminatedRun && !artifact && cards.length === 0)) {
       if (stepTerminatedRun) terminatorState.sawTerminatingTool = true;
       return null;
     }
@@ -74,20 +79,20 @@ export async function prepareAgentStepPublication(
     return null;
   }
 
-  if (!stepText && !artifact && goalCards.length === 0 && !input.allowEmptyWithoutArtifact) {
+  if (!stepText && !artifact && cards.length === 0 && !input.allowEmptyWithoutArtifact) {
     return null;
   }
 
   const content =
     stepText ||
-    (artifact ? 'Artifact updated.' : goalCards.length > 0 ? 'Task board updated.' : '');
+    (artifact ? 'Artifact updated.' : hasScheduleCard ? 'Schedule updated.' : cards.length > 0 ? 'Task board updated.' : '');
   const normalizedToolCalls = normalizeRunStepToolCalls(stepToolCalls, stepToolResults);
   const reasoningContent = extractReasoningChunk(input.step) ?? input.reasoningFallback;
 
   return {
     content,
     stepToolCalls: normalizedToolCalls,
-    goalCards,
+    cards,
     artifact,
     reasoningContent,
     artifactPublished: Boolean(artifact),

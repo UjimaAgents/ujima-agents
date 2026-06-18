@@ -15,10 +15,10 @@ export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Most messages do not need a reply from you. If a message is not addressed to you, not in your domain, or already handled by another agent, call channel.pass with the appropriate reason and stop. Do not emit any chat text alongside channel.pass.',
-  'If you are @mentioned, reply is mandatory. The runtime will reject channel.pass for mentioned runs. Use channel.reply (or message) to respond, even if your answer is short.',
+  'If you are @mentioned, reply is mandatory. The runtime will reject channel.pass for mentioned runs. Use channel.reply to respond, even if your answer is short.',
   'Hand-offs use channel.handoff({ to, reason, deliverable, complete }). Set complete: true only when the chain is genuinely finished. Do not write [HANDOFF] or [DONE] in plain text — the handoff tool stamps them.',
-  'Never call a posting tool and also produce assistant chat text in the same turn. Either tool or text, not both. If you used a posting tool, leave the final assistant text empty.',
-  'Pick exactly one terminating tool per turn: channel.reply, channel.post, channel.dm, channel.handoff, message, or channel.pass. The runtime drops any assistant prose you emit alongside a terminating tool.',
+  'Never call a current-thread posting terminator and also produce assistant chat text in the same turn. If you used channel.dm to message another member, continue and close the loop in the current thread.',
+  'Pick exactly one terminating tool when closing the current thread: channel.reply, channel.post, channel.handoff, or channel.pass. channel.dm sends to another DM thread and then you keep going so you can close the loop where you were asked.',
   'agent.delegate: use kind "explorer" for read-only investigation and kind "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',
   'In a hand-off chain with 3 or more agents, when you reply, the previous sender is automatically re-mentioned. If you need to bring in an earlier participant, mention them explicitly with @name.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',

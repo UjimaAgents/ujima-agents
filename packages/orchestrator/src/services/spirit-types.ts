@@ -103,6 +103,7 @@ export interface RunSpiritInput {
   /** Goal/schedule suffixes use this message instead of the task-session origin. */
   promptMessageContent?: string | null;
   promptGoalMode?: boolean;
+  promptScheduleMode?: boolean;
   maxIterations?: number;
   toolAllowlist?: readonly string[];
   role?: SpiritRole;

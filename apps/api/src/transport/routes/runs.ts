@@ -21,6 +21,7 @@ import {
   assertReadyWorkspaceRoot,
 } from './workspace-root.js';
 import { requireOrgSession } from './org-auth.js';
+import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage, workspaceRootError } from './route-errors.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
@@ -267,6 +268,7 @@ export function registerRunRoutes(
       assertReadyWorkspaceRoot(repo, req.body.organizationId);
       const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
       if (forbidden) return forbidden;
+      const authState = auth.getAuthState(readSessionToken(req));
       const status =
         req.body.resolution === 'reject' ? 'rejected' : 'approved';
       return await approvals.resolveApproval({
@@ -275,6 +277,7 @@ export function registerRunRoutes(
         status,
         resolution: req.body.resolution,
         reason: req.body.reason,
+        resolverMemberId: authState.member?.id,
       });
     } catch (err) {
       const rootError = workspaceRootError(reply, err);

@@ -8,6 +8,7 @@ export type OrganizationQuery = z.infer<typeof OrganizationQuerySchema>;
 
 const MessageCreateMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  scheduleMode: z.boolean().optional(),
   reasoningEffort: ReasoningEffortSchema.optional(),
 }).optional();
 

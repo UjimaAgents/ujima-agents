@@ -57,8 +57,8 @@ const DM_WAKE_SCAFFOLD = [
   SCAFFOLD_RULES.readThreadState,
   'This is a direct message (1:1) thread. Messages from your conversation partner are addressed to you — reply when they ask you to do something or expect a response.',
   'If the peer is another agent and the conversation has reached a natural stopping point, call channel.ack instead of sending a filler reply.',
-  'Do not call channel.pass in a DM because you think you were not @mentioned; that rule applies to shared channels only.',
-  'Use a posting tool (channel.reply or channel.dm) to respond.',
+  'Do not call channel.pass in a human DM because you think you were not @mentioned; that rule applies to shared channels only.',
+  'Use channel.reply to answer in this DM. Use channel.dm only to message a different member, then keep going so you can close the loop here.',
 ].join('\n');
 
 // Agent↔agent DM scaffold. Unlike a human DM (where the human is owed a
@@ -173,9 +173,9 @@ export function buildPassDenialReason(
   policy: Pick<WakeReplyPolicy, 'mandatoryReply' | 'conversationKind'>,
 ): string {
   if (policy.mandatoryReply) {
-    return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply or channel.dm.';
+    return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply.';
   }
-  return 'direct-message: channel.pass is not allowed in a 1:1 DM. Reply via channel.reply or channel.dm.';
+  return 'direct-message: channel.pass is not allowed in a human 1:1 DM. Reply via channel.reply.';
 }
 
 export function filterToolsForWakeReplyPolicy(
@@ -192,8 +192,8 @@ export function filterToolsForWakeReplyPolicy(
     // woken by channel activity has no `channel.dm` in its palette, so
     // it can only reply on the shared surface where the team can see
     // it — it cannot peel a teammate (or a human) into a siloed 1:1.
-    // DMs remain reachable on DM wakes. The agent→agent hard block in
-    // channelDmTool is the leakproof backstop for existing DM threads.
+    // DMs remain reachable on DM wakes, where channel.dm is a side-effect
+    // delivery tool rather than the current-thread terminator.
     if (policy.conversationKind === 'channel' && toolId === 'channel.dm') {
       return false;
     }

@@ -1447,7 +1447,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     const isPublishing =
       run.terminatingTool === 'channel.reply' ||
       run.terminatingTool === 'channel.post' ||
-      run.terminatingTool === 'channel.dm' ||
       run.terminatingTool === 'message';
     if (isPublishing && run.threadId) {
       const channelId = context.repo.getThread(run.organizationId, run.threadId)?.channelId;

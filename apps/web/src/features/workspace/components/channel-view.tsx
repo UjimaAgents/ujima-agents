@@ -8,6 +8,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { SelectedConversation } from "../types";
 import { useConversationSync } from "../use-conversation-sync";
+import type { ConversationMessageMetadata } from "../conversation-transport";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
 import { TerminalDrawer } from "./chat/terminal-drawer";
 import {
@@ -29,6 +30,7 @@ import {
   getDirectMessageThreadId,
   parseConfiguredProviderModelValue,
   resolveMemberModelSelection,
+  ApprovalRequestSchema,
   RunStateSchema,
   type RunState,
   type ActivityEvent,
@@ -50,7 +52,8 @@ import { FileListSkeleton } from "./file-list-skeleton";
 import { MemberListSkeleton } from "./member-list-skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { resolveWorkspaceApproval } from "../approval-resolution";
-import { runToActivity } from "../activity-events";
+import { approvalToActivity, runToActivity } from "../activity-events";
+import { approvalToCard } from "../approval-card-data";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
@@ -272,6 +275,7 @@ export function ChannelView({
   const [questionErrors, setQuestionErrors] = useState<Record<string, string>>({});
   const [stoppingRunId, setStoppingRunId] = useState<string | undefined>();
   const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
+  const [scheduleMode, setScheduleMode] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const feed = useConversationSync(bootstrap, conversation);
@@ -288,6 +292,7 @@ export function ChannelView({
     setDetailsWidth,
     setDetailsTab,
     setChatFontSize,
+    upsertApproval,
     upsertRun,
     setActiveTerminals,
   } = useWorkspaceStore(
@@ -298,10 +303,15 @@ export function ChannelView({
       setDetailsWidth: state.setDetailsWidth,
       setDetailsTab: state.setDetailsTab,
       setChatFontSize: state.setChatFontSize,
+      upsertApproval: state.upsertApproval,
       upsertRun: state.upsertRun,
       setActiveTerminals: state.setActiveTerminals,
     }))
   );
+
+  useEffect(() => {
+    setScheduleMode(false);
+  }, [conversation.id, conversation.type]);
 
   const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
   const memberIndexById = useMemo(
@@ -395,7 +405,10 @@ export function ChannelView({
 
   const approvalsSource = activeTab === "conversation" || activeTab === "approvals" ? feed.approvals : null;
   const visibleApprovals = useMemo(
-    () => (approvalsSource ? queueApprovals(approvalsSource) : []),
+    () =>
+      approvalsSource
+        ? queueApprovals(approvalsSource.filter((approval) => approval.status === "pending"))
+        : [],
     [approvalsSource],
   );
   const pendingThreadApprovals = useMemo(
@@ -642,6 +655,16 @@ export function ChannelView({
               ? body.message
               : "Unable to resolve approval.";
           setApprovalErrors((state) => ({ ...state, [approvalId]: message }));
+          return;
+        }
+        const body = await response.json().catch(() => null);
+        const parsed = ApprovalRequestSchema.safeParse(body);
+        if (parsed.success) {
+          upsertApproval(
+            parsed.data,
+            (value, state) => approvalToCard(value, { members: state.members }),
+            approvalToActivity,
+          );
         }
       } finally {
         setResolvingApprovals((state) => {
@@ -651,7 +674,7 @@ export function ChannelView({
         });
       }
     },
-    [organizationId],
+    [organizationId, upsertApproval],
   );
 
   const stopAgentRun = useCallback(
@@ -762,22 +785,7 @@ export function ChannelView({
   }, []);
 
   const handleComposerCommand = useCallback(
-    async (command: string, content: string | undefined, metadata: Record<string, unknown> | undefined) => {
-      if (command === "schedule") {
-        const prompt = content?.replace(/^\/schedule\s*/i, "").trim();
-        if (!prompt) {
-          throw new Error("Usage: /schedule do this");
-        }
-        await feedRef.current.sendMessage(
-          `Please use the schedule tool for this request: ${prompt}`,
-          undefined,
-          undefined,
-          metadata,
-        );
-        setReplyTo(null);
-        scrollToLatest("auto");
-        return;
-      }
+    async (command: string) => {
       await feedRef.current.archiveConversation(command as "summarize" | "clear");
       setReplyTo(null);
       scrollToLatest("auto");
@@ -786,7 +794,7 @@ export function ChannelView({
   );
 
   const handleSend = useCallback(
-    (content: string, attachmentIds?: string[], metadata?: Record<string, unknown>) => {
+    (content: string, attachmentIds?: string[], metadata?: ConversationMessageMetadata) => {
       if (isAgent) {
         openDetailsForAgentMessage();
       }
@@ -1203,6 +1211,8 @@ export function ChannelView({
                 organizationId={organizationId}
                 goalMode={goalMode}
                 onGoalModeChange={onGoalModeChange}
+                scheduleMode={scheduleMode}
+                onScheduleModeChange={setScheduleMode}
                 readOnly={isReadOnly}
                 reasoningProvider={reasoningModelSelection?.provider}
                 reasoningModelValue={reasoningModelSelection?.model}

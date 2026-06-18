@@ -13,6 +13,12 @@ export interface ConversationTransport {
   memberIds: string[];
 }
 
+export interface ConversationMessageMetadata {
+  goalMode?: boolean;
+  scheduleMode?: boolean;
+  reasoningEffort?: ReasoningEffort;
+}
+
 export type ConversationStreamEnvelope =
   | { type: "ready" }
   | { type: "error"; message: string }
@@ -44,7 +50,7 @@ export function buildConversationMessagePayload(
   content: string,
   parentMessageId?: string,
   attachmentIds?: string[],
-  metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort },
+  metadata?: ConversationMessageMetadata,
   clientMessageId?: string,
 ):
   | {
@@ -54,7 +60,7 @@ export function buildConversationMessagePayload(
       content: string;
       attachmentIds?: string[];
       parentMessageId?: string;
-      metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort };
+      metadata?: ConversationMessageMetadata;
       clientMessageId?: string;
     }
   | {
@@ -65,7 +71,7 @@ export function buildConversationMessagePayload(
       content: string;
       attachmentIds?: string[];
       parentMessageId?: string;
-      metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort };
+      metadata?: ConversationMessageMetadata;
       clientMessageId?: string;
     } {
   if (transport.recipientId) {

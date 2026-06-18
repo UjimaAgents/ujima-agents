@@ -25,9 +25,9 @@ import {
   buildConversationMessagePayload,
   buildConversationStreamParams,
   resolveConversationTransport,
+  type ConversationMessageMetadata,
   type ConversationStreamEnvelope,
 } from "./conversation-transport";
-import type { ReasoningEffort } from "@ujima/shared/browser";
 import {
   activityStateToStatus,
   conversationActivityState,
@@ -80,7 +80,7 @@ export interface ConversationSyncResult {
     content: string,
     parentMessageId?: string,
     attachmentIds?: string[],
-    metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort },
+    metadata?: ConversationMessageMetadata,
     /**
      * Retry/resend hook: when present, sendMessage reuses this
      * idempotency key (and the matching `temp:<id>` pending entry)
@@ -399,7 +399,7 @@ export function useConversationSync(
         createdAt: now,
         parentMessageId,
         pending: true,
-        tag: { label: "Sending", variant: "default" },
+        tag: messageModeTag(metadata) ?? { label: "Sending", variant: "default" },
         detail: "Sending…",
       });
 
@@ -881,7 +881,14 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     inputTokens: message.inputTokens,
     outputTokens: message.outputTokens,
     ...(message.metadata?.runId ? { streamRunId: message.metadata.runId } : {}),
+    ...(messageModeTag(message.metadata) ? { tag: messageModeTag(message.metadata) } : {}),
   };
+}
+
+function messageModeTag(metadata: ConversationMessageMetadata | undefined) {
+  if (metadata?.scheduleMode) return { label: "Schedule", variant: "planning" as const };
+  if (metadata?.goalMode) return { label: "Goal", variant: "analysis" as const };
+  return undefined;
 }
 
 function resolveMentionNames(content: string, members: Member[]): string[] {

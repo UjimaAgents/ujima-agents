@@ -59,7 +59,7 @@ export function hasStructuredChatCard(toolCalls?: ChatMessageData["toolCalls"]):
   return getMessageCards(toolCalls).some((card) => card.kind !== "tool.call");
 }
 
-const BOILERPLATE_STEP_CONTENT = new Set(["Artifact updated.", "Task board updated."]);
+const BOILERPLATE_STEP_CONTENT = new Set(["Artifact updated.", "Task board updated.", "Schedule updated."]);
 
 export function isBoilerplateStepContent(content: string): boolean {
   return BOILERPLATE_STEP_CONTENT.has(content.trim());

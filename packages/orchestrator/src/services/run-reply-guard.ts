@@ -2,13 +2,12 @@
  * Tools that terminate the run loop. When any of these fired inside
  * a step, RunService must NOT publish the final assistant `text` as a
  * channel message — either the tool already published a visible reply
- * (`message`, `channel.post`, `channel.reply`, `channel.dm`,
- * `channel.handoff`) or the agent explicitly chose silence
+ * (`message`, `channel.post`, `channel.reply`, `channel.handoff`)
+ * or the agent explicitly chose silence
  * (`channel.pass`).
  */
 export const RUN_TERMINATING_TOOL_NAMES = new Set([
   'message',
-  'channel.dm',
   'channel.reply',
   'channel.post',
   'channel.handoff',
@@ -96,12 +95,10 @@ export function collectFiredToolNames(result: unknown): Set<string> {
 }
 
 /**
- * Returns true when the generateText result already delivered content via a
- * channel/message tool that writes to the thread.
- *
- * Note: `channel.pass` is also in {@link RUN_TERMINATING_TOOL_NAMES} —
- * `runUsedThreadPublishingTool` still returns true for it. Run-loop
- * branching distinguishes pass vs. publish via {@link findTerminatingTool}.
+ * Returns true when the generateText result already closed the current
+ * thread via a visible reply/post/handoff or a silent pass/ack. `channel.dm`
+ * is intentionally excluded: it delivers to another DM thread and the agent
+ * should keep going so it can close the loop where it was asked.
  */
 export function runUsedThreadPublishingTool(result: unknown): boolean {
   return findTerminatingTool(result) !== null;
@@ -115,9 +112,9 @@ export function runUsedThreadPublishingTool(result: unknown): boolean {
  * pin precedence so the run-loop always sees the same terminator
  * for the same combination:
  *
- *   1. posting tools (message, channel.post/reply/dm) — these
+ *   1. posting tools (message, channel.post/reply) — these
  *      already published a visible reply, that's the truth on
- *      the wire.
+ *      the current thread.
  *   2. channel.handoff — also publishes a visible message
  *      (with the [HANDOFF]/[DONE] marker).
  *   3. channel.pass — explicit silence, lowest precedence so it
@@ -131,7 +128,6 @@ const TERMINATOR_PRECEDENCE: readonly string[] = [
   'message',
   'channel.post',
   'channel.reply',
-  'channel.dm',
   'channel.handoff',
   // `channel.ack` and `channel.pass` are both silent terminators (no
   // channel message published). Precedence places real publishes

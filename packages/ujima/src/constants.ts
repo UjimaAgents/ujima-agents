@@ -142,7 +142,7 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
   'channel.dm': {
     id: 'channel.dm',
     name: 'Channel DM',
-    description: 'Send a direct message, lazily creating the DM channel when needed. Use ignore for a private DM that skips wake fanout, not for deciding whether to reply.',
+    description: 'Send a direct message, lazily creating the DM channel when needed. This is a side-effect: close the current thread separately with channel.reply, channel.post, or channel.pass. Use ignore for a private DM that skips wake fanout.',
     actions: ['message'],
     pathScopes: [],
     requiresApproval: false,

@@ -31,6 +31,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
+import { scheduleModeEnabledFromMessage } from './schedule-prompt.js';
 import { isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
@@ -612,8 +613,9 @@ export class SpiritServiceBase {
     agentId: string,
     steps: readonly { usage?: unknown }[],
   ): void {
-    // Sum input and output tokens across all steps so the live counter
-    // doesn't blink out when the last step has zero tool usage.
+    // Sum the current turn's tokens across all its steps.
+    // Both input and output are per-turn values — input is the model's
+    // context window, output is this turn's generated tokens.
     let totalInput = 0;
     let totalOutput = 0;
     for (const step of steps) {
@@ -665,6 +667,29 @@ export class SpiritServiceBase {
     return `${organizationId}:${runId}`;
   }
 
+  /**
+   * Resolve the final terminating tool for a run, preserving any silent
+   * terminator that a mid-run side-effect (mirror-loop guard, vacuous-ack
+   * suppression) already wrote onto the run row. Without this step, the
+   * freshly-computed `detected` value (which sees the model's original
+   * toolcall via result steps) would clobber the `channel.ack` that the
+   * mirror-suppress flow persisted earlier — and metrics would report a
+   * publish that never actually went through.
+   */
+  protected resolveTerminatingTool(
+    organizationId: string,
+    runId: string | null | undefined,
+    detected: string | null,
+  ): string | null {
+    if (!runId) return detected;
+    const persisted = this.repo.getRun(organizationId, runId);
+    const persistedTerminator = persisted?.terminatingTool;
+    if (persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass') {
+      return persistedTerminator;
+    }
+    return detected;
+  }
+
   protected consumeDeferredApprovalResume(organizationId: string, runId: string): boolean {
     const key = this.runKey(organizationId, runId);
     if (!this.deferredApprovalResumes.has(key)) {
@@ -674,13 +699,6 @@ export class SpiritServiceBase {
     return true;
   }
 
-  protected isGoalModeActive(organizationId: string, threadId: string): boolean {
-    if (!threadId) return false;
-    return goalModeEnabledFromMessage(
-      this.repo.getLatestHumanMessageInThread(organizationId, threadId),
-    );
-  }
-
   protected resolveSystemPromptSuffix(input: {
     organizationId: string;
     taskSessionId?: string;
@@ -688,11 +706,13 @@ export class SpiritServiceBase {
     extraSuffix?: string;
     messageContent?: string | null;
     goalMode?: boolean;
+    scheduleMode?: boolean;
   }): string | undefined {
     let messageContent = input.messageContent;
     let goalMode = input.goalMode;
+    let scheduleMode = input.scheduleMode;
 
-    if (messageContent === undefined && goalMode === undefined && input.taskSessionId) {
+    if (messageContent === undefined && goalMode === undefined && scheduleMode === undefined && input.taskSessionId) {
       const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
       const originMessageId = session?.origin?.messageId;
       const originMessage = originMessageId
@@ -700,17 +720,17 @@ export class SpiritServiceBase {
         : null;
       messageContent = originMessage?.content;
       goalMode = goalModeEnabledFromMessage(originMessage);
+      scheduleMode = scheduleModeEnabledFromMessage(originMessage);
     }
 
-    if (messageContent === undefined && input.threadId) {
-      messageContent = this.repo.getLatestHumanMessageInThread(
+    if ((messageContent === undefined || goalMode === undefined || scheduleMode === undefined) && input.threadId) {
+      const latestHumanMessage = this.repo.getLatestHumanMessageInThread(
         input.organizationId,
         input.threadId,
-      )?.content;
-    }
-
-    if (goalMode === undefined && input.threadId) {
-      goalMode = this.isGoalModeActive(input.organizationId, input.threadId);
+      );
+      if (messageContent === undefined) messageContent = latestHumanMessage?.content;
+      if (goalMode === undefined) goalMode = goalModeEnabledFromMessage(latestHumanMessage);
+      if (scheduleMode === undefined) scheduleMode = scheduleModeEnabledFromMessage(latestHumanMessage);
     }
 
     const pendingTasks = (this.repo.listGoalTasksByOrganization?.(input.organizationId) ?? [])
@@ -731,6 +751,7 @@ ${pendingTasks.map((task) => `- task_id=${task.id} | goal_id=${task.goalId} | go
       extraSuffix: [input.extraSuffix, pendingTaskSuffix].filter(Boolean).join('\n\n') || undefined,
       messageContent,
       goalMode,
+      scheduleMode,
     });
   }
 

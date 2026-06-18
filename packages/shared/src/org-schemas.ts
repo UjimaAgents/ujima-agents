@@ -262,6 +262,7 @@ export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
 export const MessageMetadataSchema = z.object({
   goalMode: z.boolean().optional(),
+  scheduleMode: z.boolean().optional(),
   reasoningEffort: ReasoningEffortSchema.optional(),
   delegate: z.object({
     parentRunId: IdSchema.optional(),
@@ -470,6 +471,15 @@ export const TaskSessionSchema = z.object({
 });
 export type TaskSession = z.infer<typeof TaskSessionSchema>;
 
+export const CronExpressionSchema = z.string().min(1).regex(
+  /^(\S+\s+){4}\S+$/,
+  'Must be a valid 5-field cron expression (min hour dom mon dow)',
+);
+export type CronExpression = z.infer<typeof CronExpressionSchema>;
+
+export const JobStatusSchema = z.enum(['active', 'paused', 'completed', 'failed']);
+export type JobStatus = z.infer<typeof JobStatusSchema>;
+
 // -----------------------------------------------------------------------
 // Generic message card primitive (Phase 1)
 // -----------------------------------------------------------------------
@@ -583,19 +593,6 @@ export const GoalTaskUpdatedCardSchema = z.object({
   handoverSummary: z.string().optional(),
   actorMemberId: IdSchema.optional(),
 });
-
-export const MessageCardSchema = z.discriminatedUnion('kind', [
-  TaskJoinCardSchema,
-  TaskOriginLinkCardSchema,
-  TaskSummaryCardSchema,
-  ArtifactFileCardSchema,
-  ApprovalCardSchema,
-  PromotionConfirmCardSchema,
-  ToolCallCardSchema,
-  GoalBoardCreatedCardSchema,
-  GoalTaskUpdatedCardSchema,
-]);
-export type MessageCard = z.infer<typeof MessageCardSchema>;
 
 export const ToolCallSchema = z.object({
   toolCallId: IdSchema,
@@ -789,15 +786,6 @@ export type RunProcedureApplied = z.infer<typeof RunProcedureAppliedSchema>;
 // Scheduled Jobs (cron)
 // -----------------------------------------------------------------------
 
-export const CronExpressionSchema = z.string().min(1).regex(
-  /^(\S+\s+){4}\S+$/,
-  'Must be a valid 5-field cron expression (min hour dom mon dow)',
-);
-export type CronExpression = z.infer<typeof CronExpressionSchema>;
-
-export const JobStatusSchema = z.enum(['active', 'paused', 'completed', 'failed']);
-export type JobStatus = z.infer<typeof JobStatusSchema>;
-
 export const ScheduledJobSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
@@ -815,6 +803,46 @@ export const ScheduledJobSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type ScheduledJob = z.infer<typeof ScheduledJobSchema>;
+
+export const ScheduleCardJobPreviewSchema = z.object({
+  id: IdSchema,
+  name: z.string().min(1),
+  cronExpression: CronExpressionSchema,
+  status: JobStatusSchema,
+  channelId: IdSchema.optional(),
+  nextRunAt: TimestampSchema.optional(),
+  runCount: z.number().int().min(0).default(0),
+});
+
+export const ScheduleCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal('schedule'),
+  action: z.enum(['created', 'cancelled', 'listed']),
+  jobId: IdSchema.optional(),
+  name: z.string().min(1).optional(),
+  cronExpression: CronExpressionSchema.optional(),
+  prompt: z.string().min(1).optional(),
+  channelId: IdSchema.optional(),
+  status: JobStatusSchema.optional(),
+  nextRunAt: TimestampSchema.optional(),
+  runCount: z.number().int().min(0).default(0),
+  removed: z.boolean().optional(),
+  jobs: z.array(ScheduleCardJobPreviewSchema).default([]),
+});
+
+export const MessageCardSchema = z.discriminatedUnion('kind', [
+  TaskJoinCardSchema,
+  TaskOriginLinkCardSchema,
+  TaskSummaryCardSchema,
+  ArtifactFileCardSchema,
+  ApprovalCardSchema,
+  PromotionConfirmCardSchema,
+  ToolCallCardSchema,
+  GoalBoardCreatedCardSchema,
+  GoalTaskUpdatedCardSchema,
+  ScheduleCardSchema,
+]);
+export type MessageCard = z.infer<typeof MessageCardSchema>;
 
 // Tier curation suggestion (mcp_connector_dispatch_plan.md §9.4 / PR 9).
 //

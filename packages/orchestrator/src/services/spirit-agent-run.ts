@@ -249,6 +249,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       extraSuffix: input.systemPromptSuffix,
       messageContent: input.promptMessageContent,
       goalMode: input.promptGoalMode,
+      scheduleMode: input.promptScheduleMode,
     });
     const contextMessages: ModelMessage[] = [
       // Per-wake timestamp — outside the system prompt so the Anthropic
@@ -464,16 +465,8 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         persistMessageTokens(this.repo, finalMessage, tokenUsage);
       }
 
-      // Prefer the provider-supplied `totalTokens` over our own
-      // input+output sum. Some providers (and the V3 mock used in
-      // tests) return non-numeric fields on `inputTokens` /
-      // `outputTokens` that wouldn't sum to a number — and even when
-      // they're flat, the sum can drift from `totalTokens` because
-      // it ignores reasoning/cached tokens that the provider counts.
-      // Falling back to the sum preserves behaviour when the provider
-      // omits `totalTokens`. Coercing through `Number()` defends
-      // against accidental non-numeric leaks reaching SpiritSchema's
-      // `z.number().int().min(0)` validator.
+      // Prefer provider `totalTokens`; fall back to input+output sum
+      // (handles providers that omit it or return non-numeric fields).
       totalTokens = tokenUsage.totalTokens;
       const completed: Spirit = SpiritSchema.parse({
         ...running,
@@ -487,34 +480,26 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       this.repo.saveSpirit(completed);
       this.registry.unregister(completed.organizationId, completed.memberId, completed.id);
       // Persisted run-steps act as a safety net when provider/SDK
-      // result shapes drop tool names from the final step object.
-      // Resolve the final terminator, preserving any silent
-      // terminator a mid-run side-effect (mirror-loop guard, vacuous-
-      // ack suppression) already wrote onto the run row. Without this
-      // preservation step, the freshly-computed `detected` value
-      // (which sees the model's original `channel.reply` toolcall via
-      // `result.steps`) would clobber the `channel.ack` that the
-      // mirror-suppress flow persisted earlier — and metrics would
-      // report a publish that never actually went through.
-      const persistedRun = spirit.runId
-        ? this.repo.getRun(input.organizationId, spirit.runId)
-        : null;
-      const persistedTerminator = persistedRun?.terminatingTool;
-      const persistedIsSilent =
-        persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
-      const finalTerminatingTool = persistedIsSilent
-        ? persistedTerminator
-        : detectedTerminatingTool;
-      if (persistedRun) {
-        const completedRun = this.saveRunAndEmit(SocketEventNames.runCompleted, {
-          ...persistedRun,
-          status: 'completed',
-          step: 'completed',
-          summary: lastText || persistedRun.summary,
-          endedAt: new Date().toISOString(),
-          terminatingTool: finalTerminatingTool,
-        });
-        this.invokeRunTerminalHook(completedRun);
+      // Resolve the final terminator, preserving any silent terminator
+      // a mid-run side-effect already wrote onto the run row.
+      const finalTerminatingTool = this.resolveTerminatingTool(
+        input.organizationId,
+        spirit.runId,
+        detectedTerminatingTool,
+      );
+      if (spirit.runId) {
+        const persistedRun = this.repo.getRun(input.organizationId, spirit.runId);
+        if (persistedRun) {
+          const completedRun = this.saveRunAndEmit(SocketEventNames.runCompleted, {
+            ...persistedRun,
+            status: 'completed',
+            step: 'completed',
+            summary: lastText || persistedRun.summary,
+            endedAt: new Date().toISOString(),
+            terminatingTool: finalTerminatingTool,
+          });
+          this.invokeRunTerminalHook(completedRun);
+        }
       }
       this.emit(SocketEventNames.spiritCompleted, completed);
       this.maybeFinalizeTaskSession(
@@ -726,7 +711,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     });
     const messageToolCalls = [
       ...wrapped,
-      ...prepared.goalCards,
+      ...prepared.cards,
       ...(prepared.artifact ? [prepared.artifact] : []),
     ];
     const message = input.turn.publishMessage(

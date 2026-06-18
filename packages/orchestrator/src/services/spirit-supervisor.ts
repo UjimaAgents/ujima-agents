@@ -14,6 +14,7 @@ import type {
 import { buildAgentMessage } from './message-factory.js';
 import { publishStoredMessage } from './message-publisher.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
+import { scheduleModeEnabledFromMessage } from './schedule-prompt.js';
 import { SpiritServiceAgentRun } from './spirit-agent-run.js';
 import { evictStaleTimestamps } from '../utils/ttl-map.js';
 
@@ -104,6 +105,7 @@ export class SpiritServiceSupervisor extends SpiritServiceAgentRun {
         extraPrompt: this.buildSupervisorAlertContext(taskSessionId, input),
         promptMessageContent: sourceMessage?.content,
         promptGoalMode: goalModeEnabledFromMessage(sourceMessage),
+        promptScheduleMode: scheduleModeEnabledFromMessage(sourceMessage),
       });
       this.repo.saveTaskSession({
         ...session,

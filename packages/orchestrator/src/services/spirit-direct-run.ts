@@ -44,7 +44,7 @@ function isDelegateRun(run: RunState, repo: { getMessage(organizationId: string,
   return !!(source?.metadata as { delegate?: unknown } | undefined)?.delegate;
 }
 
-const VISIBLE_TERMINATING_TOOLS = new Set(['message', 'channel.post', 'channel.reply', 'channel.dm', 'channel.handoff']);
+const VISIBLE_TERMINATING_TOOLS = new Set(['message', 'channel.post', 'channel.reply', 'channel.handoff']);
 
 export class SpiritService extends SpiritServiceSupervisor {
   async resumeAfterApproval(
@@ -63,13 +63,7 @@ export class SpiritService extends SpiritServiceSupervisor {
         });
         const run = this.repo.getRun(organizationId, runId);
         if (run) {
-          this.repo.saveRun({
-            ...run,
-            status: 'failed',
-            step: 'failed',
-            summary: 'Approval rejected by user',
-            endedAt: run.endedAt ?? new Date().toISOString(),
-          });
+          this.failRun(run, 'Approval rejected by user');
         }
         return failed;
       }
@@ -135,13 +129,7 @@ export class SpiritService extends SpiritServiceSupervisor {
         });
         const run = this.repo.getRun(organizationId, runId);
         if (run) {
-          this.repo.saveRun({
-            ...run,
-            status: 'failed',
-            step: 'failed',
-            summary: 'Implementation rejected by user',
-            endedAt: run.endedAt ?? new Date().toISOString(),
-          });
+          this.failRun(run, 'Implementation rejected by user');
         }
         return failed;
       }
@@ -437,17 +425,10 @@ export class SpiritService extends SpiritServiceSupervisor {
       return this.failRun(run, `Agent not found: ${member.id}`);
     }
 
-    // No strict pre-flight on the *preferred* provider's key — that
-    // short-circuits the runtime fallback in `resolveSpiritModel`,
-    // which walks every team-configured provider with a key and
-    // picks the first usable one. The fallback is the whole point of
-    // letting an org swap providers without per-role migration; the
-    // old gate here turned a recoverable "no key for the preferred
-    // provider" state into a hard run failure even when other
-    // providers were ready to serve. If *no* provider has a key,
-    // `resolveSpiritModel` throws a clear "No usable provider for
-    // member ..." error and the outer catch below converts that to
-    // `failRun` with the same friendly summary.
+    // No strict pre-flight on the preferred provider's key — the
+    // runtime fallback in resolveSpiritModel walks configured providers
+    // and picks the first usable one. If none have keys, it throws
+    // clearly and the catch below converts to failRun.
 
     const preCancel = this.repo.getRun(run.organizationId, run.id);
     if (preCancel?.status === 'cancelled') {
@@ -627,21 +608,11 @@ export class SpiritService extends SpiritServiceSupervisor {
 
       const detectedTerminatingTool =
         findTerminatingTool(result) ?? findTerminatingToolFromRunSteps(runSteps);
-      // Preserve any silent terminator that a mid-run side-effect
-      // already persisted onto the run row (mirror-loop guard fires
-      // `tryMirrorSuppress` which writes `terminatingTool='channel.ack'`).
-      // Without this preservation step, the freshly-computed
-      // `detected` value (which sees the model's original
-      // `channel.reply` toolcall via `result.steps`) would clobber
-      // the silent terminator on the way through `completeRun`,
-      // and metrics would report a publish that never happened.
-      const persistedRunRow = this.repo.getRun(run.organizationId, run.id);
-      const persistedTerminator = persistedRunRow?.terminatingTool;
-      const persistedIsSilent =
-        persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass';
-      const terminatingTool: string | null = persistedIsSilent
-        ? persistedTerminator
-        : detectedTerminatingTool;
+      const terminatingTool = this.resolveTerminatingTool(
+        run.organizationId,
+        run.id,
+        detectedTerminatingTool,
+      );
       turn.backfillTokens({
         finalText: text,
         lastText: turn.lastContentValue,
@@ -680,8 +651,6 @@ export class SpiritService extends SpiritServiceSupervisor {
         this.persistSilentTrace(running, reasoningContent);
         return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
       }
-
-
 
       if (!terminatingTool && text.length === 0 && !artifactFileToolCall) {
         if (wakeReason === 'mention') {
