@@ -178,13 +178,12 @@ async function generateWithCodex(
     } as const;
     state.toolCalls.push(call);
     handlers?.onToolCall(call);
+    // Acknowledge the tool call to unblock Codex. The real result will be
+    // injected as function_call_output in the next turn's history.
     rpc.respond(msg.id, {
-      contentItems: [{ type: 'input_text', text: 'Tool call delegated to Ujima.' }],
+      contentItems: [{ type: 'input_text', text: 'Tool call queued — results sent in next step.' }],
       success: true,
     });
-    if (state.responseId) {
-      await rpc.request('turn/interrupt', { threadId, turnId: state.responseId }).catch(() => undefined);
-    }
   });
   const offNotification = rpc.onNotification((msg) => {
     const params = msg.params as { threadId?: string } | undefined;

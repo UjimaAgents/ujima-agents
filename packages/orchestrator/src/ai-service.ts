@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { type ModelMessage, type ToolSet } from 'ai';
 import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
+import { AgentLoopLogger } from './debug/agent-loop-logger.js';
 import {
   AGENT_KIND,
   DEFAULT_SPIRIT_TEMPERATURE,
+  buildEnvironmentTimestamp,
   type ReasoningEffort,
   type SpiritRole,
   type WakeReason,
@@ -253,17 +255,42 @@ export class AiService {
       content: input.prompt,
     });
 
-    return runAgentLoop({
+    const memDebugLogger = new AgentLoopLogger();
+    memDebugLogger.setWorkspaceRoot(team.workspace.root);
+    memDebugLogger.setContext({
+      agentId: input.memberId,
+      threadId: input.threadId,
+      organizationId: input.organizationId,
       model,
-      system,
+      systemPrompt: system,
       messages,
       tools: toolDefs,
-      stopWhen: () => false,
-      maxOutputTokens: 800,
-      temperature: 0.2,
-      toolChoice: 'auto',
-      abortSignal: input.abortSignal,
     });
+    try {
+      const memResult = await runAgentLoop({
+        model,
+        system,
+        messages,
+        tools: toolDefs,
+        stopWhen: () => false,
+        maxOutputTokens: 800,
+        temperature: 0.2,
+        toolChoice: 'auto',
+        abortSignal: input.abortSignal,
+      });
+      memDebugLogger.setTokenUsage({
+        inputTokens: memResult.usage?.inputTokens,
+        outputTokens: memResult.usage?.outputTokens,
+        totalTokens: memResult.usage?.totalTokens,
+      });
+      memDebugLogger.flush().catch(() => {});
+      return memResult;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      memDebugLogger.setError(message);
+      memDebugLogger.flush().catch(() => {});
+      throw err;
+    }
   }
 
   async generateRunReply(
@@ -567,41 +594,76 @@ export class AiService {
     const turnMaxOutputTokens = 4096;
     const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
     const provider = team.getProvider(providerName);
-    return runAgentWithRetry({
+    const debugLogger = new AgentLoopLogger();
+    debugLogger.setWorkspaceRoot(team.workspace.root);
+    debugLogger.setContext({
+      agentId: input.agentId,
+      threadId: input.threadId,
+      organizationId: input.organizationId,
       model,
-      system: systemPrompt,
+      systemPrompt,
       messages,
       tools: toolDefs,
-      attachedMcpServers,
-      stopWhen: () => false,
-      maxOutputTokens: turnMaxOutputTokens,
-      temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
-      toolChoice: 'auto',
-      abortSignal: input.abortSignal,
-      detectExternalPause: input.detectExternalPause,
-      onChunk: input.onChunk,
-      onStepFinish: input.onStepFinish,
-      loadInterruptMessages: () =>
-        loadInterruptModelMessages({
-          repo: this.repo,
-          organizationId: input.organizationId,
-          threadId: input.threadId,
-          agentId: input.agentId,
-          cursor: interruptCursor,
-          runId: input.runId,
+    });
+    try {
+      const result = await runAgentWithRetry({
+        model,
+        system: systemPrompt,
+        messages,
+        tools: toolDefs,
+        attachedMcpServers,
+        stopWhen: () => false,
+        maxOutputTokens: turnMaxOutputTokens,
+        temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
+        toolChoice: 'auto',
+        abortSignal: input.abortSignal,
+        detectExternalPause: input.detectExternalPause,
+        onChunk: input.onChunk
+          ? (chunk) => {
+              debugLogger.handleChunk(chunk);
+              input.onChunk!(chunk);
+            }
+          : (chunk) => debugLogger.handleChunk(chunk),
+        onStepFinish: input.onStepFinish
+          ? (step, steps) => {
+              debugLogger.handleStepFinish(step);
+              input.onStepFinish!(step, steps);
+            }
+          : (step) => debugLogger.handleStepFinish(step),
+        loadInterruptMessages: () =>
+          loadInterruptModelMessages({
+            repo: this.repo,
+            organizationId: input.organizationId,
+            threadId: input.threadId,
+            agentId: input.agentId,
+            cursor: interruptCursor,
+            runId: input.runId,
+          }),
+        onModelNotFound: createProviderSafeFallbackHandler({
+          logLabel: 'ai-service',
+          memberLabel: input.agentId,
+          providerKind: provider?.kind ?? '',
+          providerName,
+          getApiKey: (name) => this.repo.getProviderCredential(input.organizationId, name),
+          baseUrl: provider?.baseUrl,
+          reasoningEffort,
         }),
-      onModelNotFound: createProviderSafeFallbackHandler({
         logLabel: 'ai-service',
         memberLabel: input.agentId,
-        providerKind: provider?.kind ?? '',
-        providerName,
-        getApiKey: (name) => this.repo.getProviderCredential(input.organizationId, name),
-        baseUrl: provider?.baseUrl,
-        reasoningEffort,
-      }),
-      logLabel: 'ai-service',
-      memberLabel: input.agentId,
-    });
+      });
+      debugLogger.setTokenUsage({
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        totalTokens: result.usage?.totalTokens,
+      });
+      debugLogger.flush().catch(() => {});
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      debugLogger.setError(message);
+      debugLogger.flush().catch(() => {});
+      throw err;
+    }
   }
 
 }

@@ -21,7 +21,7 @@ export const SELF_NOTE_COMPACTION_BATCH_SIZE = 35;
 export const SELF_NOTE_RECENT_RAW_COUNT = 15;
 export const SELF_NOTE_COMPACTION_TRIGGER = 500;
 export const CONVERSATION_COMPACTION_BATCH_SIZE = 35;
-export const CONVERSATION_RECENT_RAW_COUNT = 15;
+ 
 
 export interface CompactionContext {
   repo: {
@@ -69,7 +69,6 @@ export function compactSelfNotesIfNeeded(
     messages,
     summaryMarker: SELF_NOTE_SUMMARY_MARKER,
     compactedMarker: SELF_NOTE_COMPACTED_MARKER,
-    keepRawCount: SELF_NOTE_RECENT_RAW_COUNT,
     batchSize: SELF_NOTE_COMPACTION_BATCH_SIZE,
   });
 }
@@ -96,7 +95,7 @@ export async function compactConversationIfNeeded(
     messages,
     CONVERSATION_SUMMARIZE_COMPACTION,
   );
-  if (uncompacted.length <= CONVERSATION_SUMMARIZE_COMPACTION.keepRawCount) {
+  if (uncompacted.length === 0) {
     return;
   }
 
@@ -114,15 +113,21 @@ export function conversationNeedsCompaction(
   threadId: string,
   contextWindowTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
 ): boolean {
-  const chars = repo.countUncompactedMessageChars
-    ? repo.countUncompactedMessageChars(organizationId, threadId)
-    : listAllThreadMessages(repo, organizationId, threadId)
-        .filter((message) =>
-          !isCompactedSourceMessage(message) &&
-          !isCompactionSummarySystemMessage(message),
-        )
-        .reduce((total, message) => total + message.content.length, 0);
-  return chars > promptCharBudget(contextWindowTokens);
+  const rawMessages = listAllThreadMessages(repo, organizationId, threadId)
+    .filter((message) =>
+      !isCompactedSourceMessage(message) &&
+      !isCompactionSummarySystemMessage(message),
+    );
+  // Use actual token counts when available (stamped by persistMessageTokens),
+  // falling back to an estimate from char length for older messages.
+  const usedTokens = rawMessages.reduce((total, message) => {
+    if (typeof message.inputTokens === 'number' && typeof message.outputTokens === 'number') {
+      return total + message.inputTokens + message.outputTokens;
+    }
+    return total + Math.ceil(message.content.length / 4);
+  }, 0);
+  const threshold = Math.floor(contextWindowTokens * 0.7);
+  return usedTokens > threshold;
 }
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
@@ -133,7 +138,6 @@ type ConversationCompactionMode = 'summary' | 'archive';
 interface ConversationCompactionPlan {
   summaryMarker: string;
   compactedMarker: string;
-  keepRawCount: number;
   batchSize: number;
   mode: ConversationCompactionMode;
 }
@@ -141,7 +145,6 @@ interface ConversationCompactionPlan {
 const CONVERSATION_SUMMARIZE_COMPACTION: ConversationCompactionPlan = {
   summaryMarker: CONVERSATION_SUMMARY_MARKER,
   compactedMarker: CONVERSATION_COMPACTED_MARKER,
-  keepRawCount: CONVERSATION_RECENT_RAW_COUNT,
   batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
   mode: 'summary',
 };
@@ -149,7 +152,6 @@ const CONVERSATION_SUMMARIZE_COMPACTION: ConversationCompactionPlan = {
 const CONVERSATION_ARCHIVE_COMPACTION: ConversationCompactionPlan = {
   summaryMarker: CONVERSATION_ARCHIVE_MARKER,
   compactedMarker: CONVERSATION_ARCHIVE_MARKER,
-  keepRawCount: 0,
   batchSize: CONVERSATION_COMPACTION_BATCH_SIZE,
   mode: 'archive',
 };
@@ -277,14 +279,12 @@ export function selectCompactionBatch(input: {
   messages: Message[];
   summaryMarker: string;
   compactedMarker: string;
-  keepRawCount: number;
   batchSize: number;
   mode: ConversationCompactionMode;
 }): { activeSummaries: Message[]; compactable: Message[] } {
   const activeSummaries = listActiveCompactionSummaries(input.messages, input.summaryMarker);
   const uncompacted = listUncompactedConversationMessages(input.messages, input);
-  const keepRawStart = Math.max(uncompacted.length - input.keepRawCount, 0);
-  const compactable = uncompacted.slice(0, keepRawStart).slice(0, input.batchSize);
+  const compactable = uncompacted.slice(0, input.batchSize);
   return { activeSummaries, compactable };
 }
 
@@ -297,7 +297,6 @@ async function compactThreadMessages(
     messages: Message[];
     summaryMarker: string;
     compactedMarker: string;
-    keepRawCount: number;
     batchSize: number;
     mode?: 'summary' | 'archive';
     pass?: number;
@@ -307,7 +306,6 @@ async function compactThreadMessages(
     messages: input.messages,
     summaryMarker: input.summaryMarker,
     compactedMarker: input.compactedMarker,
-    keepRawCount: input.keepRawCount,
     batchSize: input.batchSize,
     mode: input.mode ?? 'summary',
   });

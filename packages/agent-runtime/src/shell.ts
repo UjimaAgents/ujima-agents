@@ -2,6 +2,7 @@ import type { UjimaEvent } from '@ujima/shared';
 import { hydrate } from './hydrate';
 import { runAiSdkLoop } from './ai-sdk-loop';
 import type { AgentRunInputs, AgentRunResult, ExitReason } from './types';
+import { AgentRunLogger } from './agent-run-logger';
 
 const DEFAULT_MAX_ITERATIONS = 12;
 const DEFAULT_HEARTBEAT_MS = 10_000;
@@ -89,6 +90,7 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     onEvent?.(event);
   };
 
+  const agentLogger = new AgentRunLogger();
   try {
     const bundle = inputs.hydration ?? (await hydrate({
       agent,
@@ -99,6 +101,17 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     }));
 
     const tools = await mcp.listTools();
+
+    agentLogger.setContext({
+      agentId: agent.id,
+      taskId: task.task_id,
+      sessionId,
+      model,
+      systemPrompt: bundle.systemPrompt,
+      userPrompt: bundle.taskPrompt,
+      tools: tools.map((t) => ({ name: t.name, description: t.description })),
+      mcpName: mcp.def.name,
+    });
 
     const outcome = await runAiSdkLoop({
       agent,
@@ -117,6 +130,9 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
       onStream,
       gateResolver,
     });
+
+    agentLogger.setOutcome(outcome);
+    agentLogger.flush().catch(() => {});
 
     const outputKey = `task:${task.task_id}:agent:${agent.id}:output`;
     await context.put(outputKey, {
@@ -180,6 +196,8 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    agentLogger.setError(message);
+    agentLogger.flush().catch(() => {});
     await agentState.upsert(agent.id, { status: 'blocked', last_action: `error: ${message}` });
     await audit.write({
       event_id: `exit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,

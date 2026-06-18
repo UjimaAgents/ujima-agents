@@ -37,7 +37,6 @@ export function buildPromptMessages(input: {
   });
 
   const out = timeline.flatMap((entry) => entry.messages);
-  if (input.contextMessages?.length) out.push(...input.contextMessages);
   if (input.currentRequestMessage) {
     out.push(
       ...toModelMessages([input.currentRequestMessage], input.currentMemberId, {
@@ -47,5 +46,9 @@ export function buildPromptMessages(input: {
   } else if (input.currentRequest) {
     out.push(input.currentRequest);
   }
+  // Runtime context is not persisted. Keep it at the tail so prior user,
+  // assistant, tool-call, and tool-result bytes stay in the same prefix on
+  // the next wake.
+  if (input.contextMessages?.length) out.push(...input.contextMessages);
   return out;
 }

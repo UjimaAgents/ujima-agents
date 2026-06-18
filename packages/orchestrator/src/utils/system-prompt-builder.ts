@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
-import type { WakeReason } from '@ujima/shared';
+import { buildEnvironmentTimestamp, type WakeReason } from '@ujima/shared';
 import { ANTI_MIRROR_SCAFFOLD_LINE, BASE_WAKE_SCAFFOLD_LINES } from './wake-reply-policy.js';
 import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
 import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
@@ -161,11 +161,15 @@ export interface WakeContextInput {
 export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[] {
   const lines: string[] = [];
 
+  // Per-wake timestamp — moved out of the system prompt (where it busted
+  // the Anthropic prefix cache) into this per-wake block. Every wake
+  // produces a new timestamp but the system prompt stays byte-identical.
+  lines.push(buildEnvironmentTimestamp());
+
   if (input.isMirrorFragile) {
     lines.push(ANTI_MIRROR_SCAFFOLD_LINE);
   }
 
-  if (lines.length === 0) return [];
   return [
     {
       role: 'user',

@@ -76,6 +76,7 @@ export * from "./goal-board-labels.js";
 export {
   SHARED_AGENT_SYSTEM_PROMPT,
   buildEnvironmentContext,
+  buildEnvironmentTimestamp,
   COLLABORATION_PROTOCOL,
   buildCollaborationProtocol,
   buildSharedAgentSystemPrompt,
