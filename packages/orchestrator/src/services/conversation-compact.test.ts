@@ -65,14 +65,14 @@ describe('conversation-compact selection', () => {
       messages,
       summaryMarker: CONVERSATION_ARCHIVE_MARKER,
       compactedMarker: CONVERSATION_ARCHIVE_MARKER,
-      batchSize: 35,
+      batchSize: 100,
       mode: 'archive',
     });
 
     expect(batch.activeSummaries.map((message) => message.id)).toEqual(['archive-1']);
-    expect(batch.compactable).toHaveLength(35);
+    expect(batch.compactable).toHaveLength(40);
     expect(batch.compactable[0]?.id).toBe('msg-1');
-    expect(batch.compactable[34]?.id).toBe('msg-35');
+    expect(batch.compactable[39]?.id).toBe('msg-40');
   });
 
   it('does not treat compacted source markers as uncompacted chat', () => {

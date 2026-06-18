@@ -612,8 +612,9 @@ export class SpiritServiceBase {
     agentId: string,
     steps: readonly { usage?: unknown }[],
   ): void {
-    // Sum input and output tokens across all steps so the live counter
-    // doesn't blink out when the last step has zero tool usage.
+    // Sum the current turn's tokens across all its steps.
+    // Both input and output are per-turn values — input is the model's
+    // context window, output is this turn's generated tokens.
     let totalInput = 0;
     let totalOutput = 0;
     for (const step of steps) {
@@ -663,6 +664,29 @@ export class SpiritServiceBase {
 
   protected runKey(organizationId: string, runId: string): string {
     return `${organizationId}:${runId}`;
+  }
+
+  /**
+   * Resolve the final terminating tool for a run, preserving any silent
+   * terminator that a mid-run side-effect (mirror-loop guard, vacuous-ack
+   * suppression) already wrote onto the run row. Without this step, the
+   * freshly-computed `detected` value (which sees the model's original
+   * toolcall via result steps) would clobber the `channel.ack` that the
+   * mirror-suppress flow persisted earlier — and metrics would report a
+   * publish that never actually went through.
+   */
+  protected resolveTerminatingTool(
+    organizationId: string,
+    runId: string | null | undefined,
+    detected: string | null,
+  ): string | null {
+    if (!runId) return detected;
+    const persisted = this.repo.getRun(organizationId, runId);
+    const persistedTerminator = persisted?.terminatingTool;
+    if (persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass') {
+      return persistedTerminator;
+    }
+    return detected;
   }
 
   protected consumeDeferredApprovalResume(organizationId: string, runId: string): boolean {

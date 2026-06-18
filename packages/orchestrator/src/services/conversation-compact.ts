@@ -16,10 +16,10 @@ import {
 import { isCompactedSourceMessage } from '../utils/message-visibility.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
 
-export const SELF_NOTE_COMPACTION_BATCH_SIZE = 35;
+export const SELF_NOTE_COMPACTION_BATCH_SIZE = 100;
 export const SELF_NOTE_RECENT_RAW_COUNT = 15;
 export const SELF_NOTE_COMPACTION_TRIGGER = 500;
-export const CONVERSATION_COMPACTION_BATCH_SIZE = 35;
+export const CONVERSATION_COMPACTION_BATCH_SIZE = 100;
  
 
 export interface CompactionContext {
