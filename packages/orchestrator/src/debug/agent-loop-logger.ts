@@ -141,8 +141,6 @@ export class AgentLoopLogger {
     await writeFile(filePath, JSON.stringify(this.log, null, 2), 'utf-8');
   }
 
-  private workspaceRoot?: string;
-
   setWorkspaceRoot(root: string) {
     this.workspaceRoot = root;
   }
