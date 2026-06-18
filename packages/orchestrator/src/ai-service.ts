@@ -5,7 +5,6 @@ import { AgentLoopLogger } from './debug/agent-loop-logger.js';
 import {
   AGENT_KIND,
   DEFAULT_SPIRIT_TEMPERATURE,
-  buildEnvironmentTimestamp,
   type ReasoningEffort,
   type SpiritRole,
   type WakeReason,
@@ -283,12 +282,12 @@ export class AiService {
         outputTokens: memResult.usage?.outputTokens,
         totalTokens: memResult.usage?.totalTokens,
       });
-      memDebugLogger.flush().catch(() => {});
+      memDebugLogger.flush().catch();
       return memResult;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       memDebugLogger.setError(message);
-      memDebugLogger.flush().catch(() => {});
+      memDebugLogger.flush().catch();
       throw err;
     }
   }
@@ -621,13 +620,13 @@ export class AiService {
         onChunk: input.onChunk
           ? (chunk) => {
               debugLogger.handleChunk(chunk);
-              input.onChunk!(chunk);
+              input.onChunk?.(chunk);
             }
           : (chunk) => debugLogger.handleChunk(chunk),
         onStepFinish: input.onStepFinish
           ? (step, steps) => {
               debugLogger.handleStepFinish(step);
-              input.onStepFinish!(step, steps);
+              input.onStepFinish?.(step, steps);
             }
           : (step) => debugLogger.handleStepFinish(step),
         loadInterruptMessages: () =>
@@ -656,12 +655,12 @@ export class AiService {
         outputTokens: result.usage?.outputTokens,
         totalTokens: result.usage?.totalTokens,
       });
-      debugLogger.flush().catch(() => {});
+      debugLogger.flush().catch();
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       debugLogger.setError(message);
-      debugLogger.flush().catch(() => {});
+      debugLogger.flush().catch();
       throw err;
     }
   }

@@ -412,7 +412,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         outputTokens: usage?.outputTokens,
         totalTokens: usage?.totalTokens,
       });
-      debugLogger.flush().catch(() => {});
+      debugLogger.flush().catch();
 
       // Compute token counts early so they're available when persisting
       // the last step's message below.
@@ -532,7 +532,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         terminatingTool: finalTerminatingTool,
       };
     } catch (err) {
-      debugLogger.flush().catch(() => {});
+      debugLogger.flush().catch();
       const latestRun = this.repo.getRun(input.organizationId, runId);
       if (latestRun?.status === 'cancelled') {
         const cancelled: Spirit = SpiritSchema.parse({
@@ -661,7 +661,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       this.emit(SocketEventNames.spiritCompleted, failed);
       this.maybeFinalizeTaskSession(failed.organizationId, failed.taskSessionId, message);
       debugLogger.setError(message);
-      debugLogger.flush().catch(() => {});
+      debugLogger.flush().catch();
       throw err;
     } finally {
       this.runAbortControllers.delete(abortKey);

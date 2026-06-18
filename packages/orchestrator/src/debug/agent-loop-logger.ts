@@ -42,8 +42,9 @@ export class AgentLoopLogger {
   private log: AgentLoopLogEntry;
   private currentStepReasoning = '';
   private currentStepText = '';
+  private workspaceRoot?: string;
 
-  constructor(root?: string) {
+  constructor() {
     this.log = {
       runId: randomUUID(),
       steps: [],

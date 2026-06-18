@@ -132,7 +132,7 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     });
 
     agentLogger.setOutcome(outcome);
-    agentLogger.flush().catch(() => {});
+    agentLogger.flush().catch();
 
     const outputKey = `task:${task.task_id}:agent:${agent.id}:output`;
     await context.put(outputKey, {
@@ -197,7 +197,7 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     agentLogger.setError(message);
-    agentLogger.flush().catch(() => {});
+    agentLogger.flush().catch();
     await agentState.upsert(agent.id, { status: 'blocked', last_action: `error: ${message}` });
     await audit.write({
       event_id: `exit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,

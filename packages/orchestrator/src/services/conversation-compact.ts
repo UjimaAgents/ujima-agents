@@ -14,7 +14,6 @@ import {
   isSelfSummaryNote,
 } from './conversation-summary.js';
 import { isCompactedSourceMessage } from '../utils/message-visibility.js';
-import { promptCharBudget } from '../utils/model-context-window.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
 
 export const SELF_NOTE_COMPACTION_BATCH_SIZE = 35;
