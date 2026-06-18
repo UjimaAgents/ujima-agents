@@ -34,6 +34,12 @@ import {
 const require = createRequire(join(REPO_ROOT, "apps/api/package.json"));
 
 const dryRun = process.argv.includes("--dry-run");
+const nativeRuntimeExternals = [
+  "better-sqlite3",
+  "onnxruntime-node",
+  "@chroma-core/default-embed",
+  "chromadb",
+];
 
 function log(message: string): void {
   console.log(`[release:dist] ${message}`);
@@ -85,7 +91,7 @@ async function bundleApi(): Promise<void> {
     sourcemap: false,
     minify: true,
     logLevel: "info",
-    external: ["better-sqlite3"],
+    external: nativeRuntimeExternals,
   });
   copySwaggerUiStatic();
   log("Vendoring rg/fd for all platforms and copying into API runtime…");
@@ -155,6 +161,7 @@ async function bundleCli(): Promise<void> {
     sourcemap: false,
     minify: true,
     logLevel: "info",
+    external: nativeRuntimeExternals,
   });
 }
 

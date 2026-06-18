@@ -52,7 +52,7 @@ function createFakeAppServer(): {
         continue;
       }
       if (msg.method === 'turn/start') {
-        const text = (((msg.params as { input?: Array<{ text?: string }> }).input ?? [])[0]?.text) ?? '';
+        const text = (((msg.params as { input?: { text?: string }[] }).input ?? [])[0]?.text) ?? '';
         stdout.write(`${JSON.stringify({ id: msg.id, result: { turn: { id: 'turn_1' } } })}\n`);
         stdout.write(`${JSON.stringify({ method: 'turn/started', params: { turn: { id: 'turn_1', status: 'inProgress', items: [] } } })}\n`);
         if (text === 'call tool') {
@@ -195,7 +195,7 @@ describe('selectLanguageModel', () => {
       input: '{"body":"hi"}',
     }]);
     const response = child.requests.find((req) => (req as { id?: number; method?: string }).id === 99 && !(req as { method?: string }).method) as {
-      result?: { contentItems?: Array<{ type?: string }> };
+      result?: { contentItems?: { type?: string }[] };
     };
     expect(response.result?.contentItems?.[0]?.type).toBe('input_text');
   });

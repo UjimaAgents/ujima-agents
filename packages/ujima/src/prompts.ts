@@ -291,7 +291,7 @@ export function buildAgentSystemPrompt(
    * Optional active language model descriptor, used to select
    * model-specific rules files (e.g. `claude.md`, `gemini.md`).
    */
-  model?: { provider?: string; modelId?: string } | string | any,
+  model?: { provider?: string; modelId?: string } | string | Record<string, unknown>,
 ): string {
   const sortedMembers = [...members].sort((left, right) =>
     left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
@@ -326,9 +326,9 @@ export function buildAgentSystemPrompt(
   if (typeof model === 'string') {
     providerName = model.split('/')[0] || '';
     modelId = model.split('/')[1] || '';
-  } else if (model && typeof model === 'object') {
-    providerName = model.provider || '';
-    modelId = model.modelId || '';
+  } else if (model && typeof model === 'object' && 'provider' in model && 'modelId' in model) {
+    providerName = String(model.provider ?? '');
+    modelId = String(model.modelId ?? '');
   }
   providerName = providerName.toLowerCase();
   modelId = modelId.toLowerCase();
@@ -418,7 +418,7 @@ function findWorkspaceRuleFile(
         if (!stat.isDirectory()) {
           return readFileSync(filePath, 'utf8');
         }
-      } catch (err) {
+      } catch {
         // ignore
       }
     }
@@ -440,7 +440,7 @@ function findWorkspaceRuleFile(
           }
         }
       }
-    } catch (err) {
+    } catch {
       // ignore
     }
   }
@@ -456,7 +456,7 @@ function findWorkspaceRuleFile(
         if (result) return result;
       }
     }
-  } catch (err) {
+  } catch {
     // ignore
   }
 
