@@ -54,6 +54,7 @@ const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
 interface ConversationMessageMetadata {
   runId?: string;
   goalMode?: boolean;
+  scheduleMode?: boolean;
   reasoningEffort?: ReasoningEffort;
   delegate?: { parentRunId?: string; kind?: DelegateKind };
 }

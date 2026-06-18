@@ -10,6 +10,7 @@ export function composeSystemPromptSuffix(input: {
   extraSuffix?: string;
   messageContent?: string | null;
   goalMode?: boolean;
+  scheduleMode?: boolean;
 }): string | undefined {
   const segments = [
     input.extraSuffix,
@@ -19,6 +20,7 @@ export function composeSystemPromptSuffix(input: {
     }),
     scheduleToolSystemPromptSuffix({
       messageContent: input.messageContent,
+      scheduleMode: input.scheduleMode,
     }),
   ].filter((segment): segment is string => Boolean(segment));
   return segments.length > 0 ? segments.join('\n\n') : undefined;

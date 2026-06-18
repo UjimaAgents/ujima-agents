@@ -249,6 +249,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       extraSuffix: input.systemPromptSuffix,
       messageContent: input.promptMessageContent,
       goalMode: input.promptGoalMode,
+      scheduleMode: input.promptScheduleMode,
     });
     const contextMessages: ModelMessage[] = [
       // Per-wake timestamp — outside the system prompt so the Anthropic
@@ -710,7 +711,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     });
     const messageToolCalls = [
       ...wrapped,
-      ...prepared.goalCards,
+      ...prepared.cards,
       ...(prepared.artifact ? [prepared.artifact] : []),
     ];
     const message = input.turn.publishMessage(

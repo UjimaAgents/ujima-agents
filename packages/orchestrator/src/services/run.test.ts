@@ -686,6 +686,64 @@ describe('SpiritService run path', () => {
     expect(generateCalls).toBe(1);
   });
 
+  it('emits failed run state when rejecting approval for an active spirit', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'agent-1';
+    const now = '2026-05-04T19:07:08.071Z';
+    let run: RunState = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId: 'thread-1',
+      status: 'waiting_for_approval',
+      step: 'waiting_for_approval',
+      summary: 'Waiting for approval',
+      startedAt: now,
+    };
+    let spirit: any = {
+      id: 'spirit-1',
+      organizationId,
+      taskSessionId: 'session-1',
+      memberId: agentId,
+      role: 'worker',
+      runId,
+      status: 'waiting_for_approval',
+      createdAt: now,
+      updatedAt: now,
+    };
+    const emitted: { event: string; payload: { run?: RunState } }[] = [];
+    const service = createSpiritRunService(
+      { getTeam: () => null, setTeam: () => undefined } as never,
+      {
+        getSpiritByRunId: () => spirit,
+        getSpirit: () => spirit,
+        saveSpirit: (next: any) => {
+          spirit = next;
+          return next;
+        },
+        getRun: () => run,
+        saveRun: (next: RunState) => {
+          run = next;
+          return next;
+        },
+        getThread: () => ({ channelId: 'channel-1' }),
+        listMembers: () => [],
+      } as never,
+      { emit: (event: string, payload: { run?: RunState }) => emitted.push({ event, payload }) } as never,
+      { publishMessage: () => undefined } as never,
+      { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await service.resumeAfterApproval(organizationId, runId, false);
+
+    expect((result as { status?: string } | null)?.status).toBe('failed');
+    const terminal = emitted.find((entry) => entry.event === SocketEventNames.runCompleted);
+    expect(terminal?.payload.run?.status).toBe('failed');
+    expect(terminal?.payload.run?.summary).toBe('Approval rejected by user');
+  });
+
   it('persists blocked-run trace without failing the run', async () => {
     const organizationId = 'org-1';
     const runId = 'run-blocked-1';

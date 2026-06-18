@@ -71,6 +71,9 @@ function toolStepToOperation(step: TraceStepData): AggregatedOperation {
   if (toolName.startsWith("self.procedure.")) {
     return { ...base, type: "procedure", toolName, detail: step.detail || "" };
   }
+  if (toolName === "schedule") {
+    return { ...base, type: "schedule", toolName, detail: step.detail || "" };
+  }
   return { ...base, type: "tool", toolName, detail: step.detail || "" };
 }
 

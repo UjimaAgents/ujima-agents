@@ -10,10 +10,18 @@ Do not answer as if the schedule already exists.
 
 export function scheduleToolSystemPromptSuffix(input: {
   messageContent?: string | null;
+  scheduleMode?: boolean;
 }): string | undefined {
+  if (input.scheduleMode) return SCHEDULE_TOOL_SYSTEM_PROMPT;
   const text = input.messageContent?.trim().toLowerCase();
   if (!text) return undefined;
   if (text.startsWith(SCHEDULE_INTENT_PREFIX)) return SCHEDULE_TOOL_SYSTEM_PROMPT;
   if (text === '/schedule' || text.startsWith('/schedule ')) return SCHEDULE_TOOL_SYSTEM_PROMPT;
   return undefined;
+}
+
+export function scheduleModeEnabledFromMessage(
+  message: { metadata?: { scheduleMode?: boolean } } | null | undefined,
+): boolean {
+  return message?.metadata?.scheduleMode === true;
 }

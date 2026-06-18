@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEve
 import {
   ArrowRight,
   BookOpen,
+  Clock,
   File as FileIcon,
   FileArchive,
   FileAudio,
@@ -42,6 +43,7 @@ import type { ChatMessageData } from "./chat-message";
 import { MarkdownInline } from "../markdown";
 import { useComposerVoiceInput } from "./use-composer-voice-input";
 import { VoiceInputWaves } from "./voice-input-waves";
+import type { ConversationMessageMetadata } from "../../conversation-transport";
 
 
 
@@ -76,31 +78,26 @@ interface MentionTrigger {
 }
 
 export type ComposerCommand = "summarize" | "clear" | "goal" | "schedule";
-type ThreadCommand = Exclude<ComposerCommand, "goal">;
+type ThreadCommand = Exclude<ComposerCommand, "goal" | "schedule">;
 
 const BUILTIN_SLASH_COMMANDS: {
   command: ComposerCommand;
-  label: string;
   description: string;
 }[] = [
   {
     command: "clear",
-    label: "/clear",
     description: "Archive the thread and empty the visible chat.",
   },
   {
     command: "goal",
-    label: "/goal",
     description: "Toggle goal mode for this conversation.",
   },
   {
     command: "schedule",
-    label: "/schedule do this",
-    description: "Ask the agent to schedule a follow-up.",
+    description: "Enter schedule mode for the next message.",
   },
   {
     command: "summarize",
-    label: "/summarize",
     description: "Compact the thread and keep the recent raw window.",
   },
 ];
@@ -127,6 +124,13 @@ function getExactSlashCommandDefinition(value: string, commands: SlashMenuOption
   if (token.length <= 1) return null;
   const command = token.slice(1).toLowerCase();
   return commands.find((option) => option.command === command) ?? null;
+}
+
+function slashCommandRemainder(value: string, command: ComposerCommand): string {
+  const trimmed = value.trim();
+  const prefix = `/${command}`;
+  if (!trimmed.toLowerCase().startsWith(prefix)) return "";
+  return trimmed.slice(prefix.length).trimStart();
 }
 
 export function getSlashQuery(value: string): string | null {
@@ -494,6 +498,8 @@ function ChatInputComponent({
   organizationId,
   goalMode: goalModeProp,
   onGoalModeChange,
+  scheduleMode: scheduleModeProp,
+  onScheduleModeChange,
   stoppableRunIds,
   onStopRun,
   readOnly = false,
@@ -502,14 +508,16 @@ function ChatInputComponent({
 }: {
   placeholder?: string;
   organizationId?: string;
-  onSend: (content: string, attachmentIds?: string[], metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
-  onCommand: (command: ThreadCommand, rawContent?: string, metadata?: { goalMode?: boolean; reasoningEffort?: ReasoningEffort }) => Promise<void> | void;
+  onSend: (content: string, attachmentIds?: string[], metadata?: ConversationMessageMetadata) => Promise<void> | void;
+  onCommand: (command: ThreadCommand, rawContent?: string, metadata?: ConversationMessageMetadata) => Promise<void> | void;
   inlineError?: string;
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
   onCancelReply?: () => void;
   goalMode?: boolean;
   onGoalModeChange?: (active: boolean) => void;
+  scheduleMode?: boolean;
+  onScheduleModeChange?: (active: boolean) => void;
   stoppableRunIds?: string[];
   onStopRun?: (runId: string) => Promise<void> | void;
   readOnly?: boolean;
@@ -517,6 +525,7 @@ function ChatInputComponent({
   reasoningModelValue?: string;
 }) {
   const goalMode = goalModeProp ?? false;
+  const scheduleMode = scheduleModeProp ?? false;
   const [content, setContent] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("none");
   const [isSending, setIsSending] = useState(false);
@@ -537,7 +546,12 @@ function ChatInputComponent({
   const contentRef = useRef(content);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
-  const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : placeholder;
+  const activePlaceholder = scheduleMode
+    ? "Describe what to schedule…"
+    : goalMode
+      ? "Goal mode active…"
+      : placeholder;
+  const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : activePlaceholder;
   const reasoningOptions = useMemo(
     () =>
       getReasoningEffortsForProvider(reasoningProvider ?? "", reasoningModelValue).map((value) => ({
@@ -1005,6 +1019,7 @@ function ChatInputComponent({
     try {
       await onSend(next, attachments.map((attachment) => attachment.id), {
         ...(goalMode ? { goalMode: true } : {}),
+        ...(scheduleMode ? { scheduleMode: true } : {}),
         reasoningEffort: selectedReasoningEffort,
       });
       for (const attachment of attachments) {
@@ -1014,6 +1029,7 @@ function ChatInputComponent({
       setSelection({ start: 0, end: 0 });
       setAttachments([]);
       setUploadProgress(0);
+      if (scheduleMode) onScheduleModeChange?.(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send message.");
     } finally {
@@ -1024,12 +1040,25 @@ function ChatInputComponent({
   const runSlashCommand = async (command: SlashMenuOption) => {
     if (isSending || isCommanding || uploading) return;
     if (command.kind === "builtin" && command.command === "goal") {
+      const remainder = slashCommandRemainder(content, "goal");
       onGoalModeChange?.(!goalMode);
       setError(null);
-      setContent("");
-      setSelection({ start: 0, end: 0 });
+      pendingCaretRef.current = remainder.length;
+      setContent(remainder);
+      setSelection({ start: remainder.length, end: remainder.length });
       setClearConfirmation(false);
-      requestAnimationFrame(() => focusEditorAt(0));
+      requestAnimationFrame(() => focusEditorAt(remainder.length));
+      return;
+    }
+    if (command.kind === "builtin" && command.command === "schedule") {
+      const remainder = slashCommandRemainder(content, "schedule");
+      onScheduleModeChange?.(true);
+      setError(null);
+      pendingCaretRef.current = remainder.length;
+      setContent(remainder);
+      setSelection({ start: remainder.length, end: remainder.length });
+      setClearConfirmation(false);
+      requestAnimationFrame(() => focusEditorAt(remainder.length));
       return;
     }
     if (command.kind === "builtin" && command.command === "clear") {
@@ -1045,6 +1074,7 @@ function ChatInputComponent({
       const currentContent = content;
       await onCommand(command.command as ThreadCommand, currentContent, {
         ...(goalMode ? { goalMode: true } : {}),
+        ...(scheduleMode ? { scheduleMode: true } : {}),
         reasoningEffort: selectedReasoningEffort,
       });
       setContent("");
@@ -1149,7 +1179,7 @@ function ChatInputComponent({
           className="hidden"
           onChange={handleAttachmentInput}
         />
-        <div className={`relative z-10 flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 transition-all focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-200/80 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:border-zinc-600 dark:focus-within:bg-[#09090b] dark:focus-within:ring-zinc-800/80 ${goalMode ? "bg-zinc-100/80 dark:bg-zinc-900/80" : ""}`}>
+        <div className={`relative z-10 flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 transition-all focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-200/80 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:border-zinc-600 dark:focus-within:bg-[#09090b] dark:focus-within:ring-zinc-800/80 ${goalMode || scheduleMode ? "bg-zinc-100/80 dark:bg-zinc-900/80" : ""}`}>
           {activeReplyTo && (
             <div className="flex items-center gap-2 rounded-t-lg border-b border-zinc-200 bg-violet-50/50 px-2 py-1 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
@@ -1173,42 +1203,37 @@ function ChatInputComponent({
             </div>
           )}
           {!readOnly && slashMenuOpen ? (
-            <div className="mx-2 mb-1 flex max-h-[min(18rem,40vh)] flex-col overflow-hidden rounded-lg bg-zinc-100/70 ring-1 ring-zinc-200/70 dark:bg-zinc-950/60 dark:ring-zinc-800/70">
-              <div className="min-h-0 flex-1 overflow-y-auto p-1">
-                <div className="space-y-1">
-                  {displayedSlashOptions.map((option, index) => (
-                    <button
-                      key={option.command}
-                      type="button"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        void runSlashCommand(option);
-                      }}
-                      className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-xs transition ${
-                        index === activeSlashSelection ? listItemSelected : listItemIdle
-                      }`}
-                    >
-                      <span
-                        title={option.label}
-                        className="mt-0.5 max-w-[11rem] shrink-0 truncate rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
-                      >
-                        {option.label}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={`block truncate text-[10px] leading-4 ${
-                            index === activeSlashSelection
-                              ? listItemSubtitleSelected
-                              : listItemSubtitleIdle
-                          }`}
-                        >
-                          {option.description}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
+            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                Commands
               </div>
+              {displayedSlashOptions.map((option, index) => (
+                <button
+                  key={option.command}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    void runSlashCommand(option);
+                  }}
+                  onMouseEnter={() => setActiveSlashIndex(index)}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                    index === activeSlashSelection ? listItemSelected : listItemIdle
+                  }`}
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="font-mono font-semibold">/{option.command}</span>
+                  </span>
+                  <span
+                    className={`ml-2 truncate text-[10px] ${
+                      index === activeSlashSelection
+                        ? listItemSubtitleSelected
+                        : listItemSubtitleIdle
+                    }`}
+                  >
+                    {option.description}
+                  </span>
+                </button>
+              ))}
               {hasMoreSlashCommands ? (
                 <button
                   type="button"
@@ -1216,7 +1241,7 @@ function ChatInputComponent({
                     event.preventDefault();
                     setSlashMenuExpanded(true);
                   }}
-                  className="shrink-0 border-t border-zinc-200/80 px-3 py-2 text-center text-[10px] font-semibold text-violet-700 transition hover:bg-zinc-200/60 dark:border-zinc-800 dark:text-violet-300 dark:hover:bg-zinc-900/80"
+                  className="flex w-full items-center justify-center rounded-md px-2 py-1.5 text-[10px] font-semibold text-violet-700 transition hover:bg-zinc-100 dark:text-violet-300 dark:hover:bg-zinc-900"
                 >
                   Show {hiddenSlashCount} more
                 </button>
@@ -1459,9 +1484,9 @@ function ChatInputComponent({
                 }}
               />
             </div>
-          {!readOnly && mentionMenuOpen ? (
-            <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-              {mentionMenuSections.map((section, sectionIndex) => (
+            {!readOnly && mentionMenuOpen ? (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+                {mentionMenuSections.map((section, sectionIndex) => (
                   <div key={section.label}>
                     <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
                       {section.label}
@@ -1503,10 +1528,24 @@ function ChatInputComponent({
                       );
                     })}
                   </div>
-              ))}
-            </div>
-          ) : null}
+                ))}
+              </div>
+            ) : null}
             <div className="flex shrink-0 items-center gap-1.5">
+              {scheduleMode ? (
+                <button
+                  type="button"
+                  aria-label="Disable schedule mode"
+                  aria-pressed="true"
+                  title="Schedule mode active — click to disable"
+                  disabled={readOnly}
+                  onClick={() => onScheduleModeChange?.(false)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-amber-50 px-2 text-[11px] font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/15"
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  Schedule
+                </button>
+              ) : null}
               {goalMode ? (
                 <button
                   type="button"
@@ -1615,7 +1654,7 @@ function ChatInputComponent({
                       : exactSlashCommand?.command === "summarize"
                         ? "Run summarize"
                         : exactSlashCommand?.command === "schedule"
-                          ? "Ask agent to schedule"
+                          ? "Enable schedule mode"
                         : "Send message"
                   }
                   className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-600 text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"

@@ -1030,6 +1030,37 @@ function formatStructuredToolDetail(
     if (summary) {
       parts.push(`Handover Summary:\n${cleanVal(summary)}`);
     }
+  } else if (name === "schedule") {
+    const action = cleanVal(nestedInput.action);
+    const job = resultRecord.job && typeof resultRecord.job === "object"
+      ? resultRecord.job as Record<string, unknown>
+      : undefined;
+    const jobs = Array.isArray(resultRecord.jobs) ? resultRecord.jobs : [];
+    if (action === "create") {
+      parts.push("Schedule created");
+    } else if (action === "cancel") {
+      parts.push(resultRecord.removed === false ? "Schedule not found" : "Schedule cancelled");
+    } else if (action === "list") {
+      parts.push(`Schedules listed: ${jobs.length}`);
+    } else {
+      parts.push("Schedule updated");
+    }
+    const nameVal = nestedInput.name ?? job?.name;
+    const cron = nestedInput.cron_expression ?? nestedInput.cronExpression ?? job?.cronExpression;
+    const prompt = nestedInput.prompt ?? job?.prompt;
+    const nextRun = job?.nextRunAt;
+    const status = job?.status;
+    if (nameVal) parts.push(`Name: ${cleanVal(nameVal)}`);
+    if (cron) parts.push(`Cron: ${cleanVal(cron)}`);
+    if (status) parts.push(`Status: ${cleanVal(status)}`);
+    if (nextRun) parts.push(`Next run: ${cleanVal(nextRun)}`);
+    if (prompt) parts.push(`Prompt:\n${cleanVal(prompt)}`);
+    if (jobs.length > 0) {
+      parts.push(`Jobs:\n${jobs.map((item) => {
+        const rec = item && typeof item === "object" ? item as Record<string, unknown> : {};
+        return `- ${cleanVal(rec.name ?? "Schedule")} (${cleanVal(rec.cronExpression ?? "")})`;
+      }).join("\n")}`);
+    }
   } else if (name.includes("channel") || name.includes("slack") || name.includes("message")) {
     const message = nestedInput.message ?? nestedInput.content ?? nestedInput.text ?? nestedInput.body;
     if (message) {

@@ -63,13 +63,7 @@ export class SpiritService extends SpiritServiceSupervisor {
         });
         const run = this.repo.getRun(organizationId, runId);
         if (run) {
-          this.repo.saveRun({
-            ...run,
-            status: 'failed',
-            step: 'failed',
-            summary: 'Approval rejected by user',
-            endedAt: run.endedAt ?? new Date().toISOString(),
-          });
+          this.failRun(run, 'Approval rejected by user');
         }
         return failed;
       }
@@ -135,13 +129,7 @@ export class SpiritService extends SpiritServiceSupervisor {
         });
         const run = this.repo.getRun(organizationId, runId);
         if (run) {
-          this.repo.saveRun({
-            ...run,
-            status: 'failed',
-            step: 'failed',
-            summary: 'Implementation rejected by user',
-            endedAt: run.endedAt ?? new Date().toISOString(),
-          });
+          this.failRun(run, 'Implementation rejected by user');
         }
         return failed;
       }
