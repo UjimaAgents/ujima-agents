@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@ujima/shared';
-import { toModelMessages } from './to-model-messages.js';
+import { buildToolDefinitions, toModelMessages } from './to-model-messages.js';
 
 describe('toModelMessages', () => {
   it('drops trace-only rows before building prompt messages', () => {
@@ -128,5 +128,26 @@ describe('toModelMessages', () => {
         ],
       },
     ]);
+  });
+
+  it('does not expose the generic mcp tool in the agent palette', () => {
+    const tools = buildToolDefinitions(
+      ['mcp', 'grep'],
+      {
+        tools: {
+          mcp: { description: 'Generic MCP' },
+          grep: { description: 'Search' },
+        },
+      } as never,
+      {} as never,
+      {
+        organizationId: 'org-1',
+        runId: 'run-1',
+        memberId: 'agent-1',
+        threadId: 'thread-1',
+      },
+    );
+
+    expect(Object.keys(tools)).toEqual(['grep']);
   });
 });

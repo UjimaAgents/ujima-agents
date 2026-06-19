@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -501,10 +501,12 @@ function ChatInputComponent({
   scheduleMode: scheduleModeProp,
   onScheduleModeChange,
   stoppableRunIds,
-  onStopRun,
+  onStopRuns,
   readOnly = false,
   reasoningProvider,
   reasoningModelValue,
+  reasoningEffort: reasoningEffortProp = "none",
+  onReasoningEffortChange,
 }: {
   placeholder?: string;
   organizationId?: string;
@@ -519,15 +521,16 @@ function ChatInputComponent({
   scheduleMode?: boolean;
   onScheduleModeChange?: (active: boolean) => void;
   stoppableRunIds?: string[];
-  onStopRun?: (runId: string) => Promise<void> | void;
+  onStopRuns?: () => Promise<void> | void;
   readOnly?: boolean;
   reasoningProvider?: string;
   reasoningModelValue?: string;
+  reasoningEffort?: ReasoningEffort;
+  onReasoningEffortChange?: (value: ReasoningEffort) => void;
 }) {
   const goalMode = goalModeProp ?? false;
   const scheduleMode = scheduleModeProp ?? false;
   const [content, setContent] = useState("");
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("none");
   const [isSending, setIsSending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isCommanding, setIsCommanding] = useState(false);
@@ -551,7 +554,7 @@ function ChatInputComponent({
     : goalMode
       ? "Goal mode active…"
       : placeholder;
-  const composerPlaceholder = readOnly ? `Observer Mode · ${placeholder}` : activePlaceholder;
+  const composerPlaceholder = readOnly ? "Observer Mode" : activePlaceholder;
   const reasoningOptions = useMemo(
     () =>
       getReasoningEffortsForProvider(reasoningProvider ?? "", reasoningModelValue).map((value) => ({
@@ -562,7 +565,7 @@ function ChatInputComponent({
   );
   const selectedReasoningEffort = clampReasoningEffortForProvider(
     reasoningProvider ?? "",
-    reasoningEffort,
+    reasoningEffortProp,
     reasoningModelValue,
   );
   const showReasoningSelect = reasoningOptions.length > 1;
@@ -694,7 +697,7 @@ function ChatInputComponent({
   }
 
   const working = isSending || isCommanding || uploading;
-  const canStopRun = Boolean(stoppableRunIds?.length && onStopRun);
+  const canStopRun = Boolean(stoppableRunIds?.length && onStopRuns);
   const stopRunLabel = stoppableRunIds?.length && stoppableRunIds.length > 1 ? "Stop runs" : "Stop run";
   const showStopInsteadOfSend =
     canStopRun &&
@@ -1120,15 +1123,13 @@ function ChatInputComponent({
   };
 
   const stopRun = async () => {
-    if (!stoppableRunIds?.length || !onStopRun || isStopping) return;
+    if (!stoppableRunIds?.length || !onStopRuns || isStopping) return;
     setError(null);
     setIsStopping(true);
     try {
-      const results = await Promise.allSettled(stoppableRunIds.map((runId) => onStopRun(runId)));
-      const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-      if (failure) {
-        setError(failure.reason instanceof Error ? failure.reason.message : "Unable to stop the run.");
-      }
+      await onStopRuns();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to stop the run.");
     } finally {
       setIsStopping(false);
     }
@@ -1564,7 +1565,7 @@ function ChatInputComponent({
                 <Select
                   size="sm"
                   value={selectedReasoningEffort}
-                  onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
+                  onChange={(event) => onReasoningEffortChange?.(event.target.value as ReasoningEffort)}
                   options={reasoningOptions}
                   placeholder="Reasoning"
                   ariaLabel="Reasoning effort"

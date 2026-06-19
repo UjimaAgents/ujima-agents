@@ -76,7 +76,7 @@ describe('pending-member-alerts', () => {
     expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
   });
 
-  it.each(['failed', 'cancelled'] as const)(
+  it.each(['failed'] as const)(
     'drains a pending alert after a terminal run with status %s',
     async (status) => {
       const wake = vi.fn(async () => undefined);
@@ -108,6 +108,36 @@ describe('pending-member-alerts', () => {
       expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
     },
   );
+
+  it('clears pending alerts after a cancelled run without waking a successor', async () => {
+    const wake = vi.fn(async () => undefined);
+    enqueuePendingMemberAlert({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      threadId: 'thread-1',
+      messageId: 'msg-queued',
+      byMemberId: 'peer-1',
+      reason: 'dm',
+      wakeReason: 'dm',
+    });
+    const run = {
+      id: 'run-1',
+      organizationId: 'org-1',
+      agentId: 'agent-1',
+      threadId: 'thread-1',
+      status: 'cancelled',
+      step: 'cancelled',
+      summary: 'Stopped by user',
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+    } as RunState;
+
+    await drainPendingMemberAlertAfterRun(run, wake);
+    await flushMicrotasks();
+
+    expect(wake).not.toHaveBeenCalled();
+    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
+  });
 
   it('drops pending alerts already seen by the finished run and wakes the next one', async () => {
     const wake = vi.fn(async () => undefined);

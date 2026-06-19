@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.0.43",
+  "version": "0.0.44",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
   "readme": "README.md",
   "keywords": [
@@ -12,6 +12,7 @@
     "mcp",
     "nextjs",
     "openai",
+    "codex",
     "developer-tools",
     "vscode-extension",
     "software-development",

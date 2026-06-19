@@ -5,8 +5,11 @@ import { useEffect, useId } from "react";
 const previousTokenTextById = new Map<string, string>();
 
 export function TokenCount({ value }: { value: number }) {
+  return <AnimatedCharacters text={formatTokens(value)} className="font-mono tabular-nums tracking-tight text-zinc-500" />;
+}
+
+export function AnimatedCharacters({ text, className = "" }: { text: string; className?: string }) {
   const id = useId();
-  const text = formatTokens(value);
   const previousText = previousTokenTextById.get(id) ?? text;
   const chars = Array.from(text);
 
@@ -18,7 +21,7 @@ export function TokenCount({ value }: { value: number }) {
   }, [id, text]);
 
   return (
-    <span className="inline-flex items-center gap-0.5 font-mono tabular-nums tracking-tight text-zinc-500">
+    <span className={`inline-flex items-center gap-0.5 ${className}`}>
       {chars.map((char, index) => {
         const previousChar = previousText[index];
         const changed = previousChar !== char;

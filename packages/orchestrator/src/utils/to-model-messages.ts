@@ -473,7 +473,7 @@ export function buildToolDefinitions(
   ctx: Omit<BuildToolDefContext, 'toolCallId' | 'toolId'>,
 ): ToolSet {
   return Object.fromEntries(
-    toolIds.map((toolId) => [
+    toolIds.filter((toolId) => toolId !== 'mcp').map((toolId) => [
       toModelToolName(toolId),
       buildToolDefinition(
         ORCHESTRATOR_TOOLS[toolId] as OrchestratorTool | undefined,

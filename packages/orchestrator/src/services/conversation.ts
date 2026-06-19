@@ -32,6 +32,7 @@ import type {
 import { requireOrganization } from '../utils/require-organization.js';
 import { evictStaleTimestamps } from '../utils/ttl-map.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
+import { normalizeToDottedToolName } from './run-reply-guard.js';
 import {
   compactSelfNotesIfNeeded,
   compactConversationIfNeeded,
@@ -50,6 +51,12 @@ import type { DelegateKind } from '../utils/delegate-turn.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
+const WAKEABLE_AGENT_DM_TERMINATORS = new Set([
+  'message',
+  'channel.reply',
+  'channel.post',
+  'channel.handoff',
+]);
 
 interface ConversationMessageMetadata {
   runId?: string;
@@ -1461,8 +1468,18 @@ export class ConversationService {
   private shouldSuppressDmWake(message: Message, channel: Channel | null): boolean {
     if (!channel || channel.kind !== 'dm') return false;
     if (message.kind !== AGENT_KIND) return false;
+    const members = channel.memberIds
+      .map((id) => this.repo.getMember(message.organizationId, id))
+      .filter((member) => member != null)
+      .map((member) => ({ id: member.id, kind: member.kind }));
+    if (!isAgentOnlyThread(message.threadId, members)) return false;
     const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
-    return handoff?.complete === true || isVacuousAck(message.content);
+    if (handoff?.complete === true || isVacuousAck(message.content)) return true;
+    if ((message.metadata as { traceOnly?: boolean } | undefined)?.traceOnly === true) return true;
+    if (message.toolCalls.length === 0) return message.content.trim().length === 0;
+    return !message.toolCalls.some((call) =>
+      WAKEABLE_AGENT_DM_TERMINATORS.has(normalizeToDottedToolName(call.toolName)),
+    );
   }
 
   private publishMentionThrottledSystemMessage(

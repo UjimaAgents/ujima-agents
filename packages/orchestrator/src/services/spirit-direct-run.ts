@@ -296,6 +296,9 @@ export class SpiritService extends SpiritServiceSupervisor {
     this.deferredApprovalResumes.delete(key);
 
     const cancelledAt = new Date().toISOString();
+    const pendingApprovals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId === runId);
     const pendingQuestions = this.repo.listInteractiveQuestionsByRunId?.(organizationId, runId) ?? [];
     for (const question of pendingQuestions) {
       if (question.status !== 'pending') continue;
@@ -332,6 +335,20 @@ export class SpiritService extends SpiritServiceSupervisor {
       { organizationId: run.organizationId, run: cancelled },
       this.getRooms(run),
     );
+    for (const approval of pendingApprovals) {
+      const resolved = this.repo.resolveApproval(
+        organizationId,
+        approval.id,
+        'rejected',
+        'Run cancelled by user.',
+      );
+      if (!resolved) continue;
+      this.realtime.emit(
+        SocketEventNames.approvalResolved,
+        { organizationId, threadId: cancelled.threadId, approval: resolved },
+        this.getRooms(cancelled),
+      );
+    }
 
     this.runAbortControllers.get(key)?.abort();
     this.runAbortControllers.delete(key);

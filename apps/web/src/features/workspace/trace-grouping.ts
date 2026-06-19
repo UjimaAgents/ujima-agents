@@ -1,4 +1,5 @@
 import type { TraceStepData } from "./components/chat/details-sidebar";
+import { diffStats } from "./change-summary";
 
 type AggregatedOperation = NonNullable<TraceStepData["aggregatedOperations"]>[number];
 
@@ -14,17 +15,6 @@ function parseLineRange(meta: string): string | undefined {
   return undefined;
 }
 
-function getDiffStats(body?: string): { additions: number; deletions: number } {
-  if (!body) return { additions: 0, deletions: 0 };
-  let additions = 0;
-  let deletions = 0;
-  for (const line of body.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) additions++;
-    else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
-  }
-  return { additions, deletions };
-}
-
 function toolStepToOperation(step: TraceStepData): AggregatedOperation {
   const base = { id: step.id, additions: 0, deletions: 0, status: step.status };
 
@@ -38,7 +28,7 @@ function toolStepToOperation(step: TraceStepData): AggregatedOperation {
       file: step.filesystem.resourcePath,
       body,
       lines: step.filesystem.meta ? parseLineRange(step.filesystem.meta) : undefined,
-      ...(isWrite || isDelete ? getDiffStats(body) : {}),
+      ...(isWrite || isDelete ? diffStats(body) : {}),
     };
   }
   if (step.grep) {

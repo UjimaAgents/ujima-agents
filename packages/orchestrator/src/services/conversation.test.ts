@@ -241,6 +241,29 @@ function createConversationFixture(options: { autoCompactConversations?: boolean
   };
 }
 
+function saveAgentDm(repo: ApiRepository) {
+  const dmChannel = ChannelSchema.parse({
+    id: 'dm:agent-1:agent-2',
+    organizationId: 'org-1',
+    name: 'Mia / Noah',
+    kind: 'dm',
+    topic: '',
+    memberIds: ['agent-1', 'agent-2'],
+    createdAt: '2026-05-07T00:00:00.000Z',
+  });
+  const dmThread = ConversationThreadSchema.parse({
+    id: dmChannel.id,
+    organizationId: 'org-1',
+    channelId: dmChannel.id,
+    memberIds: dmChannel.memberIds,
+    title: dmChannel.name,
+    createdAt: '2026-05-07T00:00:00.000Z',
+  });
+  repo.saveChannel(dmChannel);
+  repo.ensureThread(dmThread);
+  return { dmChannel, dmThread };
+}
+
 describe('ConversationService @all mentions', () => {
   it('fans out @all to every member in the channel', async () => {
     const { alerts, emits, savedMessages, savedMentions, service, thread } =
@@ -312,25 +335,7 @@ describe('ConversationService @all mentions', () => {
 
   it('alerts the other agent when an agent publishes a DM reply directly', async () => {
     const { alerts, repo, service } = createConversationFixture();
-    const dmChannel = ChannelSchema.parse({
-      id: 'dm:agent-1:agent-2',
-      organizationId: 'org-1',
-      name: 'Mia / Noah',
-      kind: 'dm',
-      topic: '',
-      memberIds: ['agent-1', 'agent-2'],
-      createdAt: '2026-05-07T00:00:00.000Z',
-    });
-    const dmThread = ConversationThreadSchema.parse({
-      id: dmChannel.id,
-      organizationId: 'org-1',
-      channelId: dmChannel.id,
-      memberIds: dmChannel.memberIds,
-      title: dmChannel.name,
-      createdAt: '2026-05-07T00:00:00.000Z',
-    });
-    repo.saveChannel(dmChannel);
-    repo.ensureThread(dmThread);
+    const { dmChannel, dmThread } = saveAgentDm(repo);
 
     service.publishMessage({
       id: 'msg-1',
@@ -344,6 +349,52 @@ describe('ConversationService @all mentions', () => {
       createdAt: '2026-05-07T00:00:01.000Z',
       mentions: [],
       toolCalls: [],
+      attachments: [],
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toEqual(['agent-2']);
+  });
+
+  it('does not wake the other agent on agent DM tool-progress chatter', async () => {
+    const { alerts, repo, service } = createConversationFixture();
+    const { dmChannel, dmThread } = saveAgentDm(repo);
+
+    service.publishMessage({
+      id: 'msg-tool-progress',
+      organizationId: 'org-1',
+      threadId: dmThread.id,
+      channelId: dmChannel.id,
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Now let me inspect that file.',
+      createdAt: '2026-05-07T00:00:02.000Z',
+      mentions: [],
+      toolCalls: [{ toolCallId: 'call-1', toolName: 'shell.run', args: {} }],
+      attachments: [],
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toEqual([]);
+  });
+
+  it('wakes the other agent on a visible terminating DM tool', async () => {
+    const { alerts, repo, service } = createConversationFixture();
+    const { dmChannel, dmThread } = saveAgentDm(repo);
+
+    service.publishMessage({
+      id: 'msg-visible-terminator',
+      organizationId: 'org-1',
+      threadId: dmThread.id,
+      channelId: dmChannel.id,
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'Posted final answer.',
+      createdAt: '2026-05-07T00:00:03.000Z',
+      mentions: [],
+      toolCalls: [{ toolCallId: 'call-1', toolName: 'channel.reply', args: {} }],
       attachments: [],
     });
 
