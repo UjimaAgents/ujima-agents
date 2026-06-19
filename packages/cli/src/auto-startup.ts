@@ -200,10 +200,9 @@ function ensureWindowsRegistered(): StartupResult {
   ensureLogDir();
   try {
     const execStr = buildWindowsCommand();
-    const escapedExec = execStr.replace(/"/g, '\\"');
     const regCmd =
       'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "Ujima Agents" /t REG_SZ /d "' +
-      escapedExec +
+      execStr +
       '" /f';
     execSync(regCmd, { stdio: 'ignore', timeout: 10_000 });
     return { success: true };

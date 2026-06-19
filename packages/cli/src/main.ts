@@ -573,7 +573,8 @@ async function cmdStart(argv: string[]): Promise<void> {
     argv = argv.filter((a) => a !== '--register-startup');
   }
 
-  if (argv.includes('--unregister-startup')) {
+  const wantsUnregisterStartup = argv.includes('--unregister-startup');
+  if (wantsUnregisterStartup) {
     const result = unregisterStartup();
     if (result.success) {
       process.stdout.write(
@@ -599,7 +600,7 @@ async function cmdStart(argv: string[]): Promise<void> {
 
   const packagedRuntime = resolvePackagedRuntimeDir(__dirname);
   if (packagedRuntime) {
-    const shouldAutoRegister = !argv.includes('--unregister-startup') && !isStartupRegistered();
+    const shouldAutoRegister = !wantsUnregisterStartup && !isStartupRegistered();
     if (shouldAutoRegister) {
       const result = registerStartup();
       if (result.success) {
