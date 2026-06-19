@@ -749,6 +749,10 @@ function npmExecutablePath(): string {
   return join(dirname(process.execPath), process.platform === 'win32' ? 'npm.cmd' : 'npm');
 }
 
+function nodeGlobalPrefixPath(): string {
+  return process.platform === 'win32' ? dirname(process.execPath) : dirname(dirname(process.execPath));
+}
+
 async function maybeOfferUpdate(argv: string[]): Promise<void> {
   if (isDevMode()) return;
   if (resolvePackagedRuntimeDir(__dirname) === null) return;
@@ -809,7 +813,7 @@ async function fetchLatestVersionCached(): Promise<string | null> {
 
 async function runNpmGlobalInstall(version: string): Promise<void> {
   await new Promise<void>((resolveExit, rejectExit) => {
-    const child = spawn(npmExecutablePath(), ['install', '-g', `@ujima/agents@${version}`], {
+    const child = spawn(npmExecutablePath(), ['install', '-g', '--prefix', nodeGlobalPrefixPath(), `@ujima/agents@${version}`], {
       stdio: 'inherit',
       shell: process.platform === 'win32',
     });
@@ -879,7 +883,7 @@ async function cmdUpdate(argv: string[]): Promise<void> {
 
   process.stdout.write(`Updating Ujima Agents globally to v${latestVersion} via npm…\n`);
 
-  const child = spawn(npmExecutablePath(), ['install', '-g', `@ujima/agents@${latestVersion}`], {
+  const child = spawn(npmExecutablePath(), ['install', '-g', '--prefix', nodeGlobalPrefixPath(), `@ujima/agents@${latestVersion}`], {
     stdio: 'inherit',
     shell: process.platform === 'win32',
   });
