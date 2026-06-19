@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { readFileSync, mkdirSync, writeFileSync, existsSync, createWriteStream, unlinkSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
@@ -732,6 +732,23 @@ function updateCheckCachePath(): string {
   return join(resolveHomeDir(), 'update-check.json');
 }
 
+function writeUpdateCheckCache(latest: string): void {
+  try {
+    mkdirSync(resolveHomeDir(), { recursive: true });
+    const next: UpdateCheckCache = {
+      checkedAt: new Date().toISOString(),
+      latest,
+    };
+    writeFileSync(updateCheckCachePath(), JSON.stringify(next, null, 2));
+  } catch {
+    // best-effort cache write
+  }
+}
+
+function npmExecutablePath(): string {
+  return join(dirname(process.execPath), process.platform === 'win32' ? 'npm.cmd' : 'npm');
+}
+
 async function maybeOfferUpdate(argv: string[]): Promise<void> {
   if (isDevMode()) return;
   if (resolvePackagedRuntimeDir(__dirname) === null) return;
@@ -753,11 +770,9 @@ async function maybeOfferUpdate(argv: string[]): Promise<void> {
   if (answer === 'n' || answer === 'no') return;
   await runNpmGlobalInstall(latest);
   process.stdout.write(`Updated to ${latest}. Re-running ujima start…\n`);
-  // Re-exec the freshly-installed CLI with the original argv. The npm
-  // install replaced our binary on disk; node's exec resolution will
-  // pick up the new copy.
-  const child = spawn(process.execPath, [process.argv[1] ?? 'ujima', 'start', ...argv], {
+  const child = spawn('ujima', ['start', ...argv], {
     stdio: 'inherit',
+    shell: process.platform === 'win32',
   });
   await new Promise<void>((resolveExit) => {
     child.on('exit', (code) => {
@@ -785,16 +800,7 @@ async function fetchLatestVersionCached(): Promise<string | null> {
     if (!res.ok) return null;
     const data = (await res.json()) as { version?: unknown };
     if (typeof data.version !== 'string') return null;
-    mkdirSync(resolveHomeDir(), { recursive: true });
-    const next: UpdateCheckCache = {
-      checkedAt: new Date().toISOString(),
-      latest: data.version,
-    };
-    try {
-      writeFileSync(cachePath, JSON.stringify(next, null, 2));
-    } catch {
-      // best-effort cache write
-    }
+    writeUpdateCheckCache(data.version);
     return data.version;
   } catch {
     return null;
@@ -803,7 +809,7 @@ async function fetchLatestVersionCached(): Promise<string | null> {
 
 async function runNpmGlobalInstall(version: string): Promise<void> {
   await new Promise<void>((resolveExit, rejectExit) => {
-    const child = spawn('npm', ['install', '-g', `@ujima/agents@${version}`], {
+    const child = spawn(npmExecutablePath(), ['install', '-g', `@ujima/agents@${version}`], {
       stdio: 'inherit',
       shell: process.platform === 'win32',
     });
@@ -833,6 +839,7 @@ async function cmdUpdate(argv: string[]): Promise<void> {
     }
     const data = (await res.json()) as { version: string };
     latestVersion = data.version;
+    writeUpdateCheckCache(latestVersion);
   } catch (err) {
     process.stderr.write(
       `ujima update: Failed to contact the npm registry. Ensure you have an internet connection.\n` +
@@ -872,7 +879,7 @@ async function cmdUpdate(argv: string[]): Promise<void> {
 
   process.stdout.write(`Updating Ujima Agents globally to v${latestVersion} via npm…\n`);
 
-  const child = spawn('npm', ['install', '-g', `@ujima/agents@${latestVersion}`], {
+  const child = spawn(npmExecutablePath(), ['install', '-g', `@ujima/agents@${latestVersion}`], {
     stdio: 'inherit',
     shell: process.platform === 'win32',
   });

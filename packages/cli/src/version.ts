@@ -33,9 +33,9 @@ function tryReadVersion(path: string): string | null {
 
 export function getLocalVersion(): string {
   const v1 = tryReadVersion(join(__dirname, 'manifest.json'));
-  if (v1) return v1;
-
   const v2 = tryReadVersion(join(__dirname, '..', 'package.json'));
+  if (v1 && v2) return compareVersions(v2, v1) > 0 ? v2 : v1;
+  if (v1) return v1;
   if (v2) return v2;
 
   const root = findMonorepoRoot(__dirname);

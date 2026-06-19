@@ -13,6 +13,7 @@ import {
 } from './lib/package.ts';
 import {
   assertDistributionReadme,
+  assertDistManifestVersion,
   assertPackagedApiBinaries,
   assertPackagedWebNext,
   assertPackManifestIncludesReadme,
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
   }
 
   assertDistributionReadme(DIST_PKG_DIR);
+  assertDistManifestVersion(DIST_PKG_DIR);
 
   const packOutput = `${packResult.stdout}\n${packResult.stderr}`;
   assertPackManifestIncludesReadme(packOutput);
