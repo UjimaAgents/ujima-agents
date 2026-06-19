@@ -11,6 +11,7 @@ export interface RunStepToolCallLike {
 export interface RunStepToolResultLike {
   toolCallId?: string;
   output?: unknown;
+  result?: unknown;
 }
 
 export function normalizeRunStepToolCalls(
@@ -19,19 +20,37 @@ export function normalizeRunStepToolCalls(
 ): MessageToolCall[] {
   const resultsById = new Map<string, unknown>();
   for (const result of stepToolResults) {
-    if (typeof result.toolCallId === 'string') resultsById.set(result.toolCallId, result.output);
+    if (typeof result.toolCallId === 'string') resultsById.set(result.toolCallId, toolResultPayload(result));
   }
-  return stepToolCalls.map((call) => {
+  const seen = new Set<string>();
+  return stepToolCalls.flatMap((call) => {
     const toolCallId = call.toolCallId ?? randomUUID();
+    if (seen.has(toolCallId)) return [];
+    seen.add(toolCallId);
     const result = resultsById.get(toolCallId);
-    return {
+    return [{
       toolCallId,
       toolName: call.toolName ?? 'unknown',
-      args: call.input && typeof call.input === 'object' ? (call.input as Record<string, unknown>) : {},
+      args: toolCallArgs(call.input),
       ...(result !== undefined ? { result } : {}),
       isError: isToolCardError(result),
-    };
+    }];
   });
+}
+
+function toolResultPayload(result: RunStepToolResultLike): unknown {
+  return Object.prototype.hasOwnProperty.call(result, 'output') ? result.output : result.result;
+}
+
+function toolCallArgs(input: unknown): Record<string, unknown> {
+  if (input && typeof input === 'object' && !Array.isArray(input)) return input as Record<string, unknown>;
+  if (typeof input !== 'string' || !input.trim()) return {};
+  try {
+    const parsed = JSON.parse(input) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
 
 export function wrapToolCallsAsCards(

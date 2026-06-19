@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { Avatar } from "./chat/primitives";
+import { AnimatedCharacters } from "./chat/chat-token-count";
 
 function formatTypingSubject(label: string): string {
   return label
@@ -20,6 +21,8 @@ export const TypingIndicator = memo(function TypingIndicator({
   names,
   activeStep,
   tokenUsage,
+  changeSummary,
+  onOpenChanges,
 }: {
   label: string;
   name: string;
@@ -28,9 +31,12 @@ export const TypingIndicator = memo(function TypingIndicator({
   activeStep?: string;
   startedAt?: string;
   tokenUsage?: { inputTokens: number; outputTokens: number };
+  changeSummary?: { files: number; additions: number; deletions: number };
+  onOpenChanges?: () => void;
 }) {
   const visibleNames = names.slice(0, 3);
   const overflowCount = Math.max(names.length - visibleNames.length, 0);
+  const hasChanges = !!changeSummary && changeSummary.files > 0;
 
   return (
     <div className="flex animate-in items-start gap-2 px-3 py-2">
@@ -72,25 +78,44 @@ export const TypingIndicator = memo(function TypingIndicator({
             <span className="h-1 w-1 animate-bounce rounded-full bg-current" />
           </span>
         </div>
-        {tokenUsage ? (
+        {tokenUsage || hasChanges ? (
           <div
-            className="inline-flex items-center gap-1.5 px-1 text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400"
+            className="inline-flex flex-wrap items-center gap-1.5 px-1 text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400"
             aria-live="polite"
-            aria-label={`Current model turn token usage: ${tokenUsage.inputTokens} input, ${tokenUsage.outputTokens} output`}
           >
-            <span>
-              <span className="opacity-70">in</span>{" "}
-              <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                {formatTokenCount(tokenUsage.inputTokens)}
-              </span>
-            </span>
-            <span className="opacity-40">·</span>
-            <span>
-              <span className="opacity-70">out</span>{" "}
-              <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                {formatTokenCount(tokenUsage.outputTokens)}
-              </span>
-            </span>
+            {tokenUsage ? (
+              <>
+                <span>
+                  <span className="opacity-70">in</span>{" "}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                    {formatTokenCount(tokenUsage.inputTokens)}
+                  </span>
+                </span>
+                <span className="opacity-40">·</span>
+                <span>
+                  <span className="opacity-70">out</span>{" "}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                    {formatTokenCount(tokenUsage.outputTokens)}
+                  </span>
+                </span>
+              </>
+            ) : null}
+            {hasChanges ? (
+              <button
+                type="button"
+                onClick={onOpenChanges}
+                className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2 py-0.5 font-semibold text-zinc-700 transition hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                aria-label={`Open changes: ${changeSummary.files} files, ${changeSummary.additions} additions, ${changeSummary.deletions} deletions`}
+              >
+                <span>{changeSummary.files} {changeSummary.files === 1 ? "file" : "files"}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  <AnimatedCharacters text={`+${changeSummary.additions}`} />
+                </span>
+                <span className="text-red-500 dark:text-red-400">
+                  <AnimatedCharacters text={`-${changeSummary.deletions}`} />
+                </span>
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

@@ -13,6 +13,7 @@ import {
 } from './lib/package.ts';
 import {
   assertBootstrapEndpoints,
+  assertDistManifestVersion,
   assertNoTransportErrors,
   waitForHttpOk,
 } from './lib/pack-verify.ts';
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
     console.error('[release:e2e] Missing dist — run: bun run release:dist');
     process.exit(1);
   }
+  assertDistManifestVersion(DIST_PKG_DIR);
 
   const workDir = mkdtempSync(join(tmpdir(), 'ujima-e2e-'));
   console.log(`[release:e2e] Work dir: ${workDir}`);

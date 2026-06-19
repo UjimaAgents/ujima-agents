@@ -46,10 +46,17 @@ export function takePendingMemberAlert(
   return pending;
 }
 
+export function clearPendingMemberAlerts(
+  organizationId: string,
+  memberId: string,
+  threadId: string,
+): void {
+  pendingByThread.delete(pendingKey(organizationId, memberId, threadId));
+}
+
 const DRAINABLE_RUN_STATUSES = new Set<RunState['status']>([
   'completed',
   'failed',
-  'cancelled',
   'waiting_for_approval',
   'waiting_for_input',
 ]);
@@ -58,6 +65,11 @@ export async function drainPendingMemberAlertAfterRun(
   run: RunState,
   wake: (input: PendingMemberAlert) => Promise<void>,
 ): Promise<void> {
+  if (run.status === 'cancelled') {
+    if (run.threadId) clearPendingMemberAlerts(run.organizationId, run.agentId, run.threadId);
+    clearRunInterruptCursor(run.id);
+    return;
+  }
   if (!DRAINABLE_RUN_STATUSES.has(run.status) || !run.threadId) {
     clearRunInterruptCursor(run.id);
     return;

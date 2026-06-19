@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  listBackgroundJobs,
   peekBackgroundJob,
   terminateBackgroundJob,
   shellTool,
@@ -92,5 +93,53 @@ unixDescribe('shellTool background termination', () => {
     const snapshot = await waitPromise;
     expect(snapshot.status).toBe('exited');
     expect(snapshot.stdout).toBe('ready');
+  });
+
+  it('lists command metadata and keeps output after read_output', async () => {
+    const runId = `run-list-${Math.random().toString(36).slice(2)}`;
+    const execResult = (await shellTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId,
+        memberId: 'agent-1',
+        toolCallId: 'tool-1',
+        toolId: 'shell',
+        action: 'execute',
+        resourceType: 'shell',
+        resourcePath: process.cwd(),
+        input: {
+          command: 'sh',
+          args: ['-c', 'printf visible; sleep 1'],
+          cwd: process.cwd(),
+          background: true,
+        },
+      },
+      team: { workspace: { root: process.cwd() } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    })) as { job_id: string };
+
+    const listed = listBackgroundJobs(runId).find((job) => job.id === execResult.job_id);
+    expect(listed).toMatchObject({ cwd: process.cwd(), commandLine: 'sh -c printf visible; sleep 1' });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await shellTool.execute({
+      invocation: {
+        organizationId: 'org-1',
+        runId,
+        memberId: 'agent-1',
+        toolCallId: 'tool-2',
+        toolId: 'shell',
+        action: 'execute',
+        resourceType: 'shell',
+        input: { operation: 'read_output', job_id: execResult.job_id },
+      },
+      team: { workspace: { root: process.cwd() } } as never,
+      repo: {} as never,
+      conversations: {} as never,
+    });
+
+    expect(peekBackgroundJob(runId, execResult.job_id)?.stdout).toContain('visible');
+    terminateBackgroundJob(runId, execResult.job_id);
   });
 });

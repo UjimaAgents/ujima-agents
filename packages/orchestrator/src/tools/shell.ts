@@ -90,6 +90,8 @@ export function listBackgroundJobs(runId: string) {
       result.push({
         id: job.id,
         status: job.status,
+        cwd: job.cwd,
+        commandLine: job.commandDisplay,
       });
     }
   }
@@ -210,9 +212,6 @@ export const shellTool: OrchestratorTool<typeof ShellSchema> = {
           exitCode: job.exitCode,
           error: job.error,
         };
-        // Clear buffers after reading so next read is fresh
-        job.stdoutBuffer = '';
-        job.stderrBuffer = '';
         return result;
       }
 

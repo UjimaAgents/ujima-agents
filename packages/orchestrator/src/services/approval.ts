@@ -179,7 +179,10 @@ export class ApprovalService {
               approval.requestedBy === input.requestedBy &&
               approval.resourceType === input.resourceType &&
               approval.action === input.action &&
-              approvalScopeMatches(decodeApprovalScope(approval.reason) ?? '', requestedScope),
+              approvalScopeMatches(
+                approvalOperationalScope(approval, decodeApprovalScope(approval.reason)) ?? '',
+                requestedScope,
+              ),
           )
       : undefined;
 
@@ -238,13 +241,14 @@ export class ApprovalService {
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
     const existing = this.repo.getApproval(input.organizationId, input.approvalId);
     const rawScope = existing?.reason ? parseApprovalReasonValue(existing.reason, 'scope') ?? undefined : undefined;
+    const operationalScope = approvalOperationalScope(existing, rawScope);
     const persistedScope =
       (input.resolution === 'allow_family'
-        ? rawScope
-          ? canonicalizeApprovalFamilyScope(rawScope)
+        ? operationalScope
+          ? canonicalizeApprovalFamilyScope(operationalScope)
           : fallbackApprovalScope(existing)
-        : rawScope
-          ? canonicalizeApprovalGrantScope(rawScope)
+        : operationalScope
+          ? canonicalizeApprovalGrantScope(operationalScope)
           : fallbackApprovalScope(existing)) ?? undefined;
     const canPersistGrant =
       (input.resolution === 'allow_always' || input.resolution === 'allow_family') &&
@@ -315,6 +319,7 @@ export class ApprovalService {
         !approvalIds.has(approval.id) &&
         (approvalIds.add(approval.id), true),
     );
+    const originalReasonById = new Map(approvals.map((approval) => [approval.id, approval.reason]));
     const resolvedApprovals =
       input.status === 'rejected'
         ? approvals.map((approval) =>
@@ -360,7 +365,12 @@ export class ApprovalService {
       // action (scope=connector:{json} in the reason). Non-connector
       // approvals (shell, filesystem, generic) keep their existing
       // approval-row + realtime event as the only record.
-      emitConnectorResolvedIfApplicable(this.repo, resolved, input);
+      emitConnectorResolvedIfApplicable(
+        this.repo,
+        resolved,
+        input,
+        originalReasonById.get(resolved.id),
+      );
       // PR 11 — §17.5.6 attachment_request resolution. The resolved
       // row's `reason` has been overwritten with `effectiveReason`
       // (reject prefix / grant prefix / operator note) by the time
@@ -489,11 +499,12 @@ function pendingApprovalMatchesResolution(input: {
   }
 
   const approvalScope = decodeApprovalScope(approval.reason);
-  if (!approvalScope || !persistedScope) {
+  const operationalScope = approvalOperationalScope(approval, approvalScope);
+  if (!operationalScope || !persistedScope) {
     return false;
   }
   return approvalScopeMatchesPersisted(
-    approvalScope,
+    operationalScope,
     persistedScope,
     resolution === 'allow_family' ? 'family' : 'grant',
   );
@@ -503,6 +514,7 @@ function emitConnectorResolvedIfApplicable(
   repo: ApiRepository,
   resolved: ApprovalRequest,
   input: ApprovalResolveInput,
+  originalReason?: string,
 ): void {
   // The connector tuple rides in the approval row's reason field as
   // `scope=connector:{json}`. parseConnectorScope returns null for
@@ -512,8 +524,9 @@ function emitConnectorResolvedIfApplicable(
   // createConnectorAuditWriter swallows + logs saveAuditEvent failures
   // internally (see write() in connector-audit.ts), so this callsite
   // is best-effort by construction — no outer try/catch needed.
-  const rawScope = resolved.reason
-    ? parseApprovalReasonValue(resolved.reason, 'scope') ?? undefined
+  const reason = originalReason ?? resolved.reason;
+  const rawScope = reason
+    ? parseApprovalReasonValue(reason, 'scope') ?? undefined
     : undefined;
   if (!rawScope) return;
   const connector = parseConnectorScope(rawScope);
@@ -545,4 +558,14 @@ function fallbackApprovalScope(approval: ApprovalRequest | null | undefined): st
   return canonicalizeApprovalGrantScope(
     `${approval.resourceType}:${approval.action}:${approval.resourcePath}`,
   );
+}
+
+function approvalOperationalScope(
+  approval: ApprovalRequest | null | undefined,
+  rawScope: string | undefined,
+): string | undefined {
+  if (rawScope && !parseConnectorScope(rawScope)) {
+    return rawScope;
+  }
+  return fallbackApprovalScope(approval);
 }

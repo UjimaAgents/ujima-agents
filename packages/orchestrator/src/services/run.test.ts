@@ -1058,6 +1058,19 @@ describe('SpiritService run path', () => {
         updatedAt: '2026-05-04T19:07:08.071Z',
       },
     ];
+    let approval: any = {
+      id: 'approval-cancel-1',
+      organizationId,
+      runId,
+      toolCallId: 'tool-1',
+      requestedBy: 'Quinn Mason',
+      resourceType: 'shell',
+      resourcePath: '/tmp',
+      action: 'execute',
+      status: 'pending',
+      reason: 'needs approval',
+      createdAt: '2026-05-04T19:07:08.071Z',
+    };
     const repo = {
       getRun: () => run,
       saveRun: (next: any) => {
@@ -1065,6 +1078,17 @@ describe('SpiritService run path', () => {
         return next;
       },
       getThread: () => ({ channelId: 'channel-1' }),
+      listPendingApprovals: () => (approval.status === 'pending' ? [approval] : []),
+      resolveApproval: (_organizationId: string, approvalId: string, status: string, reason?: string) => {
+        if (approvalId !== approval.id) return null;
+        approval = {
+          ...approval,
+          status,
+          reason,
+          resolvedAt: '2026-05-04T19:08:08.071Z',
+        };
+        return approval;
+      },
       listInteractiveQuestionsByRunId: () => questions,
       saveInteractiveQuestion: (next: any) => {
         const index = questions.findIndex((question) => question.id === next.id);
@@ -1072,7 +1096,7 @@ describe('SpiritService run path', () => {
         return next;
       },
     } as never;
-    let completions = 0;
+    const emitted: string[] = [];
     const service = createSpiritRunService(
       {
         getTeam: () =>
@@ -1085,7 +1109,7 @@ describe('SpiritService run path', () => {
         setTeam: () => undefined,
       } as never,
       repo,
-      { emit: () => { completions += 1; } } as never,
+      { emit: (event: string) => { emitted.push(event); } } as never,
       {} as never,
       { generateRunReply: async () => ({ text: '', toolResults: [], steps: [] }) } as never,
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
@@ -1095,7 +1119,10 @@ describe('SpiritService run path', () => {
     expect(result.status).toBe('cancelled');
     expect(result.summary).toBe('Stopped by user');
     expect(questions[0].status).toBe('superseded');
-    expect(completions).toBe(1);
+    expect(approval.status).toBe('rejected');
+    expect(approval.reason).toBe('Run cancelled by user.');
+    expect(emitted).toContain('run:completed');
+    expect(emitted).toContain('approval:resolved');
     expect(service.cancelRun(organizationId, runId).status).toBe('cancelled');
   });
 

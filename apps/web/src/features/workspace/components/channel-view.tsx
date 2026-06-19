@@ -23,6 +23,7 @@ import {
   ApprovalCard,
   type ChatTab,
   type ChatMessageData,
+  type TraceStepData,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
@@ -32,6 +33,7 @@ import {
   resolveMemberModelSelection,
   ApprovalRequestSchema,
   RunStateSchema,
+  type ReasoningEffort,
   type RunState,
   type ActivityEvent,
 } from "@ujima/shared/browser";
@@ -55,6 +57,7 @@ import { resolveWorkspaceApproval } from "../approval-resolution";
 import { approvalToActivity, runToActivity } from "../activity-events";
 import { approvalToCard } from "../approval-card-data";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
+import { summarizeFileChanges } from "../change-summary";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
 import { QuestionCard } from "./chat/question-card";
 import {
@@ -373,11 +376,17 @@ export function ChannelView({
   }, [currentChannel?.memberIds]);
 
   const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
+  const globalApprovals = useWorkspaceStore((state) => state.approvals);
   const activeAgentChats = useMemo(
-    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns }, currentThreadId),
-    [bootstrap.channels, currentThreadId, globalActiveRuns, members],
+    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns, approvals: globalApprovals }, currentThreadId),
+    [bootstrap.channels, currentThreadId, globalActiveRuns, globalApprovals, members],
   );
   const activeTerminals = useWorkspaceStore(selectActiveTerminals);
+  const composerReasoningEffort =
+    useWorkspaceStore((state) =>
+      currentThreadId ? state.composerReasoningEffortByThread[currentThreadId] : undefined,
+    ) ?? "none";
+  const setComposerReasoningEffort = useWorkspaceStore((state) => state.setComposerReasoningEffort);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
   const [stopError, setStopError] = useState<string | undefined>(undefined);
 
@@ -492,6 +501,10 @@ export function ChannelView({
     }
     return [...byId.values()];
   }, [currentThreadId, feed.runs, globalActiveRuns]);
+  const liveChangeSummary = useMemo(() => {
+    const liveRunIds = new Set(liveThreadRuns.map((run) => run.id));
+    return summarizeFileChanges(reasoningTraceSteps.filter((step: TraceStepData) => step.runId && liveRunIds.has(step.runId)));
+  }, [liveThreadRuns, reasoningTraceSteps]);
   const waitingInputRunIds = useMemo(
     () => liveThreadRuns.filter((run) => run.status === "waiting_for_input").map((run) => run.id),
     [liveThreadRuns],
@@ -785,16 +798,22 @@ export function ChannelView({
   }, []);
 
   const handleComposerCommand = useCallback(
-    async (command: string) => {
+    async (command: string, _rawContent?: string, metadata?: ConversationMessageMetadata) => {
+      if (currentThreadId && metadata?.reasoningEffort) {
+        setComposerReasoningEffort(currentThreadId, metadata.reasoningEffort);
+      }
       await feedRef.current.archiveConversation(command as "summarize" | "clear");
       setReplyTo(null);
       scrollToLatest("auto");
     },
-    [scrollToLatest],
+    [currentThreadId, scrollToLatest, setComposerReasoningEffort],
   );
 
   const handleSend = useCallback(
     (content: string, attachmentIds?: string[], metadata?: ConversationMessageMetadata) => {
+      if (currentThreadId && metadata?.reasoningEffort) {
+        setComposerReasoningEffort(currentThreadId, metadata.reasoningEffort);
+      }
       if (isAgent) {
         openDetailsForAgentMessage();
       }
@@ -802,8 +821,19 @@ export function ChannelView({
       setReplyTo(null);
       return promise;
     },
-    [isAgent, openDetailsForAgentMessage],
+    [currentThreadId, isAgent, openDetailsForAgentMessage, setComposerReasoningEffort],
   );
+
+  const handleReasoningEffortChange = useCallback(
+    (effort: ReasoningEffort) => {
+      if (currentThreadId) setComposerReasoningEffort(currentThreadId, effort);
+    },
+    [currentThreadId, setComposerReasoningEffort],
+  );
+  const openChangesTab = useCallback(() => {
+    setDetailsTab("Changes");
+    setShowDetails(true, { userIntent: true });
+  }, [setDetailsTab, setShowDetails]);
 
   const semanticActivityCount = useMemo(
     () => countSemanticActivityEvents(feed.activity),
@@ -991,6 +1021,8 @@ export function ChannelView({
                       activeStep={activeStep}
                       startedAt={typingStartedAt}
                       tokenUsage={typingTokenUsage}
+                      changeSummary={liveChangeSummary}
+                      onOpenChanges={openChangesTab}
                     />
                   ) : null}
                 </>
@@ -1124,6 +1156,11 @@ export function ChannelView({
                 <span className="font-medium">
                   {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
                 </span>
+                {chat.pendingApprovals > 0 ? (
+                  <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950">
+                    {chat.pendingApprovals} approval{chat.pendingApprovals === 1 ? "" : "s"}
+                  </span>
+                ) : null}
               </button>
             ))}
 
@@ -1216,6 +1253,8 @@ export function ChannelView({
                 readOnly={isReadOnly}
                 reasoningProvider={reasoningModelSelection?.provider}
                 reasoningModelValue={reasoningModelSelection?.model}
+                reasoningEffort={composerReasoningEffort}
+                onReasoningEffortChange={handleReasoningEffortChange}
                 onCommand={handleComposerCommand}
               placeholder={
                 isAgent
@@ -1227,7 +1266,7 @@ export function ChannelView({
               replyTo={replyTo}
               onCancelReply={handleCancelReply}
               stoppableRunIds={stoppableRunIds}
-              onStopRun={stopAgentRun}
+              onStopRuns={stopRuns}
               onSend={handleSend}
             />
           </div>

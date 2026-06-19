@@ -1409,7 +1409,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // drain-pending-member-alert, memory-review's turn counter, and
   // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
-    if (run.sourceMessageId) {
+    if (run.status !== 'cancelled' && run.sourceMessageId) {
       const sourceMsg = context.repo.getMessage(run.organizationId, run.sourceMessageId);
       const parentRunId = sourceMsg?.metadata?.delegate?.parentRunId;
       if (parentRunId) {

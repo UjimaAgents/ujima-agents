@@ -23,6 +23,21 @@ export function assertPackManifestIncludesReadme(packLog: string): void {
   }
 }
 
+export function assertDistManifestVersion(distPkgDir = DIST_PKG_DIR): void {
+  const pkgPath = join(distPkgDir, 'package.json');
+  const manifestPath = join(distPkgDir, 'dist', 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Missing ${manifestPath}. Run: bun run release:dist`);
+  }
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: unknown };
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: unknown };
+  if (manifest.version !== pkg.version) {
+    throw new Error(
+      `dist/manifest.json version ${String(manifest.version)} does not match package.json ${String(pkg.version)}. Run: bun run release:dist`,
+    );
+  }
+}
+
 export function assertPackagedApiBinaries(packageDir: string): void {
   const apiBinRoot = join(packageDir, 'dist', 'runtime', 'api', 'bin');
   for (const tool of ['rg', 'fd'] as const) {

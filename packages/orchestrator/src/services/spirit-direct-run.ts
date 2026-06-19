@@ -296,6 +296,9 @@ export class SpiritService extends SpiritServiceSupervisor {
     this.deferredApprovalResumes.delete(key);
 
     const cancelledAt = new Date().toISOString();
+    const pendingApprovals = this.repo
+      .listPendingApprovals(organizationId)
+      .filter((approval) => approval.runId === runId);
     const pendingQuestions = this.repo.listInteractiveQuestionsByRunId?.(organizationId, runId) ?? [];
     for (const question of pendingQuestions) {
       if (question.status !== 'pending') continue;
@@ -332,6 +335,20 @@ export class SpiritService extends SpiritServiceSupervisor {
       { organizationId: run.organizationId, run: cancelled },
       this.getRooms(run),
     );
+    for (const approval of pendingApprovals) {
+      const resolved = this.repo.resolveApproval(
+        organizationId,
+        approval.id,
+        'rejected',
+        'Run cancelled by user.',
+      );
+      if (!resolved) continue;
+      this.realtime.emit(
+        SocketEventNames.approvalResolved,
+        { organizationId, threadId: cancelled.threadId, approval: resolved },
+        this.getRooms(cancelled),
+      );
+    }
 
     this.runAbortControllers.get(key)?.abort();
     this.runAbortControllers.delete(key);
@@ -522,25 +539,28 @@ export class SpiritService extends SpiritServiceSupervisor {
             if (!finalThreadId) continue;
             const channelId = this.repo.getThread(running.organizationId, finalThreadId)?.channelId;
 
-            const stepMessage = buildAgentMessage({
-              organizationId: running.organizationId,
-              threadId: finalThreadId,
-              channelId: channelId ?? undefined,
-              senderId: running.agentId,
-              content: prepared.content,
-              metadata: { runId: running.id },
-              ...(composedStepToolCalls(prepared).length > 0
-                ? { toolCalls: composedStepToolCalls(prepared) }
-                : {}),
-              ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
-            });
-            if (isDelegateRun(running, this.repo)) {
-              this.conversations?.publishMessage(stepMessage, [], undefined, {
-                suppressDmAlerts: true,
-                skipMentionResolution: true,
+            const toolCalls = composedStepToolCalls(prepared);
+            const parts = prepared.contentParts.length > 0 ? prepared.contentParts : [prepared.content];
+            for (const [partIndex, content] of parts.entries()) {
+              const isLastPart = partIndex === parts.length - 1;
+              const stepMessage = buildAgentMessage({
+                organizationId: running.organizationId,
+                threadId: finalThreadId,
+                channelId: channelId ?? undefined,
+                senderId: running.agentId,
+                content,
+                metadata: { runId: running.id },
+                ...(isLastPart && toolCalls.length > 0 ? { toolCalls } : {}),
+                ...(isLastPart && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
               });
-            } else {
-              turn.publishMessage(stepMessage);
+              if (isDelegateRun(running, this.repo)) {
+                this.conversations?.publishMessage(stepMessage, [], undefined, {
+                  suppressDmAlerts: true,
+                  skipMentionResolution: true,
+                });
+              } else {
+                turn.publishMessage(stepMessage);
+              }
             }
           }
           this.emitRunTokens(

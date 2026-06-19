@@ -4,6 +4,7 @@ import type {
   ActivityEvent,
   ApprovalRequest,
   Message,
+  ReasoningEffort,
   RunState,
 } from "@ujima/shared/browser";
 import {
@@ -43,6 +44,7 @@ export interface ActiveAgentChat {
   threadId: string;
   name: string;
   agents: string[];
+  pendingApprovals: number;
 }
 
 export interface WorkspaceState {
@@ -62,6 +64,7 @@ export interface WorkspaceState {
   runs: RunState[];
   globalActiveRuns: RunState[];
   runTokenUsage: Record<string, { inputTokens: number; outputTokens: number }>;
+  composerReasoningEffortByThread: Record<string, ReasoningEffort>;
   activeTerminals: ActiveJob[];
   activitySequence: number;
   activity: ActivityEvent[];
@@ -106,12 +109,14 @@ export interface WorkspaceState {
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
   upsertGlobalActiveRun(run: RunState): void;
   setRunTokens(runId: string, inputTokens: number, outputTokens: number): void;
+  setComposerReasoningEffort(threadId: string, effort: ReasoningEffort): void;
   setActiveTerminals(jobs: ActiveJob[]): void;
   appendActivity(event: ActivityEvent): void;
 }
 
 const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismissed";
 const CHAT_FONT_SIZE_KEY = "ujima.workspace.chatFontSize";
+const COMPOSER_REASONING_EFFORT_KEY = "ujima.workspace.composerReasoningEffortByThread";
 const CHAT_FONT_SIZE_DEFAULT: ChatFontSize = "normal";
 
 // SSR-safe defaults. Persisted values from localStorage are applied post-mount
@@ -133,6 +138,7 @@ const EMPTY_ACTIVITY = {
   runs: [],
   globalActiveRuns: [],
   runTokenUsage: {},
+  composerReasoningEffortByThread: {},
   activeTerminals: [],
   activitySequence: 0,
   activity: [],
@@ -487,10 +493,15 @@ export function agentOnlyThreadName(
 }
 
 export function selectActiveAgentChats(
-  state: Pick<WorkspaceState, "channels" | "members" | "globalActiveRuns">,
+  state: Pick<WorkspaceState, "channels" | "members" | "globalActiveRuns" | "approvals">,
   currentThreadId?: string,
 ): ActiveAgentChat[] {
   const grouped = new Map<string, RunState[]>();
+  const approvalsByThread = new Map<string, number>();
+  for (const approval of state.approvals) {
+    if (approval.status !== "pending" || !approval.threadId) continue;
+    approvalsByThread.set(approval.threadId, (approvalsByThread.get(approval.threadId) ?? 0) + 1);
+  }
   for (const run of state.globalActiveRuns) {
     if (
       !run.threadId ||
@@ -509,6 +520,7 @@ export function selectActiveAgentChats(
       threadId,
       name: agentOnlyThreadName(threadId, state) ?? agents.join(" & "),
       agents,
+      pendingApprovals: approvalsByThread.get(threadId) ?? 0,
     };
   });
 }
@@ -523,13 +535,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((state) => {
       const chatFontSize = readChatFontSize();
       const detailsAutoOpenDismissed = readDetailsAutoOpenDismissed();
+      const composerReasoningEffortByThread = readComposerReasoningEfforts();
       if (
         state.chatFontSize === chatFontSize &&
-        state.detailsAutoOpenDismissed === detailsAutoOpenDismissed
+        state.detailsAutoOpenDismissed === detailsAutoOpenDismissed &&
+        shallowEqual(state.composerReasoningEffortByThread, composerReasoningEffortByThread)
       ) {
         return state;
       }
-      return { chatFontSize, detailsAutoOpenDismissed };
+      return { chatFontSize, detailsAutoOpenDismissed, composerReasoningEffortByThread };
     }),
   setSidebarWidth: (sidebarWidth) =>
     set((state) => (state.sidebarWidth === sidebarWidth ? state : { sidebarWidth })),
@@ -783,6 +797,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         runTokenUsage: { ...state.runTokenUsage, [runId]: { inputTokens, outputTokens } },
       };
     }),
+  setComposerReasoningEffort: (threadId, effort) =>
+    set((state) => {
+      if (state.composerReasoningEffortByThread[threadId] === effort) return state;
+      const next = { ...state.composerReasoningEffortByThread, [threadId]: effort };
+      writeComposerReasoningEfforts(next);
+      return { composerReasoningEffortByThread: next };
+    }),
   setActiveTerminals: (activeTerminals) =>
     set((state) => (sameActiveJobs(state.activeTerminals, activeTerminals) ? state : { activeTerminals })),
   appendActivity: (event) => set((state) => appendSequencedEvents(state, [event])),
@@ -826,6 +847,28 @@ function readChatFontSize(): ChatFontSize {
 function writeChatFontSize(size: ChatFontSize): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(CHAT_FONT_SIZE_KEY, size);
+}
+
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return value === "none" || value === "low" || value === "medium" || value === "high" || value === "extra_high";
+}
+
+function readComposerReasoningEfforts(): Record<string, ReasoningEffort> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(COMPOSER_REASONING_EFFORT_KEY) ?? "{}");
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, ReasoningEffort] => isReasoningEffort(entry[1])),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeComposerReasoningEfforts(values: Record<string, ReasoningEffort>): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(COMPOSER_REASONING_EFFORT_KEY, JSON.stringify(values));
 }
 
 export function resolveMemberActivity(

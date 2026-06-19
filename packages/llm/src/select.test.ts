@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { jsonSchema, stepCountIs, streamText } from 'ai';
 import { setCodexAppServerSpawn } from './codex-app-server.js';
 import { selectLanguageModel } from './select.js';
 
@@ -29,6 +30,7 @@ function createFakeAppServer(): {
   child.kill = vi.fn(() => true) as never;
 
   let buffer = '';
+  let loopTurns = 0;
   stdin.on('data', (chunk) => {
     buffer += chunk.toString();
     let newline = buffer.indexOf('\n');
@@ -60,6 +62,30 @@ function createFakeAppServer(): {
         const text = (((msg.params as { input?: { text?: string }[] }).input ?? [])[0]?.text) ?? '';
         stdout.write(`${JSON.stringify({ id: msg.id, result: { turn: { id: 'turn_1' } } })}\n`);
         stdout.write(`${JSON.stringify({ method: 'turn/started', params: { turn: { id: 'turn_1', status: 'inProgress', items: [] } } })}\n`);
+        if (text === 'six turn loop' || loopTurns > 0) {
+          loopTurns += 1;
+          if (loopTurns < 6) {
+            stdout.write(`${JSON.stringify({
+              jsonrpc: '2.0',
+              id: 200 + loopTurns,
+              method: 'item/tool/call',
+              params: {
+                threadId: 'thr_1',
+                turnId: 'turn_1',
+                callId: `loop_${loopTurns}`,
+                tool: 'ujima_progress',
+                arguments: { turn: loopTurns },
+              },
+            })}\n`);
+            continue;
+          }
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', itemId: 'msg_a', delta: 'first saved message' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_a', text: 'first saved message', phase: null, memoryCitation: null }, completedAtMs: 1 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', itemId: 'msg_b', delta: 'second saved message' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_b', text: 'second saved message', phase: null, memoryCitation: null }, completedAtMs: 2 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
         if (text === 'call tool') {
           stdout.write(`${JSON.stringify({
             jsonrpc: '2.0',
@@ -69,7 +95,7 @@ function createFakeAppServer(): {
               threadId: 'thr_1',
               turnId: 'turn_1',
               callId: 'call_1',
-              tool: 'ujima_channel_reply',
+              tool: 'ujima_grep',
               arguments: { body: 'hi' },
             },
           })}\n`);
@@ -88,11 +114,84 @@ function createFakeAppServer(): {
                 threadId: 'thr_1',
                 turnId: 'turn_1',
                 callId,
-                tool: 'ujima_channel_reply',
+                tool: 'ujima_grep',
                 arguments: { body },
               },
             })}\n`);
           }
+          continue;
+        }
+        if (text === 'native command approval') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 120,
+            method: 'item/commandExecution/requestApproval',
+            params: {
+              threadId: 'thr_1',
+              turnId: 'turn_1',
+              itemId: 'cmd_1',
+              command: 'npm test',
+              cwd: '/repo',
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'native file change') {
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'fileChange', id: 'patch_1', changes: [{ path: 'src/a.ts', kind: { type: 'update', move_path: null }, diff: '--- a/src/a.ts\\n+++ b/src/a.ts\\n@@\\n-old\\n+new' }], status: 'completed' }, completedAtMs: 1 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
+        if (text === 'native file approval edit') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 121,
+            method: 'item/fileChange/requestApproval',
+            params: {
+              threadId: 'thr_1',
+              turnId: 'turn_1',
+              itemId: 'patch_approval_1',
+              changes: [{
+                path: 'src/a.ts',
+                kind: { type: 'update' },
+                oldText: 'old',
+                newText: 'new',
+              }],
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'native file approval patch') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 122,
+            method: 'item/fileChange/requestApproval',
+            params: {
+              threadId: 'thr_1',
+              turnId: 'turn_1',
+              itemId: 'patch_approval_2',
+              changes: [{
+                path: 'src/a.ts',
+                kind: { type: 'update' },
+                patch: '*** Begin Patch\\n*** Update File: src/a.ts\\n@@\\n-old\\n+new\\n*** End Patch',
+              }],
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'separate messages') {
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', itemId: 'msg_a', delta: 'first saved message' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_a', text: 'first saved message', phase: null, memoryCitation: null }, completedAtMs: 1 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', itemId: 'msg_b', delta: 'second saved message' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_b', text: 'second saved message', phase: null, memoryCitation: null }, completedAtMs: 2 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
+        if (text === 'separate messages without delta ids') {
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', delta: 'first saved message' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_a', text: 'first saved message', phase: null, memoryCitation: null }, completedAtMs: 1 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', delta: 'second saved message' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_b', text: 'second saved message', phase: null, memoryCitation: null }, completedAtMs: 2 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
           continue;
         }
         stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hello from app-server' } })}\n`);
@@ -134,7 +233,7 @@ describe('selectLanguageModel', () => {
       prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
     });
 
-    expect(result.content).toEqual([{ type: 'text', text: 'hello from app-server' }]);
+    expect(result.content).toMatchObject([{ type: 'text', text: 'hello from app-server' }]);
     expect(result.usage).toMatchObject({
       inputTokens: { total: 10, noCache: 7, cacheRead: 3 },
       outputTokens: { total: 5, text: 3, reasoning: 2 },
@@ -206,8 +305,8 @@ describe('selectLanguageModel', () => {
       prompt: [{ role: 'user', content: [{ type: 'text', text: 'call tool' }] }],
       tools: [{
         type: 'function',
-        name: 'channel.reply',
-        description: 'Reply',
+        name: 'grep',
+        description: 'Search',
         inputSchema: { type: 'object' },
       }],
     });
@@ -215,7 +314,7 @@ describe('selectLanguageModel', () => {
     expect(result.content).toEqual([{
       type: 'tool-call',
       toolCallId: 'call_1',
-      toolName: 'channel.reply',
+      toolName: 'grep',
       input: '{"body":"hi"}',
     }]);
     const response = child.requests.find((req) => (req as { id?: number; method?: string }).id === 99 && !(req as { method?: string }).method) as {
@@ -239,8 +338,8 @@ describe('selectLanguageModel', () => {
       prompt: [{ role: 'user', content: [{ type: 'text', text: 'call tools' }] }],
       tools: [{
         type: 'function',
-        name: 'channel.reply',
-        description: 'Reply',
+        name: 'grep',
+        description: 'Search',
         inputSchema: { type: 'object' },
       }],
     });
@@ -249,16 +348,263 @@ describe('selectLanguageModel', () => {
       {
         type: 'tool-call',
         toolCallId: 'call_1',
-        toolName: 'channel.reply',
+        toolName: 'grep',
         input: '{"body":"hi"}',
       },
       {
         type: 'tool-call',
         toolCallId: 'call_2',
-        toolName: 'channel.reply',
+        toolName: 'grep',
         input: '{"body":"bye"}',
       },
     ]);
     expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/interrupt')).toHaveLength(1);
+  });
+
+  it('exposes channel tools while instructing Codex to use final text for current replies', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      tools: [
+        { type: 'function', name: 'channel.reply', description: 'Reply', inputSchema: { type: 'object' } },
+        { type: 'function', name: 'channel.dm', description: 'DM', inputSchema: { type: 'object' } },
+        { type: 'function', name: 'grep', description: 'Search', inputSchema: { type: 'object' } },
+      ],
+    });
+
+    const threadStart = child.requests.find((req) => (req as { method?: string }).method === 'thread/start') as {
+      params: { developerInstructions?: string; dynamicTools?: { name: string }[] };
+    };
+    expect(threadStart.params.developerInstructions).toContain('final assistant text is automatically published');
+    expect(threadStart.params.developerInstructions).toContain('Use channel/message tools only when the user explicitly asks');
+    expect(threadStart.params.dynamicTools?.map((tool) => tool.name)).toEqual([
+      'ujima_channel_reply',
+      'ujima_channel_dm',
+      'ujima_grep',
+    ]);
+  });
+
+  it('keeps separate Codex assistant message items as separate text content', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'separate messages' }] }],
+    });
+
+    expect(result.content.filter((part: { type?: string }) => part.type === 'text')).toMatchObject([
+      { type: 'text', text: 'first saved message' },
+      { type: 'text', text: 'second saved message' },
+    ]);
+  });
+
+  it('keeps separate completed Codex messages when deltas have no item ids', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = streamText({
+      model,
+      messages: [{ role: 'user', content: 'separate messages without delta ids' }],
+    });
+
+    expect(await result.text).toBe('first saved messagesecond saved message');
+    const steps = await result.steps;
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.content.filter((part) => part.type === 'text')).toMatchObject([
+      { type: 'text', text: 'first saved message' },
+      { type: 'text', text: 'second saved message' },
+    ]);
+  });
+
+  it('translates native Codex command approvals into Ujima shell tool calls', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'native command approval' }] }],
+      tools: [{ type: 'function', name: 'shell', description: 'Shell', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toEqual([{
+      type: 'tool-call',
+      toolCallId: 'cmd_1',
+      toolName: 'shell',
+      input: '{"command":"npm test","cwd":"/repo"}',
+    }]);
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 120 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
+  });
+
+  it('translates native Codex file approval requests into Ujima edit tool calls', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'native file approval edit' }] }],
+      tools: [{ type: 'function', name: 'edit', description: 'Edit', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toEqual([{
+      type: 'tool-call',
+      toolCallId: 'patch_approval_1',
+      toolName: 'edit',
+      input: '{"file_path":"src/a.ts","old_string":"old","new_string":"new"}',
+    }]);
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 121 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
+  });
+
+  it('keeps patch-only native Codex file approval requests visible as shell calls', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'native file approval patch' }] }],
+      tools: [{ type: 'function', name: 'shell', description: 'Shell', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([{
+      type: 'tool-call',
+      toolCallId: 'patch_approval_2',
+      toolName: 'shell',
+    }]);
+    expect((result.content[0] as { input?: string }).input).toContain('apply_patch');
+  });
+
+  it('surfaces native Codex file changes as provider-executed Ujima edit results', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'native file change' }] }],
+      tools: [{ type: 'function', name: 'edit', description: 'Edit', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'patch_1',
+        toolName: 'edit',
+        providerExecuted: true,
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'patch_1',
+        toolName: 'edit',
+        isError: false,
+        result: { status: 'completed', diff: expect.stringContaining('-old') },
+      },
+    ]);
+  });
+
+  it('keeps native Codex file changes visible in stream step content without continuing the loop', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = streamText({
+      model,
+      messages: [{ role: 'user', content: 'native file change' }],
+      stopWhen: stepCountIs(6),
+    });
+
+    await result.consumeStream();
+    const steps = await result.steps;
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'patch_1',
+        toolName: 'edit',
+        providerExecuted: true,
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'patch_1',
+        toolName: 'edit',
+        output: { status: 'completed', diff: expect.stringContaining('-old') },
+        providerExecuted: true,
+      },
+    ]);
+  });
+
+  it('runs a simulated six-turn Codex agent loop through the AI SDK', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4-mini',
+    }) as any;
+    const toolTurns: number[] = [];
+
+    const result = streamText({
+      model,
+      messages: [{ role: 'user', content: 'six turn loop' }],
+      stopWhen: stepCountIs(6),
+      tools: {
+        progress: {
+          inputSchema: jsonSchema({ type: 'object', properties: { turn: { type: 'number' } } }),
+          execute: async ({ turn }: { turn: number }) => {
+            toolTurns.push(turn);
+            return { ok: true, turn };
+          },
+        },
+      },
+    });
+
+    expect(await result.text).toBe('first saved messagesecond saved message');
+    const steps = await result.steps;
+    expect(steps).toHaveLength(6);
+    expect(toolTurns).toEqual([1, 2, 3, 4, 5]);
+    expect((await result.content).filter((part) => part.type === 'text')).toMatchObject([
+      { type: 'text', text: 'first saved message' },
+      { type: 'text', text: 'second saved message' },
+    ]);
   });
 });

@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { $ } from 'bun';
 import { DISTRIBUTION_PKG_JSON, DIST_PKG_DIR } from './lib/paths.ts';
+import { assertDistManifestVersion } from './lib/pack-verify.ts';
 
 const MIN_README_BYTES = 500;
 
@@ -56,6 +57,13 @@ if (readmeBytes < MIN_README_BYTES) {
   console.error(
     `README too small (${readmeBytes} bytes). npm will show an empty package page.`,
   );
+  process.exit(1);
+}
+
+try {
+  assertDistManifestVersion(DIST_PKG_DIR);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
 

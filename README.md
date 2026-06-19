@@ -15,6 +15,7 @@ Define persistent agent members, assign roles, and work in channels — the same
 
 - **Web** — Slack-like UI for channels, DMs, mentions, approvals, and task runs
 - **CLI** — Initialize your org and start the local API + web stack (`ujima init`, `ujima start`)
+- **Codex** — Use Ujima with Codex for workspace-aware agent teams, approvals, and MCP-backed work
 - **VS Code extension** — Same team in your editor (coming soon)
 
 ---
@@ -304,7 +305,7 @@ ujima update --force                     # Force reinstall
 
 - **Secrets stay local** — Provider keys in local daemon; web UI/extension never store or transmit them
 - **Workspace-bounded execution** — Filesystem, shell, git actions resolved under org `workspaceRoot`; path escapes rejected
-- **Approvals** — Writes, shell commands, sensitive ops wait for confirmation in web UI/VS Code
+- **Approvals** — Writes, shell commands, sensitive ops wait for confirmation in web UI, Codex, or VS Code
 - **Role scopes** — Restrict agents to subtrees for monorepo separation
 
 ---
@@ -313,8 +314,8 @@ ujima update --force                     # Force reinstall
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Web UI    │     │ VS Code Ext │     │    CLI      │
-│  (Next.js)  │     │ (coming)    │     │ (@ujima/..) │
+│   Web UI    │     │  Codex /    │     │    CLI      │
+│  (Next.js)  │     │ VS Code Ext │     │ (@ujima/..) │
 └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
        │                   │                   │
        └───────────────────┼───────────────────┘

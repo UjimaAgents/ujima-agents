@@ -53,6 +53,8 @@ export type ApprovalListQuery = z.infer<typeof ApprovalListQuerySchema>;
 export const ShellJobSchema = z.object({
   id: z.string(),
   status: z.enum(['running', 'exited', 'error']),
+  cwd: z.string(),
+  commandLine: z.string(),
 });
 export type ShellJob = z.infer<typeof ShellJobSchema>;
 

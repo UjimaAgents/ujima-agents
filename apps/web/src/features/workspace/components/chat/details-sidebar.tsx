@@ -7,7 +7,8 @@ import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
 import {GrepToolPane} from "./grep-tool-pane";
 import {WebSearchToolPane} from "./web-search-tool-pane";
-import { UnifiedDiffView, looksLikeUnifiedDiff } from "./unified-diff-view";
+import { UnifiedDiffView } from "./unified-diff-view";
+import { collectFileChanges } from "../../change-summary";
 
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 interface AggregatedOperation {
@@ -774,68 +775,6 @@ export function DetailsSidebar({
 }
 
 /* ── Changes tab (aggregated file diffs from a run) ────────────────── */
-
-interface FileChange {
-  id: string;
-  file: string;
-  additions: number;
-  deletions: number;
-  body: string;
-  stepTitle: string;
-}
-
-function collectFileChanges(steps: TraceStepData[]): FileChange[] {
-  const seen = new Set<string>();
-  const changes: FileChange[] = [];
-  const fileCounts = new Map<string, number>();
-
-  const pushChange = (change: Omit<FileChange, "id">) => {
-    const index = fileCounts.get(change.file) ?? 0;
-    fileCounts.set(change.file, index + 1);
-    changes.push({ ...change, id: `${change.file}:${change.stepTitle}:${index}` });
-  };
-
-  for (const step of steps) {
-    // Collect aggregated edit operations
-    if (step.aggregatedOperations) {
-      for (const op of step.aggregatedOperations) {
-        if ((op.type === "edit" || op.type === "delete") && op.body && op.file) {
-          const key = `${op.file}:${op.body.slice(0, 80)}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            pushChange({
-              file: op.file,
-              additions: op.additions,
-              deletions: op.deletions,
-              body: op.body,
-              stepTitle: step.title,
-            });
-          }
-        }
-      }
-    }
-
-    // Collect individual filesystem write operations that contain diffs
-    if (step.filesystem?.action === "write" && step.filesystem.body && looksLikeUnifiedDiff(step.filesystem.body)) {
-      const key = `${step.filesystem.resourcePath}:${step.filesystem.body.slice(0, 80)}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        pushChange({
-          file: step.filesystem.resourcePath,
-          additions: 0,
-          deletions: 0,
-          body: step.filesystem.body,
-          stepTitle: step.title,
-        });
-      }
-    }
-  }
-
-  // Sort by file path
-  changes.sort((a, b) => a.file.localeCompare(b.file));
-  return changes;
-}
-
 export function ChangesTab({ steps }: { steps: TraceStepData[] }) {
   const changes = collectFileChanges(steps);
 
