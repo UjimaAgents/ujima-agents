@@ -522,25 +522,28 @@ export class SpiritService extends SpiritServiceSupervisor {
             if (!finalThreadId) continue;
             const channelId = this.repo.getThread(running.organizationId, finalThreadId)?.channelId;
 
-            const stepMessage = buildAgentMessage({
-              organizationId: running.organizationId,
-              threadId: finalThreadId,
-              channelId: channelId ?? undefined,
-              senderId: running.agentId,
-              content: prepared.content,
-              metadata: { runId: running.id },
-              ...(composedStepToolCalls(prepared).length > 0
-                ? { toolCalls: composedStepToolCalls(prepared) }
-                : {}),
-              ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
-            });
-            if (isDelegateRun(running, this.repo)) {
-              this.conversations?.publishMessage(stepMessage, [], undefined, {
-                suppressDmAlerts: true,
-                skipMentionResolution: true,
+            const toolCalls = composedStepToolCalls(prepared);
+            const parts = prepared.contentParts.length > 0 ? prepared.contentParts : [prepared.content];
+            for (const [partIndex, content] of parts.entries()) {
+              const isLastPart = partIndex === parts.length - 1;
+              const stepMessage = buildAgentMessage({
+                organizationId: running.organizationId,
+                threadId: finalThreadId,
+                channelId: channelId ?? undefined,
+                senderId: running.agentId,
+                content,
+                metadata: { runId: running.id },
+                ...(isLastPart && toolCalls.length > 0 ? { toolCalls } : {}),
+                ...(isLastPart && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
               });
-            } else {
-              turn.publishMessage(stepMessage);
+              if (isDelegateRun(running, this.repo)) {
+                this.conversations?.publishMessage(stepMessage, [], undefined, {
+                  suppressDmAlerts: true,
+                  skipMentionResolution: true,
+                });
+              } else {
+                turn.publishMessage(stepMessage);
+              }
             }
           }
           this.emitRunTokens(

@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync, createWriteStream, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -23,6 +23,14 @@ import {
   printSplash,
 } from './cli-branding.js';
 import { maybeOpenBrowserAfterStart } from './open-browser.js';
+import {
+  logDir as autoStartupLogDir,
+  pidFilePath as autoStartupPidFile,
+  registerStartup,
+  unregisterStartup,
+  isStartupRegistered,
+  type StartupResult,
+} from './auto-startup.js';
 
 export { compareVersions, getLocalVersion } from './version.js';
 
@@ -257,15 +265,109 @@ async function cmdInit(argv: string[]): Promise<void> {
   process.stdout.write(`${text}\n`);
 }
 
-function parseStartArgv(argv: string[]) {
+interface StartOptions {
+  passthrough: string[];
+  noOpen: boolean;
+  background: boolean;
+  registerStartup: boolean;
+  unregisterStartup: boolean;
+}
+
+function parseStartArgv(argv: string[]): StartOptions {
   const noOpen = argv.includes('--no-open');
-  const passthrough = argv.filter((arg) => arg !== '--no-open');
-  return { passthrough, noOpen };
+  const background = argv.includes('--background') || argv.includes('-b');
+  const registerStartup = argv.includes('--register-startup');
+  const unregisterStartup = argv.includes('--unregister-startup');
+  const passthrough = argv.filter(
+    (arg) =>
+      arg !== '--no-open' &&
+      arg !== '--background' &&
+      arg !== '-b' &&
+      arg !== '--register-startup' &&
+      arg !== '--unregister-startup',
+  );
+  return { passthrough, noOpen, background, registerStartup, unregisterStartup };
+}
+
+async function startBackground(runtimeDir: string, opts: StartOptions): Promise<void> {
+  const apiEntry = join(runtimeDir, 'api', 'main.js');
+  const webRuntimeDir = join(runtimeDir, 'web');
+  const webEntry = resolveWebServerEntry(webRuntimeDir);
+  if (!webEntry) {
+    process.stderr.write(
+      `ujima start: web server entry not found under ${webRuntimeDir}\n`,
+    );
+    process.exit(1);
+  }
+
+  const homeDir = resolveHomeDir();
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(autoStartupLogDir(), { recursive: true });
+
+  const webPort = process.env.WEB_PORT ?? '3452';
+  const webCwd = resolveWebServerCwd(webRuntimeDir, webEntry);
+
+  const apiLog = join(autoStartupLogDir(), 'api.log');
+  const webLog = join(autoStartupLogDir(), 'web.log');
+  const apiStream = createWriteStream(apiLog, { flags: 'a' });
+  const webStream = createWriteStream(webLog, { flags: 'a' });
+
+  const apiChild = spawn(process.execPath, [apiEntry, ...opts.passthrough], {
+    env: { ...process.env, UJIMA_HOME: homeDir },
+    stdio: ['ignore', apiStream, apiStream],
+    detached: true,
+  });
+
+  const webChild = spawn(process.execPath, [webEntry], {
+    cwd: webCwd,
+    env: {
+      ...process.env,
+      UJIMA_HOME: homeDir,
+      UJIMA_PORT: process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT),
+      PORT: webPort,
+      HOSTNAME: process.env.WEB_HOST ?? '127.0.0.1',
+      NODE_PATH: buildPackagedWebNodePath(webRuntimeDir, process.env.NODE_PATH),
+    },
+    stdio: ['ignore', webStream, webStream],
+    detached: true,
+  });
+
+  // Write PID file for ujima stop
+  const pidData = JSON.stringify({
+    api: apiChild.pid,
+    web: webChild.pid,
+    timestamp: new Date().toISOString(),
+  });
+  writeFileSync(autoStartupPidFile(), pidData, 'utf8');
+
+  // Unref so the parent can exit independently
+  apiChild.unref();
+  webChild.unref();
+
+  process.stdout.write(
+    chalk.green('✓') +
+      chalk.bold(' Ujima started in background') +
+      chalk.gray(' (PID ') +
+      chalk.cyan(String(apiChild.pid)) +
+      chalk.gray(')\n'),
+  );
+  process.stdout.write(
+    chalk.gray('  Logs: ') + chalk.cyan(autoStartupLogDir()) + '\n',
+  );
+  process.stdout.write(
+    chalk.gray('  Stop: ') + chalk.cyan('ujima stop') + '\n',
+  );
 }
 
 async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<void> {
+  const opts = parseStartArgv(argv);
+
+  if (opts.background) {
+    await startBackground(runtimeDir, opts);
+    return;
+  }
+
   printSplash();
-  const { passthrough } = parseStartArgv(argv);
   const apiEntry = join(runtimeDir, 'api', 'main.js');
   const webRuntimeDir = join(runtimeDir, 'web');
   const webEntry = resolveWebServerEntry(webRuntimeDir);
@@ -284,7 +386,7 @@ async function cmdStartPackaged(runtimeDir: string, argv: string[]): Promise<voi
   printReadyLine('Starting Ujima');
   printInfoRow('Mode:', 'packaged API + web UI', { dim: true });
 
-  const apiChild = spawn(process.execPath, [apiEntry, ...passthrough], {
+  const apiChild = spawn(process.execPath, [apiEntry, ...opts.passthrough], {
     env: { ...process.env, UJIMA_HOME: homeDir },
     stdio: 'inherit',
   });
@@ -357,13 +459,167 @@ async function cmdStartMonorepo(root: string, argv: string[]): Promise<void> {
   });
 }
 
+interface PidFile {
+  api: number;
+  web: number;
+  timestamp: string;
+}
+
+async function cmdStop(): Promise<void> {
+  const pidFile = autoStartupPidFile();
+  if (!existsSync(pidFile)) {
+    process.stderr.write(
+      chalk.yellow('⚠') +
+        chalk.bold(' Ujima is not running') +
+        chalk.gray(' (no PID file found at ' + pidFile + ')') +
+        '\n',
+    );
+    process.exit(1);
+  }
+
+  let pidData: PidFile;
+  try {
+    const raw = readFileSync(pidFile, 'utf8');
+    pidData = JSON.parse(raw) as PidFile;
+  } catch {
+    process.stderr.write(
+      chalk.red('✗') +
+        chalk.bold(' Failed to read PID file') +
+        chalk.gray(': ' + pidFile) +
+        '\n',
+    );
+    process.exit(1);
+  }
+
+  const pids = [pidData.api, pidData.web].filter(Boolean) as number[];
+  if (pids.length === 0) {
+    process.stderr.write(
+      chalk.yellow('⚠') +
+        chalk.bold(' No PIDs found in PID file') +
+        '\n',
+    );
+    unlinkSync(pidFile);
+    process.exit(1);
+  }
+
+  process.stdout.write(chalk.bold('Stopping Ujima...') + '\n');
+
+  let stoppedCount = 0;
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+      stoppedCount++;
+      process.stdout.write(
+        chalk.gray('  Stopped PID ') + chalk.cyan(String(pid)) + '\n',
+      );
+    } catch (err: unknown) {
+      const nodeErr = err as NodeJS.ErrnoException;
+      if (nodeErr.code === 'ESRCH') {
+        // Process already gone — that's fine
+        process.stdout.write(
+          chalk.gray('  PID ') +
+            chalk.cyan(String(pid)) +
+            chalk.gray(' was already stopped') +
+            '\n',
+        );
+        stoppedCount++;
+      } else {
+        process.stderr.write(
+          chalk.yellow('⚠') +
+            chalk.yellow(' Could not stop PID ') +
+            chalk.yellow(String(pid)) +
+            chalk.gray(': ' + nodeErr.message) +
+            '\n',
+        );
+      }
+    }
+  }
+
+  // Clean up PID file
+  try {
+    unlinkSync(pidFile);
+  } catch {
+    // file may already be gone — fine
+  }
+
+  if (stoppedCount > 0) {
+    process.stdout.write(chalk.green('✓') + chalk.bold(' Ujima stopped') + '\n');
+  } else {
+    process.stdout.write(
+      chalk.yellow('⚠') + chalk.bold(' No running processes were found') + '\n',
+    );
+  }
+}
+
 async function cmdStart(argv: string[]): Promise<void> {
+  const wantsUnregister = argv.includes('--unregister-startup');
+
+  // Handle --register-startup and --unregister-startup explicitly
+  if (argv.includes('--register-startup')) {
+    const result = registerStartup();
+    if (result.success) {
+      process.stdout.write(
+        chalk.green('✓') +
+          chalk.bold(' Registered Ujima to start automatically on boot') +
+          '\n',
+      );
+    } else {
+      process.stderr.write(
+        chalk.red('✗') +
+          chalk.bold(' Failed to register auto-startup') +
+          chalk.gray(': ' + (result.error ?? 'unknown error')) +
+          '\n',
+      );
+    }
+    // Remove the flag so it doesn't interfere with the daemon
+    argv = argv.filter((a) => a !== '--register-startup');
+  }
+
+  if (argv.includes('--unregister-startup')) {
+    const result = unregisterStartup();
+    if (result.success) {
+      process.stdout.write(
+        chalk.green('✓') +
+          chalk.bold(' Removed Ujima from system startup') +
+          '\n',
+      );
+    } else {
+      process.stderr.write(
+        chalk.red('✗') +
+          chalk.bold(' Failed to remove auto-startup') +
+          chalk.gray(': ' + (result.error ?? 'unknown error')) +
+          '\n',
+      );
+    }
+    // Remove the flag so it doesn't interfere with the daemon
+    argv = argv.filter((a) => a !== '--unregister-startup');
+  }
+
   // Then the freshness prompt — never in dev mode (running from a repo
   // checkout) and never when running from a packaged self-update script.
   await maybeOfferUpdate(argv);
 
   const packagedRuntime = resolvePackagedRuntimeDir(__dirname);
   if (packagedRuntime) {
+    const shouldAutoRegister = !argv.includes('--unregister-startup') && !isStartupRegistered();
+    if (shouldAutoRegister) {
+      const result = registerStartup();
+      if (result.success) {
+        process.stdout.write(
+          chalk.green('✓') +
+            chalk.bold(' Registered Ujima to start automatically on boot') +
+            '\n',
+        );
+      } else {
+        process.stderr.write(
+          chalk.yellow('⚠') +
+            chalk.bold(' Could not register auto-startup') +
+            chalk.gray(': ' + (result.error ?? 'unknown error')) +
+            '\n',
+        );
+      }
+    }
+
     await cmdStartPackaged(packagedRuntime, argv);
     return;
   }
@@ -388,6 +644,7 @@ function printUsage(): void {
   printInfoRow('Usage:', 'ujima <command> [options]');
   console.info(`   ${chalk.gray('↳')} ${chalk.white('Commands:')}`);
   printCommandRow('start', 'Start the local API daemon and web UI');
+  printCommandRow('stop', 'Stop the background Ujima daemon');
   printCommandRow('init', 'Onboard organization, owner, and workspace');
   printCommandRow('update', 'Check for and install CLI updates');
   printCommandRow('help', 'Display help for a command');
@@ -408,12 +665,14 @@ function printCommandHelp(cmd: string): void {
       printInfoRow('Usage:', 'ujima start [options]');
       printInfoRow(
         'Description:',
-        'Start the local API daemon and web UI (packaged or monorepo dev).',
+        'Start the local API daemon and web UI.',
         { dim: true },
       );
-      printInfoRow('Options:', '--no-open   Do not open the browser after the web UI is ready', {
-        dim: true,
-      });
+      console.info(`   ${chalk.gray('↳')} ${chalk.white('Options:')}`);
+      printInfoRow('--background, -b', 'Run in background (no terminal output)', { dim: true });
+      printInfoRow('--no-open', 'Do not open the browser after start', { dim: true });
+      printInfoRow('--register-startup', 'Register Ujima to start on system boot', { dim: true });
+      printInfoRow('--unregister-startup', 'Remove Ujima from system startup', { dim: true });
       break;
 
     case 'init':
@@ -438,6 +697,16 @@ function printCommandHelp(cmd: string): void {
       printInfoRow('--workspace, -w', 'Workspace root path (required, must exist)', { dim: true });
       printInfoRow('--config, -c', 'Path to ujima.config.ts', { dim: true });
       printInfoRow('--provider', 'name=key (repeatable)', { dim: true });
+      break;
+
+    case 'stop':
+      printReadyLine('Command: stop');
+      printInfoRow('Usage:', 'ujima stop');
+      printInfoRow(
+        'Description:',
+        'Stop the background Ujima daemon started with --background.',
+        { dim: true },
+      );
       break;
 
     case 'update':
@@ -657,6 +926,9 @@ export async function main(): Promise<void> {
   switch (command) {
     case 'start':
       await cmdStart(rest);
+      return;
+    case 'stop':
+      await cmdStop();
       return;
     case 'init':
       await cmdInit(rest);

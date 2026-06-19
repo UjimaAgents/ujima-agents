@@ -24,6 +24,7 @@ export interface PrepareAgentStepPublicationInput {
 
 export interface PreparedAgentStepPublication {
   content: string;
+  contentParts: string[];
   stepToolCalls: MessageToolCall[];
   cards: MessageToolCall[];
   artifact?: MessageToolCall;
@@ -45,8 +46,22 @@ export async function prepareAgentStepPublication(
   input: PrepareAgentStepPublicationInput,
 ): Promise<PreparedAgentStepPublication | null> {
   const stepText = typeof input.step.text === 'string' ? input.step.text.trim() : '';
-  const stepToolCalls = Array.isArray(input.step.toolCalls) ? input.step.toolCalls : [];
-  const stepToolResults = Array.isArray(input.step.toolResults) ? input.step.toolResults : [];
+  const contentParts = stepTextParts(input.step);
+  const contentItems = Array.isArray(input.step.content) ? input.step.content : [];
+  const contentToolCalls = contentItems.filter(
+    (part): part is { toolCallId?: string; toolName?: string; input?: unknown } => part?.type === 'tool-call',
+  );
+  const contentToolResults = contentItems.filter(
+    (part): part is { toolCallId?: string; output?: unknown; result?: unknown } => part?.type === 'tool-result',
+  );
+  const stepToolCalls = [
+    ...(Array.isArray(input.step.toolCalls) ? input.step.toolCalls : []),
+    ...contentToolCalls,
+  ];
+  const stepToolResults = [
+    ...(Array.isArray(input.step.toolResults) ? input.step.toolResults : []),
+    ...contentToolResults,
+  ];
   if (!stepText && stepToolCalls.length === 0) return null;
 
   let artifact: MessageToolCall | undefined;
@@ -91,6 +106,7 @@ export async function prepareAgentStepPublication(
 
   return {
     content,
+    contentParts: contentParts.length > 0 ? contentParts : [content],
     stepToolCalls: normalizedToolCalls,
     cards,
     artifact,
@@ -99,4 +115,15 @@ export async function prepareAgentStepPublication(
     stepText,
     toolCallCount: stepToolCalls.length,
   };
+}
+
+function stepTextParts(step: AgentLoopStep): string[] {
+  const content = Array.isArray(step.content) ? step.content : [];
+  const parts = content
+    .filter((part): part is { type: string; text: string } =>
+      part?.type === 'text' && typeof (part as { text?: unknown }).text === 'string',
+    )
+    .map((part) => part.text.trim())
+    .filter(Boolean);
+  return parts.length > 1 ? parts : [];
 }

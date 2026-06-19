@@ -112,27 +112,26 @@ export async function publishRunReplyTrace(input: {
     if (prepared.stepText) publishedAnyText = true;
 
     const isLastStep = index === input.result.steps.length - 1;
-    const published = input.conversations?.publishMessage(
-      buildAgentMessage({
+    const toolCalls = composedStepToolCalls(prepared);
+    const parts = prepared.contentParts.length > 0 ? prepared.contentParts : [prepared.content];
+    let lastPublished: ReturnType<ConversationService['publishMessage']> | undefined;
+    for (const [partIndex, content] of parts.entries()) {
+      const isLastPart = partIndex === parts.length - 1;
+      lastPublished = input.conversations?.publishMessage(buildAgentMessage({
         organizationId: input.run.organizationId,
         threadId,
         channelId,
         senderId: input.run.agentId,
-        content: prepared.content,
+        content,
         metadata,
-        ...(composedStepToolCalls(prepared).length > 0
-          ? { toolCalls: composedStepToolCalls(prepared) }
-          : {}),
-        ...(prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
-      }),
-      undefined,
-      undefined,
-      publishOptions,
-    );
-    if (isLastStep && published) {
-      persistMessageTokens(input.repo, published, usage);
+        ...(isLastPart && toolCalls.length > 0 ? { toolCalls } : {}),
+        ...(isLastPart && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
+      }), undefined, undefined, publishOptions);
+      publishedContent.add(content);
     }
-    publishedContent.add(prepared.content);
+    if (isLastStep && lastPublished) {
+      persistMessageTokens(input.repo, lastPublished, usage);
+    }
   }
 
   const terminatingTool = findTerminatingTool(input.result) ?? findTerminatingToolFromRunSteps(runSteps);

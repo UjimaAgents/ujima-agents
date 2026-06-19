@@ -714,21 +714,24 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       ...prepared.cards,
       ...(prepared.artifact ? [prepared.artifact] : []),
     ];
-    const message = input.turn.publishMessage(
-      buildAgentMessage({
+    let message: Message | undefined;
+    const parts = prepared.contentParts.length > 0 ? prepared.contentParts : [prepared.content];
+    for (const [index, content] of parts.entries()) {
+      const isLast = index === parts.length - 1;
+      message = input.turn.publishMessage(buildAgentMessage({
         organizationId: input.organizationId,
         threadId: input.channelId,
         channelId: input.channelId,
         senderId: input.senderId,
-        content: prepared.content,
-        toolCalls: messageToolCalls,
+        content,
+        ...(isLast && messageToolCalls.length > 0 ? { toolCalls: messageToolCalls } : {}),
         metadata: { runId: input.runId },
-        reasoningContent: prepared.reasoningContent,
-      }),
-    );
+        ...(isLast && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
+      }));
+    }
     if (prepared.artifactPublished) input.turn.markArtifactFilePublished();
     return {
-      messageId: message.id,
+      messageId: message?.id,
       toolCallCount: prepared.toolCallCount,
       stepText: prepared.stepText,
     };

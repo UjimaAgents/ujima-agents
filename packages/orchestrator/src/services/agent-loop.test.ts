@@ -3,6 +3,7 @@ import type { ModelMessage } from 'ai';
 import {
   approvalWaitFromSteps,
   mergeInterruptMessages,
+  stepHasFinalText,
   stepPausesRun,
   stepTerminatesRun,
 } from './agent-loop.js';
@@ -19,6 +20,25 @@ describe('stepTerminatesRun', () => {
   // Fix: tool-name sanitization (underscore → dot normalization).
   // `toModelToolName` converts dots to underscores, so the model
   // may return `channel_reply` / `channel_pass` / etc.
+});
+
+describe('stepHasFinalText', () => {
+  it('treats text-only steps as terminal', () => {
+    expect(stepHasFinalText({ text: 'Done.' })).toBe(true);
+  });
+
+  it('does not treat text plus pending tool calls as terminal', () => {
+    expect(stepHasFinalText({ text: 'Checking.', toolCalls: [{ toolName: 'grep' }] })).toBe(false);
+  });
+
+  it('allows provider-executed tool records with final text', () => {
+    expect(
+      stepHasFinalText({
+        text: 'Done.',
+        content: [{ type: 'tool-call', toolName: 'edit', providerExecuted: true }],
+      }),
+    ).toBe(true);
+  });
 });
 
 describe('mergeInterruptMessages', () => {

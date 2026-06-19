@@ -211,13 +211,13 @@ function classifyApiError(error: unknown): Error | null {
 
 export interface AgentLoopStep {
   text?: string;
-  toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown }[];
+  toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown; providerExecuted?: boolean }[];
   toolResults?: { toolCallId?: string; output?: unknown; result?: unknown }[];
-  staticToolCalls?: { toolName?: string }[];
-  dynamicToolCalls?: { toolName?: string }[];
+  staticToolCalls?: { toolName?: string; providerExecuted?: boolean }[];
+  dynamicToolCalls?: { toolName?: string; providerExecuted?: boolean }[];
   staticToolResults?: { toolName?: string; output?: unknown; result?: unknown }[];
   dynamicToolResults?: { toolName?: string; output?: unknown; result?: unknown }[];
-  content?: { type?: string; toolName?: string; output?: unknown; result?: unknown }[];
+  content?: { type?: string; text?: string; toolName?: string; output?: unknown; result?: unknown; providerExecuted?: boolean }[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   [key: string]: unknown;
 }
@@ -342,6 +342,29 @@ export function stepTerminatesRun(step: AgentLoopStep): boolean {
   return false;
 }
 
+export function stepHasFinalText(step: AgentLoopStep): boolean {
+  const text = typeof step.text === 'string' ? step.text.trim() : '';
+  const contentText = (step.content ?? []).some((part) => {
+    const record = part as { type?: string; text?: unknown };
+    return record.type === 'text' && typeof record.text === 'string' && record.text.trim();
+  });
+  if (!text && !contentText) return false;
+  return !stepHasPendingToolCall(step);
+}
+
+function stepHasPendingToolCall(step: AgentLoopStep): boolean {
+  const calls = [
+    ...(step.toolCalls ?? []),
+    ...(step.staticToolCalls ?? []),
+    ...(step.dynamicToolCalls ?? []),
+  ];
+  if (calls.some((item) => (item as { providerExecuted?: boolean }).providerExecuted !== true)) return true;
+  return (step.content ?? []).some((item) => {
+    const record = item as { type?: string; providerExecuted?: boolean };
+    return record.type === 'tool-call' && record.providerExecuted !== true;
+  });
+}
+
 /**
  * `toolChoice` strategy. The default for ad-hoc / programmatic runs
  * is `auto`, leaving the model free to mix tool calls and free text.
@@ -387,6 +410,9 @@ export async function runAgentLoop(input: {
     if (input.detectExternalPause?.()) return true;
     for (const step of completedSteps) {
       if (stepTerminatesRun(step)) return true;
+    }
+    for (const step of completedSteps) {
+      if (stepHasFinalText(step)) return true;
     }
     if (typeof userStopWhen === 'function') {
       try {
