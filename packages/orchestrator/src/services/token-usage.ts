@@ -18,6 +18,17 @@ export function hasTokenUsage(usage: NormalizedTokenUsage): boolean {
   return usage.inputTokens > 0 || usage.outputTokens > 0;
 }
 
+export function normalizeStepTokenUsage(steps: readonly { usage?: unknown }[]): NormalizedTokenUsage {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const step of steps) {
+    const usage = normalizeTokenUsage(step.usage);
+    if (usage.inputTokens > 0) inputTokens = usage.inputTokens;
+    outputTokens += usage.outputTokens;
+  }
+  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+}
+
 /**
  * Silently stamp final token counts onto a persisted message
  * without re-broadcasting via realtime. The live counter under the

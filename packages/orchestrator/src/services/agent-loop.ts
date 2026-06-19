@@ -8,6 +8,7 @@ import {
   ToolInputRequiredError,
 } from './tool-loop-result.js';
 import { dropHeaviestAttachedMcp, type AttachedMcpServerSummary } from './spirit-mcp-helpers.js';
+import { normalizeStepTokenUsage } from './token-usage.js';
 
 // Both wake-run (ai-service.generateRunReply) and direct-spirit
 // (spirit-agent-run.runOnce) call runAgentLoop and both can hit the
@@ -509,7 +510,13 @@ export async function runAgentLoop(input: {
     const toolResults = steps.flatMap((step) => step.toolResults ?? []);
     const pause = humanPauseFromSteps(steps) ?? input.detectExternalPause?.();
     if (pause) throwHumanPause(pause);
-    return { text, steps, toolResults, usage } as unknown as AgentLoopResult;
+    const normalizedUsage = normalizeStepTokenUsage(steps);
+    return {
+      text,
+      steps,
+      toolResults,
+      usage: normalizedUsage.totalTokens > 0 ? normalizedUsage : usage,
+    } as unknown as AgentLoopResult;
   };
 
   try {

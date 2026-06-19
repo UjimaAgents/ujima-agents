@@ -35,7 +35,7 @@ import { scheduleModeEnabledFromMessage } from './schedule-prompt.js';
 import { isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
-import { normalizeTokenUsage } from './token-usage.js';
+import { normalizeStepTokenUsage } from './token-usage.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
@@ -613,18 +613,8 @@ export class SpiritServiceBase {
     agentId: string,
     steps: readonly { usage?: unknown }[],
   ): void {
-    // Sum the current turn's tokens across all its steps.
-    // Both input and output are per-turn values — input is the model's
-    // context window, output is this turn's generated tokens.
-    let totalInput = 0;
-    let totalOutput = 0;
-    for (const step of steps) {
-      const u = normalizeTokenUsage(step.usage);
-      totalInput += u.inputTokens;
-      totalOutput += u.outputTokens;
-    }
-    if (totalInput === 0 && totalOutput === 0) return;
-    const usage = { inputTokens: totalInput, outputTokens: totalOutput, totalTokens: totalInput + totalOutput };
+    const usage = normalizeStepTokenUsage(steps);
+    if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
 
     const rooms = [orgRoom(organizationId), memberRoom(agentId), runRoom(runId)];
     if (threadId) {

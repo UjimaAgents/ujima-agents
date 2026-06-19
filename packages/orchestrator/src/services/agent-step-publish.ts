@@ -113,7 +113,7 @@ export async function prepareAgentStepPublication(
     reasoningContent,
     artifactPublished: Boolean(artifact),
     stepText,
-    toolCallCount: stepToolCalls.length,
+    toolCallCount: normalizedToolCalls.length,
   };
 }
 

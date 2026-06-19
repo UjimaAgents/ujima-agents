@@ -22,16 +22,19 @@ export function normalizeRunStepToolCalls(
   for (const result of stepToolResults) {
     if (typeof result.toolCallId === 'string') resultsById.set(result.toolCallId, toolResultPayload(result));
   }
-  return stepToolCalls.map((call) => {
+  const seen = new Set<string>();
+  return stepToolCalls.flatMap((call) => {
     const toolCallId = call.toolCallId ?? randomUUID();
+    if (seen.has(toolCallId)) return [];
+    seen.add(toolCallId);
     const result = resultsById.get(toolCallId);
-    return {
+    return [{
       toolCallId,
       toolName: call.toolName ?? 'unknown',
       args: toolCallArgs(call.input),
       ...(result !== undefined ? { result } : {}),
       isError: isToolCardError(result),
-    };
+    }];
   });
 }
 

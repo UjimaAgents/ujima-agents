@@ -75,7 +75,10 @@ type CodexResponseItem =
   | { type: 'message'; role: string; content: { type: 'input_text' | 'output_text'; text: string }[] }
   | { type: 'function_call'; name: string; arguments: string; call_id: string }
   | { type: 'function_call_output'; call_id: string; output: string };
-type CodexTextItem = { id: string; text: string };
+interface CodexTextItem {
+  id: string;
+  text: string;
+}
 
 const CODEX_DEVELOPER_INSTRUCTIONS = [
   'Use Ujima dynamic tools for workspace actions. Do not use Codex native shell, fs, or file-change tools when a Ujima tool is available.',

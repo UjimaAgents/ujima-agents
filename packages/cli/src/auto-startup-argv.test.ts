@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockPlatform = vi.fn(() => 'darwin');
 const mockHomedir = vi.fn(() => '/Users/testuser');
-const mockExistsSync = vi.fn(() => false);
-const mockWriteFileSync = vi.fn();
-const mockUnlinkSync = vi.fn();
-const mockMkdirSync = vi.fn();
-const mockExecSync = vi.fn();
+const mockExistsSync = vi.fn((..._args: unknown[]) => false);
+const mockWriteFileSync = vi.fn((..._args: unknown[]) => undefined);
+const mockUnlinkSync = vi.fn((..._args: unknown[]) => undefined);
+const mockMkdirSync = vi.fn((..._args: unknown[]) => undefined);
+const mockExecSync = vi.fn((..._args: unknown[]): unknown => undefined);
 
 vi.mock('node:os', () => ({
   platform: () => mockPlatform(),
@@ -14,14 +14,14 @@ vi.mock('node:os', () => ({
 }));
 
 vi.mock('node:fs', () => ({
-  existsSync: (...args: Parameters<typeof mockExistsSync>) => mockExistsSync(...args),
-  writeFileSync: (...args: Parameters<typeof mockWriteFileSync>) => mockWriteFileSync(...args),
-  unlinkSync: (...args: Parameters<typeof mockUnlinkSync>) => mockUnlinkSync(...args),
-  mkdirSync: (...args: Parameters<typeof mockMkdirSync>) => mockMkdirSync(...args),
+  existsSync: (...args: unknown[]) => mockExistsSync(...args),
+  writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
+  unlinkSync: (...args: unknown[]) => mockUnlinkSync(...args),
+  mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
 }));
 
 vi.mock('node:child_process', () => ({
-  execSync: (...args: Parameters<typeof mockExecSync>) => mockExecSync(...args),
+  execSync: (...args: unknown[]) => mockExecSync(...args),
 }));
 
 import { registerStartup } from './auto-startup.js';
@@ -46,7 +46,7 @@ describe('CLI argument resolution', () => {
     const result = registerStartup();
     expect(result.success).toBe(true);
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-    const plistContent = mockWriteFileSync.mock.calls[0][1] as string;
+    const plistContent = mockWriteFileSync.mock.calls[0]![1] as string;
     expect(plistContent).toContain('/path/to/node_modules/.bin/ujima');
     expect(plistContent).toContain('start');
     expect(plistContent).toContain('--background');
@@ -56,7 +56,7 @@ describe('CLI argument resolution', () => {
     process.argv = ['/usr/bin/node', '/path/to/ujima agents/cli.js'];
     const result = registerStartup();
     expect(result.success).toBe(true);
-    const plistContent = mockWriteFileSync.mock.calls[0][1] as string;
+    const plistContent = mockWriteFileSync.mock.calls[0]![1] as string;
     expect(plistContent).toContain('ujima agents/cli.js');
   });
 });

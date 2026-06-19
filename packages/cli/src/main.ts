@@ -29,7 +29,6 @@ import {
   registerStartup,
   unregisterStartup,
   isStartupRegistered,
-  type StartupResult,
 } from './auto-startup.js';
 
 export { compareVersions, getLocalVersion } from './version.js';
@@ -552,7 +551,6 @@ async function cmdStop(): Promise<void> {
 }
 
 async function cmdStart(argv: string[]): Promise<void> {
-  const wantsUnregister = argv.includes('--unregister-startup');
 
   // Handle --register-startup and --unregister-startup explicitly
   if (argv.includes('--register-startup')) {

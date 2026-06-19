@@ -40,4 +40,21 @@ describe('prepareAgentStepPublication', () => {
       },
     ]);
   });
+
+  it('does not duplicate tool calls exposed in both step fields and content', async () => {
+    const prepared = await prepareAgentStepPublication({
+      teamRoot: process.cwd(),
+      step: {
+        text: 'Checking scripts.',
+        toolCalls: [{ toolCallId: 'call_1', toolName: 'shell', input: '{"command":"pwd"}' }],
+        toolResults: [{ toolCallId: 'call_1', output: { stdout: '/tmp\n', stderr: '' } }],
+        content: [
+          { type: 'tool-call', toolCallId: 'call_1', toolName: 'shell', input: '{"command":"pwd"}' },
+          { type: 'tool-result', toolCallId: 'call_1', output: { stdout: '/tmp\n', stderr: '' } },
+        ],
+      } as unknown as AgentLoopStep,
+    });
+
+    expect(prepared?.stepToolCalls.map((call) => call.toolCallId)).toEqual(['call_1']);
+  });
 });
