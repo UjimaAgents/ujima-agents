@@ -1,4 +1,5 @@
 import type { Message } from '@ujima/shared';
+import type { PublishMessageOptions } from './conversation.js';
 import { hasTokenUsage, type NormalizedTokenUsage } from './token-usage.js';
 
 export interface RunTurnPublishSnapshot {
@@ -16,12 +17,12 @@ export class RunTurnPublisher {
   private publishedContent = new Set<string>();
 
   constructor(
-    private publish: (message: Message) => Message,
+    private publish: (message: Message, options?: PublishMessageOptions) => Message,
     private persist?: (message: Message) => void,
   ) {}
 
-  publishMessage(message: Message): Message {
-    const saved = this.publish(message);
+  publishMessage(message: Message, options?: PublishMessageOptions): Message {
+    const saved = this.publish(message, options);
     this.lastMessage = saved;
     this.lastContent = saved.content;
     if (saved.content.trim().length > 0) {

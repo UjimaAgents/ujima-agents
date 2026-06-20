@@ -194,6 +194,13 @@ function createFakeAppServer(): {
           stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
           continue;
         }
+        if (text === 'fallback text merge') {
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', delta: 'first saved message' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_a', text: 'first saved message', phase: null, memoryCitation: null }, completedAtMs: 1 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_b', text: 'second saved message', phase: null, memoryCitation: null }, completedAtMs: 2 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
         stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hello from app-server' } })}\n`);
         stdout.write(`${JSON.stringify({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg_1', text: 'hello from app-server' } } })}\n`);
         stdout.write(`${JSON.stringify({
@@ -253,6 +260,36 @@ describe('selectLanguageModel', () => {
       params: { effort?: string };
     };
     expect(turnStart.params.effort).toBe('none');
+  });
+
+  it('keeps separate Codex RPCs per cwd', async () => {
+    const childA = createFakeAppServer();
+    const childB = createFakeAppServer();
+    const spawnAppServer = vi.fn()
+      .mockImplementationOnce(() => childA)
+      .mockImplementationOnce(() => childB);
+    setCodexAppServerSpawn(spawnAppServer as never);
+
+    const modelA = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+      cwd: '/tmp/a',
+    }) as any;
+    const modelB = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+      cwd: '/tmp/b',
+    }) as any;
+
+    await modelA.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+    });
+    await modelB.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+    });
+
+    expect(spawnAppServer).toHaveBeenCalledTimes(2);
+    expect(spawnAppServer.mock.calls.map((call) => call[2]?.cwd)).toEqual(['/tmp/a', '/tmp/b']);
   });
 
   it('injects history instead of stuffing it into developer instructions', async () => {
@@ -428,6 +465,25 @@ describe('selectLanguageModel', () => {
     const steps = await result.steps;
     expect(steps).toHaveLength(1);
     expect(steps[0]?.content.filter((part) => part.type === 'text')).toMatchObject([
+      { type: 'text', text: 'first saved message' },
+      { type: 'text', text: 'second saved message' },
+    ]);
+  });
+
+  it('does not reuse the first fallback text item for later completed messages', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'fallback text merge' }] }],
+    });
+
+    expect(result.content.filter((part: { type?: string }) => part.type === 'text')).toMatchObject([
       { type: 'text', text: 'first saved message' },
       { type: 'text', text: 'second saved message' },
     ]);

@@ -79,7 +79,7 @@ export class SpiritServiceBase {
     options: SpiritServiceOptions = {},
   ) {
     this.maxIterationsPerRun = options.maxIterationsPerRun ?? 12;
-    this.maxOutputTokens = options.maxOutputTokens;
+    this.maxOutputTokens = options.maxOutputTokens ?? 8_000;
     this.temperature = options.temperature ?? DEFAULT_SPIRIT_TEMPERATURE;
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
@@ -697,6 +697,7 @@ export class SpiritServiceBase {
     messageContent?: string | null;
     goalMode?: boolean;
     scheduleMode?: boolean;
+    wakeReason?: string | null;
   }): string | undefined {
     let messageContent = input.messageContent;
     let goalMode = input.goalMode;
@@ -742,6 +743,7 @@ ${pendingTasks.map((task) => `- task_id=${task.id} | goal_id=${task.goalId} | go
       messageContent,
       goalMode,
       scheduleMode,
+      heartbeatMode: input.wakeReason === 'heartbeat',
     });
   }
 

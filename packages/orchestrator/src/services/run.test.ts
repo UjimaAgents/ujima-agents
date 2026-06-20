@@ -823,7 +823,7 @@ describe('SpiritService run path', () => {
     expect(messages[0].content).toBe('I checked the file before the block.');
     expect(messages[0].reasoningContent).toBe('Need the file context before editing.');
     expect(messages[0].toolCalls[0].toolName).toBe('view');
-    expect(messages[0].metadata).toEqual({ runId });
+    expect(messages[0].metadata).toEqual({ runId, runProgress: true });
   });
 
   // L12 — sycophantic pass: when the model calls channel.pass AND

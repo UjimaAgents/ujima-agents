@@ -1,4 +1,5 @@
 import type { Message } from '@ujima/shared';
+import type { PublishMessageOptions } from './conversation.js';
 import { buildSystemMessage } from './message-factory.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import {
@@ -45,7 +46,7 @@ export interface CompactionContext {
     message: Message,
     mentions: never[],
     attachmentIds?: undefined,
-    options?: { suppressDmAlerts?: boolean; skipMentionResolution?: boolean },
+    options?: PublishMessageOptions,
   ): Message;
   summarizeConversation(messages: Message[], mode: 'summary' | 'archive'): Promise<string>;
   contextWindowTokens(organizationId: string, threadId: string): number;

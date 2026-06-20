@@ -1,6 +1,6 @@
 {
   "name": "@ujima/llm",
-  "version": "0.0.0",
+  "version": "0.0.45",
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,10 +16,14 @@
   },
   "typesVersions": {
     "*": {
-      "legacy": ["./dist/legacy/index.d.ts"]
+      "legacy": [
+        "./dist/legacy/index.d.ts"
+      ]
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",

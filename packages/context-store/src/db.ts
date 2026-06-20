@@ -1616,6 +1616,36 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON agent_attachments(source_tool_call_id);
     `,
   },
+  {
+    // Heartbeat + self-improvement type discriminator on scheduled_jobs.
+    // Existing schedule rows get type='schedule' via the DEFAULT.
+    id: '053_heartbeat_type',
+    up: `ALTER TABLE scheduled_jobs ADD COLUMN type TEXT NOT NULL DEFAULT 'schedule' CHECK(type IN ('schedule','heartbeat','self_improvement'));`,
+  },
+  {
+    // Self-improvement review results. Each row records one post-run
+    // review: what the agent reviewed, what it decided to write/change,
+    // and which memory or procedure entries were affected.
+    id: '054_self_improvement_reviews',
+    up: `
+      CREATE TABLE IF NOT EXISTS self_improvement_reviews (
+        id                TEXT PRIMARY KEY,
+        organization_id   TEXT NOT NULL,
+        run_id            TEXT NOT NULL,
+        member_id         TEXT NOT NULL,
+        trigger_type      TEXT NOT NULL CHECK(trigger_type IN ('heartbeat','post_turn','manual')),
+        summary           TEXT NOT NULL DEFAULT '',
+        memory_writes     INTEGER NOT NULL DEFAULT 0,
+        procedure_writes  INTEGER NOT NULL DEFAULT 0,
+        created_at        TEXT NOT NULL,
+        updated_at        TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_self_improvement_reviews_org
+        ON self_improvement_reviews(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_self_improvement_reviews_run
+        ON self_improvement_reviews(organization_id, run_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

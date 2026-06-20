@@ -38,6 +38,7 @@ export function createScheduledJobRecord(input: {
   cronExpression: string;
   prompt: string;
   channelId?: string;
+  type?: 'schedule' | 'heartbeat' | 'self_improvement';
   now?: Date;
 }): ScheduledJob {
   const now = input.now ?? new Date();
@@ -55,6 +56,7 @@ export function createScheduledJobRecord(input: {
     channelId: input.channelId,
     memberId: input.memberId,
     status: 'active',
+    type: input.type ?? 'schedule',
     nextRunAt: nextRunAt.toISOString(),
     runCount: 0,
     createdAt: now.toISOString(),
@@ -144,6 +146,8 @@ export interface SchedulerServiceOptions {
   // sweep idle pending tasks on the same cadence as cron jobs
   // (avoids a second timer + lock).
   onTick?: () => Promise<void> | void;
+  onHeartbeat?: (job: ScheduledJob) => Promise<void> | void;
+  onSelfImprovement?: (job: ScheduledJob) => Promise<void> | void;
 }
 
 
@@ -151,6 +155,8 @@ export class SchedulerService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly pollIntervalMs: number;
   private readonly onTick?: () => Promise<void> | void;
+  private readonly onHeartbeat?: (job: ScheduledJob) => Promise<void> | void;
+  private readonly onSelfImprovement?: (job: ScheduledJob) => Promise<void> | void;
   private running = false;
   private tickInFlight = false;
 
@@ -162,6 +168,8 @@ export class SchedulerService {
   ) {
     this.pollIntervalMs = options.pollIntervalMs ?? 30000;
     this.onTick = options.onTick;
+    this.onHeartbeat = options.onHeartbeat;
+    this.onSelfImprovement = options.onSelfImprovement;
   }
 
   start(): void {
@@ -242,13 +250,19 @@ export class SchedulerService {
     }
   }
 
-  private async executeJob(job: {
-    organizationId: string;
-    channelId?: string;
-    prompt: string;
-    name: string;
-    memberId: string;
-  }): Promise<void> {
+  private async executeJob(job: ScheduledJob): Promise<void> {
+    const jobType = job.type ?? 'schedule';
+    if (jobType === 'heartbeat') {
+      await this.onHeartbeat?.(job);
+      this.emitJobExecuted(job, jobType);
+      return;
+    }
+    if (jobType === 'self_improvement') {
+      await this.onSelfImprovement?.(job);
+      this.emitJobExecuted(job, jobType);
+      return;
+    }
+
     if (job.channelId) {
       const sender = this.repo.getMember(job.organizationId, job.memberId);
       if (!sender) {
@@ -282,11 +296,16 @@ export class SchedulerService {
       });
     }
 
+    this.emitJobExecuted(job, jobType);
+  }
+
+  private emitJobExecuted(job: ScheduledJob, jobType: string): void {
     this.realtime.emit(SocketEventNames.scheduledJobExecuted, {
       organizationId: job.organizationId,
       jobName: job.name,
       channelId: job.channelId,
       prompt: job.prompt,
+      jobType,
     }, [orgRoom(job.organizationId), ...(job.channelId ? [channelRoom(job.channelId)] : [])]);
   }
 }

@@ -60,10 +60,20 @@ const WAKEABLE_AGENT_DM_TERMINATORS = new Set([
 
 interface ConversationMessageMetadata {
   runId?: string;
+  runProgress?: boolean;
   goalMode?: boolean;
   scheduleMode?: boolean;
   reasoningEffort?: ReasoningEffort;
   delegate?: { parentRunId?: string; kind?: DelegateKind };
+}
+
+export type WakePolicy = 'default' | 'never';
+
+export interface PublishMessageOptions {
+  suppressDmAlerts?: boolean;
+  silent?: boolean;
+  skipMentionResolution?: boolean;
+  wakePolicy?: WakePolicy;
 }
 
 export interface ArchivedChannelMessageStore {
@@ -346,7 +356,7 @@ export class ConversationService {
     message: Message,
     typedMentions?: MessageMention[],
     attachmentIds?: string[],
-    options?: { suppressDmAlerts?: boolean; silent?: boolean; skipMentionResolution?: boolean },
+    options?: PublishMessageOptions,
   ) {
     const channel = message.channelId
       ? this.requireActiveChannel(message.organizationId, message.channelId)
@@ -419,7 +429,10 @@ export class ConversationService {
         rooms,
       );
 
-      this.fanout('alertMentionedMembers', this.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
+      const suppressWake = options?.wakePolicy === 'never' || this.shouldSuppressDmWake(emittedMessage, channel);
+      if (!suppressWake) {
+        this.fanout('alertMentionedMembers', this.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
+      }
       const dmMentionedRecipients = new Set(resolvedMentions.map((mention) => mention.memberId));
       const dmAlreadyWakesMentionedRecipient =
         channel?.kind === 'dm' &&
@@ -429,11 +442,13 @@ export class ConversationService {
       if (
         !options?.suppressDmAlerts &&
         !dmAlreadyWakesMentionedRecipient &&
-        !this.shouldSuppressDmWake(emittedMessage, channel)
+        !suppressWake
       ) {
         this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
       }
-      this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
+      if (!suppressWake) {
+        this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
+      }
 
       if (this.onMessagePublished) {
         this.fanout('onMessagePublished', Promise.resolve(this.onMessagePublished(emittedMessage)));
@@ -1475,7 +1490,6 @@ export class ConversationService {
     if (!isAgentOnlyThread(message.threadId, members)) return false;
     const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
     if (handoff?.complete === true || isVacuousAck(message.content)) return true;
-    if ((message.metadata as { traceOnly?: boolean } | undefined)?.traceOnly === true) return true;
     if (message.toolCalls.length === 0) return message.content.trim().length === 0;
     return !message.toolCalls.some((call) =>
       WAKEABLE_AGENT_DM_TERMINATORS.has(normalizeToDottedToolName(call.toolName)),

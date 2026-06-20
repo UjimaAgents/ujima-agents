@@ -92,6 +92,7 @@ export const WakeReasonSchema = z.enum([
   'handoff',
   'parent-thread',
   'delegate_complete',
+  'heartbeat',
 ]);
 export type WakeReason = z.infer<typeof WakeReasonSchema>;
 
@@ -451,6 +452,7 @@ export const ScheduledJobExecutedEventSchema = z.object({
   jobName: z.string().min(1),
   channelId: IdSchema.optional(),
   prompt: z.string(),
+  jobType: z.string().default('schedule'),
 });
 export type ScheduledJobExecutedEvent = z.infer<typeof ScheduledJobExecutedEventSchema>;
 

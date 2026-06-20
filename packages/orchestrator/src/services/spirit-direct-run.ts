@@ -16,6 +16,7 @@ import { pendingApprovalRunSummary } from './approval-summary.js';
 import {
   findTerminatingTool,
   findTerminatingToolFromRunSteps,
+  normalizeToDottedToolName,
   runUsedChannelPass,
   runUsedThreadPublishingTool,
 } from './run-reply-guard.js';
@@ -25,6 +26,7 @@ import type { RunSpiritOutcome } from './spirit-types.js';
 import { SpiritServiceSupervisor } from './spirit-supervisor.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
+import type { PublishMessageOptions } from './conversation.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { composedStepToolCalls, prepareAgentStepPublication } from './agent-step-publish.js';
 import {
@@ -471,8 +473,8 @@ export class SpiritService extends SpiritServiceSupervisor {
     let persistedStepCount = 0;
     let sawTerminatingTool = false;
     const turn = new RunTurnPublisher(
-      (message) => {
-        this.conversations?.publishMessage(message);
+      (message, options) => {
+        this.conversations?.publishMessage(message, undefined, undefined, options);
         return message;
       },
       (message) => {
@@ -484,6 +486,7 @@ export class SpiritService extends SpiritServiceSupervisor {
       const systemPromptSuffix = this.resolveSystemPromptSuffix({
         organizationId: run.organizationId,
         threadId: run.threadId ?? '',
+        wakeReason: run.wakeReason,
       });
       const ai = this.ai;
       if (!ai) {
@@ -540,6 +543,15 @@ export class SpiritService extends SpiritServiceSupervisor {
             const channelId = this.repo.getThread(running.organizationId, finalThreadId)?.channelId;
 
             const toolCalls = composedStepToolCalls(prepared);
+            const hasVisibleTerminator = toolCalls.some((call) =>
+              VISIBLE_TERMINATING_TOOLS.has(normalizeToDottedToolName(call.toolName)),
+            );
+            const metadata = hasVisibleTerminator
+              ? { runId: running.id }
+              : { runId: running.id, runProgress: true };
+            const publishOptions: PublishMessageOptions | undefined = hasVisibleTerminator
+              ? undefined
+              : { wakePolicy: 'never' };
             const parts = prepared.contentParts.length > 0 ? prepared.contentParts : [prepared.content];
             for (const [partIndex, content] of parts.entries()) {
               const isLastPart = partIndex === parts.length - 1;
@@ -549,7 +561,7 @@ export class SpiritService extends SpiritServiceSupervisor {
                 channelId: channelId ?? undefined,
                 senderId: running.agentId,
                 content,
-                metadata: { runId: running.id },
+                metadata,
                 ...(isLastPart && toolCalls.length > 0 ? { toolCalls } : {}),
                 ...(isLastPart && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
               });
@@ -557,9 +569,10 @@ export class SpiritService extends SpiritServiceSupervisor {
                 this.conversations?.publishMessage(stepMessage, [], undefined, {
                   suppressDmAlerts: true,
                   skipMentionResolution: true,
+                  wakePolicy: 'never',
                 });
               } else {
-                turn.publishMessage(stepMessage);
+                turn.publishMessage(stepMessage, publishOptions);
               }
             }
           }
@@ -805,17 +818,23 @@ export class SpiritService extends SpiritServiceSupervisor {
   private persistSilentTrace(run: RunState, reasoningContent?: string): void {
     if (!run.threadId || !reasoningContent) return;
     const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
-    this.repo.saveMessage(
-      buildAgentMessage({
-        organizationId: run.organizationId,
-        threadId: run.threadId,
-        channelId,
-        senderId: run.agentId,
-        content: '',
-        reasoningContent,
-        metadata: { runId: run.id, traceOnly: true },
-      }),
-    );
+    const message = buildAgentMessage({
+      organizationId: run.organizationId,
+      threadId: run.threadId,
+      channelId,
+      senderId: run.agentId,
+      content: '',
+      reasoningContent,
+      metadata: { runId: run.id, traceOnly: true },
+    });
+    if (this.conversations) {
+      this.conversations.publishMessage(message, [], undefined, {
+        wakePolicy: 'never',
+        skipMentionResolution: true,
+      });
+    } else {
+      this.repo.saveMessage(message);
+    }
   }
 
   protected waitForApproval(run: RunState, summary: string): RunState {

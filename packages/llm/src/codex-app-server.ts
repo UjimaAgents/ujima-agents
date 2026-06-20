@@ -38,7 +38,7 @@ const CODEX_APP_SERVER_ARGS = [
 ];
 
 let spawnCodexAppServer: SpawnCodexAppServer = spawn;
-let sharedRpc: Promise<CodexRpc> | undefined;
+const sharedRpcs = new Map<string, Promise<CodexRpc>>();
 
 interface CodexChildProcess {
   stdin: Writable;
@@ -90,8 +90,10 @@ const CODEX_DEVELOPER_INSTRUCTIONS = [
 ].join('\n');
 
 export function setCodexAppServerSpawn(spawnImpl: SpawnCodexAppServer | undefined): void {
-  void sharedRpc?.then((rpc) => rpc.close()).catch(() => undefined);
-  sharedRpc = undefined;
+  for (const rpc of sharedRpcs.values()) {
+    void rpc.then((value) => value.close()).catch(() => undefined);
+  }
+  sharedRpcs.clear();
   spawnCodexAppServer = spawnImpl ?? spawn;
 }
 
@@ -182,6 +184,7 @@ async function generateWithCodex(
     fallbackTextId: undefined as string | undefined,
     toolCalls: [] as Extract<LanguageModelV3Content, { type: 'tool-call' }>[],
     providerToolParts: [] as LanguageModelV3Content[],
+    providerItemIds: new Set<string>(),
     toolCallIds: new Set<string>(),
     interrupted: false,
     done: false,
@@ -334,25 +337,15 @@ async function generateWithCodex(
     }
     if (msg.method === 'item/completed') {
       const item = (msg.params as { item?: { type?: string; text?: string; id?: string } } | undefined)?.item;
+      const itemId = typeof item?.id === 'string' ? item.id : undefined;
+      if (itemId && state.providerItemIds.has(itemId)) return;
       if (item?.type === 'agentMessage' && typeof item.text === 'string') {
-        const id = item.id ?? state.fallbackTextId ?? `codex-text-${state.textItems.length + 1}`;
-        const fallbackItem = state.fallbackTextId ? state.textItemsById.get(state.fallbackTextId) : undefined;
-        if (item.id && fallbackItem && !state.textItemsById.has(item.id)) {
-          fallbackItem.id = item.id;
-          state.textItemsById.set(item.id, fallbackItem);
-        }
-        completeTextItem(state.textItems, state.textItemsById, id, item.text, handlers);
-        if (state.fallbackTextId && state.textItemsById.get(state.fallbackTextId) === state.textItemsById.get(id)) {
-          state.textItemsById.delete(state.fallbackTextId);
-          state.fallbackTextId = undefined;
-        }
+        completeAgentMessageText(state, { id: item.id, text: item.text }, handlers);
         return;
       }
       const translated = translateCodexThreadItem(item, state.toolCallIds);
       if (translated) {
-        state.providerToolParts.push(translated.call, translated.result);
-        handlers?.onToolCall(translated.call);
-        handlers?.onToolResult(translated.result);
+        emitProviderToolPair(state, itemId, translated, handlers);
       }
     }
     if (msg.method === 'turn/completed') {
@@ -435,11 +428,15 @@ async function createCodexRpc(options: CodexAppServerModelOptions): Promise<Code
 }
 
 function getCodexRpc(options: CodexAppServerModelOptions): Promise<CodexRpc> {
-  sharedRpc ??= createCodexRpc(options).catch((error) => {
-    sharedRpc = undefined;
+  const key = options.cwd ?? process.cwd();
+  const existing = sharedRpcs.get(key);
+  if (existing) return existing;
+  const created = createCodexRpc(options).catch((error) => {
+    sharedRpcs.delete(key);
     throw error;
   });
-  return sharedRpc;
+  sharedRpcs.set(key, created);
+  return created;
 }
 
 function functionTools(tools: LanguageModelV3CallOptions['tools']): LanguageModelV3FunctionTool[] {
@@ -846,7 +843,7 @@ function completeTextItem(
   text: string,
   handlers?: CodexStreamHandlers,
 ): void {
-  const item = byId.get(id) ?? (items.length === 1 ? items[0] : undefined) ?? getTextItem(items, byId, id);
+  const item = byId.get(id) ?? getTextItem(items, byId, id);
   byId.set(id, item);
   if (text.startsWith(item.text)) {
     const delta = text.slice(item.text.length);
@@ -855,6 +852,53 @@ function completeTextItem(
     handlers?.onText(text, id);
   }
   item.text = text;
+}
+
+function completeAgentMessageText(
+  state: {
+    textItems: CodexTextItem[];
+    textItemsById: Map<string, CodexTextItem>;
+    fallbackTextId: string | undefined;
+  },
+  item: { id?: string; text: string },
+  handlers?: CodexStreamHandlers,
+): void {
+  const id = item.id ?? state.fallbackTextId ?? `codex-text-${state.textItems.length + 1}`;
+  const fallbackId = state.fallbackTextId;
+  let promotedFallback = false;
+  if (item.id && fallbackId && fallbackId !== item.id) {
+    const fallbackItem = state.textItemsById.get(fallbackId);
+    if (fallbackItem && !state.textItemsById.has(item.id)) {
+      state.textItemsById.delete(fallbackId);
+      fallbackItem.id = item.id;
+      state.textItemsById.set(item.id, fallbackItem);
+      promotedFallback = true;
+    }
+  }
+  completeTextItem(state.textItems, state.textItemsById, id, item.text, handlers);
+  if (promotedFallback || (fallbackId && state.textItemsById.get(fallbackId) === state.textItemsById.get(id))) {
+    if (!fallbackId) return;
+    state.textItemsById.delete(fallbackId);
+    state.fallbackTextId = undefined;
+  }
+}
+
+function emitProviderToolPair(
+  state: {
+    providerToolParts: LanguageModelV3Content[];
+    providerItemIds: Set<string>;
+  },
+  itemId: string | undefined,
+  translated: {
+    call: Extract<LanguageModelV3Content, { type: 'tool-call' }>;
+    result: Extract<LanguageModelV3Content, { type: 'tool-result' }>;
+  },
+  handlers?: CodexStreamHandlers,
+): void {
+  if (itemId) state.providerItemIds.add(itemId);
+  state.providerToolParts.push(translated.call, translated.result);
+  handlers?.onToolCall(translated.call);
+  handlers?.onToolResult(translated.result);
 }
 
 function getTextItem(items: CodexTextItem[], byId: Map<string, CodexTextItem>, id: string): CodexTextItem {
@@ -911,13 +955,6 @@ function promptToResponseItems(prompt: LanguageModelV3Prompt): CodexResponseItem
             name: codexToolName(part.toolName),
             arguments: stringifyJson(part.input ?? {}),
             call_id: part.toolCallId,
-          });
-        }
-        if (part.type === 'tool-result') {
-          items.push({
-            type: 'function_call_output',
-            call_id: part.toolCallId,
-            output: toolResultText(toolResultPayload(part)),
           });
         }
       }

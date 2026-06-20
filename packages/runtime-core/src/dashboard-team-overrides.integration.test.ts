@@ -140,6 +140,7 @@ describe('dashboard team overrides', () => {
       channelId: 'general',
       memberId: saved.id,
       status: 'active',
+      type: 'schedule',
       nextRunAt: new Date().toISOString(),
       runCount: 0,
       createdAt: new Date().toISOString(),

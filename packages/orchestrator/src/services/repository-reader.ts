@@ -31,6 +31,7 @@ import type {
   RunState,
   RunStep,
   ScheduledJob,
+  SelfImprovementReview,
   Spirit,
   SpiritRole,
   SkillInstall,
@@ -287,6 +288,11 @@ export interface ApiRepository extends ConversationRepository {
   listScheduledJobs(organizationId: string): ScheduledJob[];
   deleteScheduledJob(organizationId: string, jobId: string): void;
   listDueJobsGlobally(): ScheduledJob[];
+  saveSelfImprovementReview(review: SelfImprovementReview): SelfImprovementReview;
+  getSelfImprovementReview(organizationId: string, reviewId: string): SelfImprovementReview | null;
+  listSelfImprovementReviews(organizationId: string, limit?: number): SelfImprovementReview[];
+  listSelfImprovementReviewsByRun(organizationId: string, runId: string): SelfImprovementReview[];
+  deleteSelfImprovementReview(organizationId: string, reviewId: string): void;
   listNotificationChannels(organizationId: string): NotificationChannelRow[];
   getNotificationChannel(organizationId: string, channelId: string): NotificationChannelRow | null;
   saveNotificationChannel(channel: NotificationChannelRow): void;

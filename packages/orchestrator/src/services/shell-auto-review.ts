@@ -37,6 +37,7 @@ export class ShellAutoReviewService {
         ]
           .filter(Boolean)
           .join('\n'),
+        maxOutputTokens: 8_000,
       });
 
       const parsed = parseReviewerJson(text);

@@ -1,12 +1,14 @@
 {
   "name": "ujima",
-  "version": "0.0.0",
+  "version": "0.0.45",
   "private": true,
   "main": "./dist/main.js",
   "bin": {
     "ujima": "./dist/cli.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",

@@ -27,6 +27,7 @@ export * from './task-files.js';
 export * from './mcps.js';
 export * from './plugins.js';
 export * from './schedules.js';
+export * from './self-improvement.js';
 export * from './additive/requests.js';
 export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
 
