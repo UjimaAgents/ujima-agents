@@ -646,6 +646,7 @@ function printUsage(): void {
   printCommandRow('stop', 'Stop the background Ujima daemon');
   printCommandRow('init', 'Onboard organization, owner, and workspace');
   printCommandRow('update', 'Check for and install CLI updates');
+  printCommandRow('startup', 'Manage automatic startup on boot');
   printCommandRow('help', 'Display help for a command');
   printInfoRow('More:', 'ujima help <command>  |  ujima <command> --help', { dim: true });
   console.info(`   ${chalk.gray('↳')} ${chalk.white('Environment:')}`);
@@ -715,6 +716,20 @@ function printCommandHelp(cmd: string): void {
       console.info(`   ${chalk.gray('↳')} ${chalk.white('Options:')}`);
       printInfoRow('--check-only', 'Check without installing', { dim: true });
       printInfoRow('--force', 'Re-install even if up to date', { dim: true });
+      break;
+
+    case 'startup':
+      printReadyLine('Command: startup');
+      printInfoRow('Usage:', 'ujima startup <subcommand>');
+      printInfoRow(
+        'Description:',
+        'Manage automatic startup so Ujima runs when your system boots.',
+        { dim: true },
+      );
+      console.info(`   ${chalk.gray('↳')} ${chalk.white('Subcommands:')}`);
+      printInfoRow('register', 'Register Ujima to start on system boot (launchd/systemd/Registry)', { dim: true });
+      printInfoRow('unregister', 'Remove Ujima from system startup', { dim: true });
+      printInfoRow('status', 'Check whether Ujima is registered to start on boot', { dim: true });
       break;
 
     default:
@@ -914,6 +929,65 @@ async function cmdUpdate(argv: string[]): Promise<void> {
   });
 }
 
+async function cmdStartup(argv: string[]): Promise<void> {
+  const subcommand = argv[0];
+  switch (subcommand) {
+    case 'register': {
+      const result = registerStartup();
+      if (result.success) {
+        process.stdout.write(
+          chalk.green('✓') + chalk.bold(' Registered Ujima to start automatically on boot') + '\n',
+        );
+      } else {
+        process.stderr.write(
+          chalk.red('✗') + chalk.bold(' Failed to register Ujima for automatic startup') +
+          chalk.gray(': ' + (result.error ?? 'unknown error')) + '\n',
+        );
+        process.exit(1);
+      }
+      break;
+    }
+    case 'unregister': {
+      const result = unregisterStartup();
+      if (result.success) {
+        process.stdout.write(
+          chalk.green('✓') + chalk.bold(' Removed Ujima from system startup') + '\n',
+        );
+      } else {
+        process.stderr.write(
+          chalk.red('✗') + chalk.bold(' Failed to remove Ujima from system startup') +
+          chalk.gray(': ' + (result.error ?? 'unknown error')) + '\n',
+        );
+        process.exit(1);
+      }
+      break;
+    }
+    case 'status': {
+      const registered = isStartupRegistered();
+      if (registered) {
+        process.stdout.write(
+          chalk.green('✓') + chalk.bold(' Ujima is registered to start automatically on boot') + '\n',
+        );
+      } else {
+        process.stdout.write(
+          chalk.yellow('○') + chalk.bold(' Ujima is not registered for automatic startup') + '\n' +
+          chalk.gray('  Run: ujima startup register') + '\n',
+        );
+      }
+      break;
+    }
+    default:
+      process.stderr.write(
+        `ujima startup: unknown subcommand "${subcommand}". Use: register, unregister, or status.\n`,
+      );
+      printCommandHelp('startup');
+      process.exit(2);
+  }
+}
+
+/** Exported for testing. */
+export { cmdStartup };
+
 export async function main(): Promise<void> {
   const [, , command, ...rest] = process.argv;
 
@@ -945,6 +1019,9 @@ export async function main(): Promise<void> {
       return;
     case 'update':
       await cmdUpdate(rest);
+      return;
+    case 'startup':
+      await cmdStartup(rest);
       return;
     default:
       process.stderr.write(`ujima: unknown command "${command}"\n`);

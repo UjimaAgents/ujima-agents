@@ -1155,7 +1155,36 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     );
   }
 
+  // Bet 1c (Hermes review) — post-turn memory-review counter.
+  // Counter ticks per completed run; threshold-hit spawns a
+  // restricted memory-only review fork (stub for follow-up wiring).
+  const memoryReview = new MemoryReviewService(
+    context.teamStore,
+    context.repo,
+    tools,
+    ai,
+  );
+
   const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
+    onHeartbeat: async (job) => {
+      if (!job.channelId) return;
+      await spirits.createRun({
+        organizationId: job.organizationId,
+        agentId: job.memberId,
+        threadId: job.channelId,
+        summary: `Heartbeat: ${job.name}`,
+        wakeReason: 'heartbeat',
+      });
+    },
+    onSelfImprovement: async (job) => {
+      if (!job.channelId) return;
+      await memoryReview?.runManual({
+        organizationId: job.organizationId,
+        memberId: job.memberId,
+        channelId: job.channelId,
+        triggerType: 'manual',
+      });
+    },
     onTick: async () => {
       await goals.sweepAllPendingTasks();
       // No try/catch. The bootstrap probe above validated the
@@ -1394,16 +1423,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // schema, no service dependencies: pure projection over runs +
   // run_steps + messages tables we already keep.
   const trajectory = new TrajectoryService();
-
-  // Bet 1c (Hermes review) — post-turn memory-review counter.
-  // Counter ticks per completed run; threshold-hit spawns a
-  // restricted memory-only review fork (stub for follow-up wiring).
-  const memoryReview = new MemoryReviewService(
-    context.teamStore,
-    context.repo,
-    tools,
-    ai,
-  );
 
   // Late-bind the run-completed hook. The single hook routes to
   // drain-pending-member-alert, memory-review's turn counter, and

@@ -68,6 +68,7 @@ export async function planAssignments(input: PlanInputs): Promise<PlanResult> {
     system,
     prompt: user,
     abortSignal,
+    maxOutputTokens: 8_000,
   });
 
   const parsed = extractAssignments(rawText);

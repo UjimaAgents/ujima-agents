@@ -31,6 +31,7 @@ import type {
   RunState,
   RunStep,
   ScheduledJob,
+  SelfImprovementReview,
   Spirit,
   SpiritRole,
   TaskSession,
@@ -240,6 +241,13 @@ import {
   listScheduledJobs as readScheduledJobs,
   saveScheduledJob as writeScheduledJob,
 } from './scheduled-jobs.js';
+import {
+  deleteSelfImprovementReview as removeSelfImprovementReview,
+  getSelfImprovementReview as readSelfImprovementReview,
+  listSelfImprovementReviews as readSelfImprovementReviews,
+  listSelfImprovementReviewsByRun as readSelfImprovementReviewsByRun,
+  saveSelfImprovementReview as writeSelfImprovementReview,
+} from './self-improvement-reviews.js';
 import {
   deleteMemory as removeMemory,
   getMemory as readMemory,
@@ -825,6 +833,17 @@ export class Repository {
   deleteScheduledJob = (organizationId: string, jobId: string): void =>
     removeScheduledJob(this.db, organizationId, jobId);
   listDueJobsGlobally = (): ScheduledJob[] => readDueJobsGlobally(this.db);
+
+  saveSelfImprovementReview = (review: SelfImprovementReview): SelfImprovementReview =>
+    writeSelfImprovementReview(this.db, review);
+  getSelfImprovementReview = (organizationId: string, reviewId: string): SelfImprovementReview | null =>
+    readSelfImprovementReview(this.db, organizationId, reviewId);
+  listSelfImprovementReviews = (organizationId: string, limit?: number): SelfImprovementReview[] =>
+    readSelfImprovementReviews(this.db, organizationId, limit);
+  listSelfImprovementReviewsByRun = (organizationId: string, runId: string): SelfImprovementReview[] =>
+    readSelfImprovementReviewsByRun(this.db, organizationId, runId);
+  deleteSelfImprovementReview = (organizationId: string, reviewId: string): void =>
+    removeSelfImprovementReview(this.db, organizationId, reviewId);
 
   // Generic secret-store passthrough — used by the MCP registry (env
   // maps + auth headers) and any other component that needs to put

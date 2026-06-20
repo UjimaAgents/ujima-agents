@@ -275,6 +275,7 @@ export const MessageMetadataSchema = z.object({
   handoff: HandoffMetadataSchema.optional(),
   /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
   runId: IdSchema.optional(),
+  runProgress: z.boolean().optional(),
   failedTrace: z.boolean().optional(),
   stoppedTrace: z.boolean().optional(),
   traceOnly: z.boolean().optional(),
@@ -786,6 +787,9 @@ export type RunProcedureApplied = z.infer<typeof RunProcedureAppliedSchema>;
 // Scheduled Jobs (cron)
 // -----------------------------------------------------------------------
 
+export const ScheduledJobTypeSchema = z.enum(['schedule', 'heartbeat', 'self_improvement']);
+export type ScheduledJobType = z.infer<typeof ScheduledJobTypeSchema>;
+
 export const ScheduledJobSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
@@ -795,6 +799,7 @@ export const ScheduledJobSchema = z.object({
   channelId: IdSchema.optional(),
   memberId: IdSchema,
   status: JobStatusSchema.default('active'),
+  type: ScheduledJobTypeSchema.default('schedule'),
   lastRunAt: TimestampSchema.optional(),
   nextRunAt: TimestampSchema.optional(),
   runCount: z.number().int().min(0).default(0),
@@ -876,6 +881,7 @@ export const CreateScheduledJobInputSchema = z.object({
   cronExpression: CronExpressionSchema,
   prompt: z.string().min(1),
   channelId: IdSchema.optional(),
+  type: ScheduledJobTypeSchema.optional().default('schedule'),
 });
 export type CreateScheduledJobInput = z.infer<typeof CreateScheduledJobInputSchema>;
 
@@ -885,8 +891,30 @@ export const UpdateScheduledJobInputSchema = z.object({
   prompt: z.string().min(1).optional(),
   channelId: IdSchema.optional(),
   status: JobStatusSchema.optional(),
+  type: ScheduledJobTypeSchema.optional(),
 });
 export type UpdateScheduledJobInput = z.infer<typeof UpdateScheduledJobInputSchema>;
+
+// -----------------------------------------------------------------------
+// Self-Improvement Reviews
+// -----------------------------------------------------------------------
+
+export const SelfImprovementTriggerTypeSchema = z.enum(['heartbeat', 'post_turn', 'manual']);
+export type SelfImprovementTriggerType = z.infer<typeof SelfImprovementTriggerTypeSchema>;
+
+export const SelfImprovementReviewSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  runId: IdSchema,
+  memberId: IdSchema,
+  triggerType: SelfImprovementTriggerTypeSchema,
+  summary: z.string().default(''),
+  memoryWrites: z.number().int().min(0).default(0),
+  procedureWrites: z.number().int().min(0).default(0),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type SelfImprovementReview = z.infer<typeof SelfImprovementReviewSchema>;
 
 // -----------------------------------------------------------------------
 // MCP Registry (Phase 3 — agent-owned MCP access)

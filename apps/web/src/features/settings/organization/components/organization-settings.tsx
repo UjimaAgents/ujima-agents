@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   Bell,
   Building2,
   Clock,
@@ -38,6 +39,8 @@ import { PoliciesTab } from "./policies-tab";
 import { ProvidersTab } from "./providers-tab";
 import { PluginsTab } from "./plugins-tab";
 import { SchedulesTab } from "./schedules-tab";
+import { HeartbeatsTab } from "./heartbeats-tab";
+import { SelfImprovementTab } from "./self-improvement-tab";
 import { McpsTab } from "./mcps-tab";
 import { WorkspacesTab } from "./workspaces-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
@@ -55,7 +58,9 @@ export type SettingsTabId =
   | "plugins"
   | "schedules"
   | "mcps"
-  | "notifications";
+  | "notifications"
+  | "heartbeats"
+  | "self-improvement";
 
 const VALID_TABS: SettingsTabId[] = [
   "general",
@@ -70,6 +75,8 @@ const VALID_TABS: SettingsTabId[] = [
   "schedules",
   "mcps",
   "notifications",
+  "heartbeats",
+  "self-improvement",
 ];
 
 const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
@@ -101,7 +108,11 @@ const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
   },
   {
     label: "Runtime",
-    items: [{ id: "schedules", label: "Schedules", icon: Clock }],
+    items: [
+      { id: "schedules", label: "Schedules", icon: Clock },
+      { id: "heartbeats", label: "Heartbeats", icon: Activity },
+      { id: "self-improvement", label: "Self-Improvement", icon: Sparkles },
+    ],
   },
 ];
 
@@ -268,6 +279,8 @@ function OrganizationSettingsContent({
           <PluginsTab bootstrap={bootstrap} createdBy={createdBy} />
         )}
         {activeTab === "schedules" && <SchedulesTab />}
+        {activeTab === "heartbeats" && <HeartbeatsTab />}
+        {activeTab === "self-improvement" && <SelfImprovementTab />}
         {activeTab === "notifications" && <NotificationsTab />}
         {activeTab === "mcps" && (
           <McpsTab orgId={orgId} createdBy={createdBy} members={members} />

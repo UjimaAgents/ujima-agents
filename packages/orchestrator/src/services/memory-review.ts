@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
@@ -104,12 +105,28 @@ export class MemoryReviewService {
         organizationId: input.organizationId,
         memberId: input.memberId,
         channelId,
+        runId: input.runId,
       }).catch(() => {
         // best-effort
       });
     } else {
       this.counters.set(key, next);
     }
+  }
+
+  async runManual(input: {
+    organizationId: string;
+    memberId: string;
+    channelId: string;
+    runId?: string;
+    triggerType?: 'heartbeat' | 'post_turn' | 'manual';
+  }): Promise<void> {
+    await this.spawnReview({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      channelId: input.channelId,
+      triggerType: input.triggerType ?? 'manual',
+    });
   }
 
   /**
@@ -127,6 +144,8 @@ export class MemoryReviewService {
     organizationId: string;
     memberId: string;
     channelId: string;
+    runId?: string;
+    triggerType?: 'heartbeat' | 'post_turn' | 'manual';
   }): Promise<void> {
     // Skip if the member can't be resolved — a delayed nudge for a
     // retired agent shouldn't burn a model call.
@@ -138,12 +157,24 @@ export class MemoryReviewService {
     // recent-message lookup. AiService.generateMemoryReview accepts
     // threadId and pulls the last N messages itself.
     try {
-      await this.ai.generateMemoryReview({
+      const result = await this.ai.generateMemoryReview({
         organizationId: input.organizationId,
         memberId: input.memberId,
         threadId: input.channelId,
         prompt: MEMORY_REVIEW_PROMPT,
         contextSize: this.reviewContextSize,
+      });
+      this.repo.saveSelfImprovementReview({
+        id: randomUUID(),
+        organizationId: input.organizationId,
+        runId: input.runId ?? `memory-review:${randomUUID()}`,
+        memberId: input.memberId,
+        triggerType: input.triggerType ?? 'post_turn',
+        summary: result.text.trim() || 'Nothing to save.',
+        memoryWrites: countToolCalls(result, 'memory.write'),
+        procedureWrites: countToolCalls(result, 'self.procedure.add'),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       });
     } catch {
       // Fork is fire-and-forget. Errors get swallowed so a flaky
@@ -160,6 +191,17 @@ export class MemoryReviewService {
   resetCounter(organizationId: string, memberId: string, channelId: string): void {
     this.counters.delete(`${organizationId}|${memberId}|${channelId}`);
   }
+}
+
+function countToolCalls(
+  result: Awaited<ReturnType<AiService['generateMemoryReview']>>,
+  toolName: string,
+): number {
+  return result.steps.reduce(
+    (count, step) =>
+      count + (step.toolCalls ?? []).filter((call) => call.toolName === toolName).length,
+    0,
+  );
 }
 
 export { MEMORY_REVIEW_PROMPT };

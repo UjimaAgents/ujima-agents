@@ -1,12 +1,14 @@
 {
   "name": "@ujima/api",
-  "version": "0.0.0",
+  "version": "0.0.45",
   "private": true,
   "main": "./dist/main.js",
   "bin": {
     "ujima-runtime": "./dist/main.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "predev": "bun ../../scripts/free-port.ts ${UJIMA_PORT:-7511}",
     "build": "tsc -p tsconfig.json",

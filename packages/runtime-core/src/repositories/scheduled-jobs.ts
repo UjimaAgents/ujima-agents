@@ -14,6 +14,7 @@ function rowToScheduledJob(row: Row): ScheduledJob {
     channelId: optionalRowString(row, 'channel_id'),
     memberId: rowString(row, 'member_id'),
     status: rowString(row, 'status'),
+    type: (rowString(row, 'type') ?? 'schedule') as ScheduledJob['type'],
     lastRunAt: optionalRowString(row, 'last_run_at'),
     nextRunAt: optionalRowString(row, 'next_run_at'),
     runCount: Number(row.run_count ?? 0),
@@ -28,9 +29,9 @@ export function saveScheduledJob(db: DbHandle, job: ScheduledJob): ScheduledJob 
   db.prepare(
     `INSERT INTO scheduled_jobs (
       id, organization_id, name, cron_expression, prompt,
-      channel_id, member_id, status, last_run_at, next_run_at,
+      channel_id, member_id, status, type, last_run_at, next_run_at,
       run_count, last_error, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       cron_expression = excluded.cron_expression,
@@ -38,6 +39,7 @@ export function saveScheduledJob(db: DbHandle, job: ScheduledJob): ScheduledJob 
       channel_id = excluded.channel_id,
       member_id = excluded.member_id,
       status = excluded.status,
+      type = excluded.type,
       last_run_at = excluded.last_run_at,
       next_run_at = excluded.next_run_at,
       run_count = excluded.run_count,
@@ -52,6 +54,7 @@ export function saveScheduledJob(db: DbHandle, job: ScheduledJob): ScheduledJob 
     job.channelId ?? null,
     job.memberId,
     job.status,
+    job.type ?? 'schedule',
     job.lastRunAt ?? null,
     job.nextRunAt ?? null,
     job.runCount,

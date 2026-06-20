@@ -166,6 +166,7 @@ export function deleteOrganizationData(db: DbHandle, organizationId: string): vo
     run('DELETE FROM agent_mcp_attachments WHERE organization_id = ?', organizationId);
     run('DELETE FROM mcp_tool_cache WHERE organization_id = ?', organizationId);
     run('DELETE FROM scheduled_jobs WHERE organization_id = ?', organizationId);
+    run('DELETE FROM self_improvement_reviews WHERE organization_id = ?', organizationId);
     run('DELETE FROM workspace_files WHERE organization_id = ?', organizationId);
     run('DELETE FROM decision_log WHERE organization_id = ?', organizationId);
     run('DELETE FROM procedure_revisions WHERE organization_id = ?', organizationId);

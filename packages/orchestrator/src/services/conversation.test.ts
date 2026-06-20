@@ -379,6 +379,42 @@ describe('ConversationService @all mentions', () => {
     expect(alerts).toEqual([]);
   });
 
+  it('does not wake agent DM peers from run-progress text or mentions', async () => {
+    const { alerts, repo, service } = createConversationFixture();
+    const { dmChannel, dmThread } = saveAgentDm(repo);
+
+    service.publishMessage(
+      {
+        id: 'msg-run-progress',
+        organizationId: 'org-1',
+        threadId: dmThread.id,
+        channelId: dmChannel.id,
+        senderId: 'agent-1',
+        senderKind: 'agent',
+        kind: 'agent',
+        content: '@Noah, I am checking the schema now.',
+        createdAt: '2026-05-07T00:00:02.500Z',
+        mentions: [],
+        metadata: { runId: 'run-1', runProgress: true },
+        toolCalls: [],
+        attachments: [],
+      },
+      [
+        {
+          id: 'mention-run-progress',
+          messageId: 'msg-run-progress',
+          memberId: 'agent-2',
+          kind: 'mention',
+        },
+      ],
+      undefined,
+      { wakePolicy: 'never' },
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(alerts).toEqual([]);
+  });
+
   it('wakes the other agent on a visible terminating DM tool', async () => {
     const { alerts, repo, service } = createConversationFixture();
     const { dmChannel, dmThread } = saveAgentDm(repo);

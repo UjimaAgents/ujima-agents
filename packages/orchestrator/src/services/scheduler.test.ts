@@ -70,6 +70,8 @@ describe('SchedulerService', () => {
   let mockConversations: ConversationService;
   let mockRealtime: RealtimeService;
   let scheduler: SchedulerService;
+  let onHeartbeat: ReturnType<typeof vi.fn>;
+  let onSelfImprovement: ReturnType<typeof vi.fn>;
   let members: Map<string, { id: string; organizationId: string }>;
 
   beforeEach(() => {
@@ -109,8 +111,12 @@ describe('SchedulerService', () => {
       emit: vi.fn(),
     } as unknown as RealtimeService;
 
+    onHeartbeat = vi.fn().mockResolvedValue(undefined);
+    onSelfImprovement = vi.fn().mockResolvedValue(undefined);
     scheduler = new SchedulerService(mockRepo, mockConversations, mockRealtime, {
       pollIntervalMs: 5000,
+      onHeartbeat,
+      onSelfImprovement,
     });
   });
 
@@ -282,5 +288,118 @@ describe('SchedulerService', () => {
     }, { timeout: 2000 });
 
     scheduler.stop();
+  });
+
+  describe('type branching (heartbeat / self_improvement / schedule)', () => {
+    const heartbeatJob = {
+      id: 'heartbeat-1',
+      organizationId: 'org-1',
+      name: 'Daily Check',
+      cronExpression: '0 9 * * *',
+      prompt: 'Check if everything is OK',
+      channelId: 'channel-1',
+      memberId: 'member-1',
+      status: 'active' as const,
+      type: 'heartbeat' as const,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+      runCount: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const scheduleJob = {
+      ...heartbeatJob,
+      id: 'schedule-1',
+      name: 'Standup',
+      type: 'schedule' as const,
+    };
+
+    const selfImprovementJob = {
+      ...heartbeatJob,
+      id: 'self-improvement-1',
+      name: 'Weekly Review',
+      type: 'self_improvement' as const,
+    };
+
+    beforeEach(() => {
+      vi.mocked(mockRepo.getChannel).mockReturnValue({
+        id: 'channel-1',
+        organizationId: 'org-1',
+        name: 'general',
+        kind: 'general',
+        topic: '',
+        memberIds: ['member-1'],
+      } as never);
+    });
+
+    it('runs heartbeat through the heartbeat callback without posting a scheduler message', async () => {
+      mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([heartbeatJob]);
+      scheduler.start();
+
+      await vi.waitFor(() => {
+        expect(onHeartbeat).toHaveBeenCalledWith(heartbeatJob);
+      }, { timeout: 2000 });
+      scheduler.stop();
+
+      expect(mockConversations.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('sends schedule with Scheduled prefix and no metadata', async () => {
+      mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([scheduleJob]);
+      scheduler.start();
+
+      await vi.waitFor(() => {
+        expect(mockConversations.sendMessage).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+      scheduler.stop();
+
+      const call = vi.mocked(mockConversations.sendMessage).mock.calls[0][0];
+      expect(call.content).toContain('**⏰ Scheduled: Standup**');
+      expect(call.metadata).toBeUndefined();
+    });
+
+    it('runs self_improvement through the review callback without posting a scheduler message', async () => {
+      mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([selfImprovementJob]);
+      scheduler.start();
+
+      await vi.waitFor(() => {
+        expect(onSelfImprovement).toHaveBeenCalledWith(selfImprovementJob);
+      }, { timeout: 2000 });
+      scheduler.stop();
+
+      expect(mockConversations.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('emits scheduledJobExecuted with the correct jobType', async () => {
+      mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([heartbeatJob]);
+      scheduler.start();
+
+      await vi.waitFor(() => {
+        expect(mockRealtime.emit).toHaveBeenCalled();
+      }, { timeout: 2000 });
+      scheduler.stop();
+
+      const realtimeCall = vi.mocked(mockRealtime.emit).mock.calls.find(
+        ([event]) => event === SocketEventNames.scheduledJobExecuted,
+      );
+      expect(realtimeCall).toBeDefined();
+      expect(realtimeCall![1]).toMatchObject({
+        jobType: 'heartbeat',
+        jobName: 'Daily Check',
+      });
+    });
+
+    it('handles overdue heartbeat without a channel (no sendMessage)', async () => {
+      const noChannelJob = { ...heartbeatJob, channelId: undefined };
+      mockRepo.listDueJobsGlobally = vi.fn().mockReturnValue([noChannelJob]);
+      scheduler.start();
+
+      await vi.waitFor(() => {
+        expect(mockRealtime.emit).toHaveBeenCalled();
+      }, { timeout: 2000 });
+      scheduler.stop();
+
+      expect(mockConversations.sendMessage).not.toHaveBeenCalled();
+    });
   });
 });

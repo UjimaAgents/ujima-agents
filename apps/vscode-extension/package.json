@@ -2,7 +2,7 @@
   "name": "ujima-vscode-extension",
   "displayName": "Ujima",
   "description": "An agent operating system for your editor.",
-  "version": "0.1.0",
+  "version": "0.0.45",
   "private": true,
   "publisher": "ujima",
   "repository": {
@@ -194,13 +194,20 @@
       "properties": {
         "ujima.approvals.mode": {
           "type": "string",
-          "enum": ["human_all", "senior_auto", "hybrid"],
+          "enum": [
+            "human_all",
+            "senior_auto",
+            "hybrid"
+          ],
           "default": "human_all",
           "description": "Who approves artifacts before downstream agents consume them. human_all: every approval surfaces to you. senior_auto: senior agents silently co-sign. hybrid: senior auto-approves low-risk, you see destructive/cross-domain."
         },
         "ujima.execution.defaultMode": {
           "type": "string",
-          "enum": ["concurrent", "slim"],
+          "enum": [
+            "concurrent",
+            "slim"
+          ],
           "default": "concurrent",
           "description": "Default execution mode for new tasks."
         },

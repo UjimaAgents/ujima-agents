@@ -64,6 +64,8 @@ import {registerAgentRoutes} from "./routes/agents.js";
 import {registerChannelMemberModeRoutes} from "./routes/channel-member-modes.js";
 import {registerOauthRoutes} from "./routes/oauth.js";
 import {registerScheduleRoutes} from "./routes/schedules.js";
+import {registerHeartbeatRoutes} from "./routes/heartbeats.js";
+import {registerSelfImprovementRoutes} from "./routes/self-improvement.js";
 import {
   registerNotificationRoutes,
   registerTelegramWebhookRoute,
@@ -371,6 +373,14 @@ export function createTransport(opts: TransportOptions): Transport {
           auth: services.auth,
         });
         registerScheduleRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+        });
+        registerHeartbeatRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+        });
+        registerSelfImprovementRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });

@@ -104,6 +104,8 @@ export interface SelectLanguageModelInput {
   kind: ProviderKind;
   /** Model id (e.g. `claude-opus-4-7`, `gpt-4o-mini`, `anthropic/claude-opus-4-7`). */
   modelId: string;
+  /** Working directory used by providers that need a repo-local app-server. */
+  cwd?: string;
   /** API key. Required for all kinds except `ollama` (which only uses `baseUrl`). */
   apiKey?: string;
   /** Custom base URL. For `openrouter` defaults to the public router; for `ollama` defaults to `http://127.0.0.1:11434/v1`. */
@@ -222,6 +224,7 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
   if (input.kind === 'openai-codex') {
     return createCodexAppServerModel({
       modelId: input.modelId,
+      cwd: input.cwd,
       reasoningEffort: input.reasoningEffort,
     });
   }
