@@ -47,7 +47,7 @@ describe('buildWakeContextMessages — per-wake additions (NOT part of cacheable
   it('emits the anti-mirror line for fragile models', () => {
     const out = buildWakeContextMessages({
       wakeReason: 'mention',
-      modelIdString: 'gemini-2.5-flash',
+      modelIdString: 'gemini-3.1-pro',
       isMirrorFragile: true,
     });
     expect(out).toHaveLength(1);
@@ -55,4 +55,3 @@ describe('buildWakeContextMessages — per-wake additions (NOT part of cacheable
     expect(text).toContain('anti-mirror');
   });
 });
-

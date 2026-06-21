@@ -1,4 +1,4 @@
-import { defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
+import { getModelOptionsForProvider } from './model-catalog.js';
 
 export interface ConfiguredProviderModelOption {
   provider: string;
@@ -49,17 +49,10 @@ export function configuredProviderModelValue(
 
 export function resolveMemberModelSelection(
   member: { llm?: string; model?: string },
-  providers: readonly { name: string; hasKey: boolean }[],
 ): string {
-  const configured = listConfiguredProviderModels(providers);
   if (member.llm && member.model) {
-    const candidate = configuredProviderModelValue(member.llm, member.model);
-    if (configured.some((option) => option.value === candidate)) {
-      return candidate;
-    }
+    return configuredProviderModelValue(member.llm, member.model);
   }
-  const first = configured[0];
-  if (first) return first.value;
-  const fallbackProvider = providers.find((p) => p.hasKey)?.name ?? 'openai';
-  return configuredProviderModelValue(fallbackProvider, defaultModelForProvider(fallbackProvider));
+  if (member.model) return member.model;
+  return "";
 }

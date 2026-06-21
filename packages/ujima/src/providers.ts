@@ -6,7 +6,7 @@ export function defineProvider(provider: unknown): ProviderConfig {
 
 export function normalizeProviderKey(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, '-');
-  return normalized === 'zhipu-ai' ? 'zhipu' : normalized;
+  return normalized === 'zhipu-ai' || normalized === 'z.ai' || normalized === 'z-ai' ? 'zhipu' : normalized;
 }
 
 export function normalizeProviders(

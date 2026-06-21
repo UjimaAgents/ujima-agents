@@ -12,7 +12,7 @@ export const PROVIDER_OPTIONS: readonly ProviderCatalogOption[] = [
   { label: "DeepSeek", token: "deepseek" },
   { label: "xAI", token: "xai" },
   { label: "Kimi", token: "kimi" },
-  { label: "Zhipu", token: "zhipu" },
+  { label: "z.ai", token: "zhipu" },
   { label: "Ollama", token: "ollama" },
 ] as const;
 
@@ -74,7 +74,7 @@ export function normalizeProviderToken(value: string) {
 
 export function normalizeProviderKey(value: string) {
   const normalized = normalizeProviderToken(value);
-  return normalized === "zhipu-ai" ? "zhipu" : normalized;
+  return normalized === "zhipu-ai" || normalized === "z.ai" || normalized === "z-ai" ? "zhipu" : normalized;
 }
 
 export function providerLabelFromToken(token: string) {

@@ -52,7 +52,6 @@ import {
   createMessageCursor,
   loadChannelInterruptModelMessages,
 } from '../utils/interrupt-loader.js';
-import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
 import { selectPromptContextMessages } from '../utils/prompt-context.js';
@@ -391,17 +390,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
           agentId: member.id,
           cursor: interruptCursor,
           runId: spirit.runId ?? spirit.id,
-        }),
-        onModelNotFound: createSpiritModelNotFoundHandler({
-          logLabel: 'spirit-agent-run',
-          memberLabel: input.memberId,
-          resolve: () =>
-            this.modelResolver({
-              organizationId: input.organizationId,
-              memberId: input.memberId,
-              role,
-              forceSafeFallback: true,
-            }),
         }),
         logLabel: 'spirit-agent-run',
         memberLabel: input.memberId,

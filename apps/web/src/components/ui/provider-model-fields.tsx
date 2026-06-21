@@ -1,5 +1,5 @@
 import { Select } from "@/components/ui/select";
-import { FieldShell } from "@/components/ui/form-fields";
+import { FieldShell, TextInput } from "@/components/ui/form-fields";
 import { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared/browser";
 import { PROVIDER_OPTIONS, normalizeProviderKey } from "@/features/providers/catalog";
 import { useEffect, useMemo, useState } from "react";
@@ -49,7 +49,7 @@ export function ProviderModelFields({
   const modelHintText = discovering
     ? "Discovering models from your configured endpoint…"
     : discoverError
-      ? `Falling back to catalog (${discoverError})`
+      ? `Using catalog (${discoverError})`
       : discovered.length > 0
         ? `${discovered.length} live + ${getModelOptionsForProvider(provider).length} catalog`
         : modelHint;
@@ -72,14 +72,18 @@ export function ProviderModelFields({
       </FieldShell>
 
       <FieldShell label={modelLabel} htmlFor={modelId} hint={modelHintText}>
-        <Select
+        <TextInput
           id={modelId}
           value={model}
           onChange={(event) => onModelChange(event.target.value)}
-          className="w-full"
-          placeholder="Select model"
-          options={modelOptions.map((option) => ({ value: option.value, label: option.label }))}
+          list={`${modelId}-options`}
+          placeholder="Type model id"
         />
+        <datalist id={`${modelId}-options`}>
+          {modelOptions.map((option) => (
+            <option key={option.value} value={option.value} />
+          ))}
+        </datalist>
       </FieldShell>
     </div>
   );

@@ -12,17 +12,9 @@ import { normalizeStepTokenUsage } from './token-usage.js';
 
 // Both wake-run (ai-service.generateRunReply) and direct-spirit
 // (spirit-agent-run.runOnce) call runAgentLoop and both can hit the
-// same two recoverable conditions: bad model id (404) + Gemini
-// "too many states" (400). Keeping the retry shape in one helper
-// here so the two call sites can't drift — adding a third recovery
-// type means editing one place.
+// same recoverable Gemini schema limit (400). Keeping the retry
+// shape in one helper here so the two call sites can't drift.
 export interface RunAgentLoopRetryHooks {
-  /**
-   * Called on `ModelNotFoundError`. Must return a fresh
-   * LanguageModel (typically the provider's safe-default id) for
-   * the next attempt. Return `null` to give up and re-throw.
-   */
-  onModelNotFound?: (error: ModelNotFoundError) => Promise<LanguageModel | null> | LanguageModel | null;
   /**
    * Called on `SchemaTooLargeError`. Must return a trimmed ToolSet
    * (typically with the heaviest MCP dropped) for the next attempt.
@@ -33,27 +25,17 @@ export interface RunAgentLoopRetryHooks {
 
 export async function runAgentLoopWithRetry(
   buildArgs: () => Parameters<typeof runAgentLoop>[0],
-  setModel: (next: LanguageModel) => void,
   setTools: (next: ToolSet) => void,
   hooks: RunAgentLoopRetryHooks = {},
 ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
   // Each recovery class fires at most once per outer call — a bad
-  // model with too many tools recovers in two attempts; everything
+  // schema with too many tools recovers in two attempts; everything
   // beyond that propagates.
-  let modelFallbackApplied = false;
   let paletteReduced = false;
   while (true) {
     try {
       return await runAgentLoop(buildArgs());
     } catch (error) {
-      if (error instanceof ModelNotFoundError && !modelFallbackApplied && hooks.onModelNotFound) {
-        const replacement = await hooks.onModelNotFound(error);
-        if (replacement) {
-          modelFallbackApplied = true;
-          setModel(replacement);
-          continue;
-        }
-      }
       if (error instanceof SchemaTooLargeError && !paletteReduced && hooks.onSchemaTooLarge) {
         const trimmed = await hooks.onSchemaTooLarge(error);
         if (trimmed) {
@@ -82,7 +64,6 @@ export interface RunAgentExecutionConfig {
   onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
   detectExternalPause?: () => HumanPause | null;
-  onModelNotFound: (error: ModelNotFoundError) => Promise<LanguageModel | null> | LanguageModel | null;
   logLabel: string;
   memberLabel: string;
 }
@@ -90,12 +71,11 @@ export interface RunAgentExecutionConfig {
 export async function runAgentWithRetry(
   config: RunAgentExecutionConfig,
 ): Promise<AgentLoopResult> {
-  let currentModel = config.model;
   let currentTools = config.tools;
 
   return runAgentLoopWithRetry(
     () => ({
-      model: currentModel,
+      model: config.model,
       system: config.system,
       messages: config.messages,
       tools: currentTools,
@@ -110,13 +90,9 @@ export async function runAgentWithRetry(
       detectExternalPause: config.detectExternalPause,
     }),
     (next) => {
-      currentModel = next;
-    },
-    (next) => {
       currentTools = next;
     },
     {
-      onModelNotFound: config.onModelNotFound,
       onSchemaTooLarge: () => {
         const dropped = dropHeaviestAttachedMcp(currentTools, config.attachedMcpServers);
         if (!dropped) return null;
@@ -135,9 +111,7 @@ export async function runAgentWithRetry(
 // they propagate normally if the caller chooses not to handle them.
 //
 // ModelNotFoundError: the configured model id 404'd at the provider.
-// Usually means the admin saved an aspirational id (e.g. before the
-// model was actually released) — the caller can swap to the
-// provider's SAFE_FALLBACK_MODELS entry and retry once.
+// Usually means the model id is wrong or not enabled on that provider.
 export class ModelNotFoundError extends Error {
   constructor(
     readonly modelId: string,
