@@ -45,8 +45,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@chroma-core/default-embed": "*",
-    "chromadb": "^3.0.0",
     "better-sqlite3": "^12.9.0"
   }
 }

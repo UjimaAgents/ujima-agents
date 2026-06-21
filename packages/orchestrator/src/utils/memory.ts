@@ -20,7 +20,10 @@ type MemoryRepo = Pick<ApiRepository, 'listMemories' | 'listOrgMemories' | 'save
 };
 
 export async function writeMemoryEntry(repo: MemoryRepo, entry: MemoryEntry): Promise<MemoryEntry> {
-  return repo.upsertMemoryEntry ? await repo.upsertMemoryEntry(entry) : await repo.saveMemory(entry);
+  if (!repo.upsertMemoryEntry) {
+    throw new Error('memory is not available');
+  }
+  return await repo.upsertMemoryEntry(entry);
 }
 
 export async function recallMemoryEntries(repo: MemoryRepo, input: {
@@ -32,43 +35,10 @@ export async function recallMemoryEntries(repo: MemoryRepo, input: {
   limit?: number;
   touch?: boolean;
 }): Promise<MemoryEntry[]> {
-  if (repo.recallMemoryEntries) {
-    return await repo.recallMemoryEntries(input);
+  if (!repo.recallMemoryEntries) {
+    throw new Error('memory is not available');
   }
-
-  const nowIso = new Date().toISOString();
-  const entries = repo
-    .listOrgMemories(input.organizationId)
-    .filter((entry) =>
-      input.memberId === undefined
-        ? true
-        : entry.memberId === undefined || entry.memberId === input.memberId,
-    )
-    .filter((entry) => !entry.expiresAt || entry.expiresAt > nowIso);
-
-  const { kind, keyPrefix, query, limit } = input;
-  const filtered = entries
-    .filter((entry) => !kind || entry.kind === kind)
-    .filter((entry) => !keyPrefix || entry.key.startsWith(keyPrefix))
-    .filter((entry) => !query || entry.content.includes(query))
-    .sort(
-      (a, b) =>
-        Date.parse(b.lastRecalledAt ?? b.createdAt) - Date.parse(a.lastRecalledAt ?? a.createdAt),
-    )
-    .slice(0, limit ?? 20);
-
-  if (input.touch) {
-    for (const entry of filtered) {
-      const touched = { ...entry, lastRecalledAt: nowIso };
-      if (repo.upsertMemoryEntry) {
-        await repo.upsertMemoryEntry(touched);
-      } else {
-        await repo.saveMemory(touched);
-      }
-    }
-  }
-
-  return filtered;
+  return await repo.recallMemoryEntries(input);
 }
 
 export async function forgetMemoryEntry(
@@ -78,19 +48,8 @@ export async function forgetMemoryEntry(
   key: string,
   scope: 'self' | 'org',
 ): Promise<boolean> {
-  if (repo.deleteMemoryEntry) {
-    return await repo.deleteMemoryEntry(organizationId, scope === 'org' ? null : memberId, key);
+  if (!repo.deleteMemoryEntry) {
+    throw new Error('memory is not available');
   }
-
-  const entries = scope === 'org'
-    ? repo.listOrgMemories(organizationId)
-    : repo.listMemories(organizationId, memberId);
-  let removed = false;
-  for (const entry of entries) {
-    if (entry.key === key && (scope === 'org' ? entry.memberId === undefined : entry.memberId === memberId)) {
-      await repo.deleteMemory(organizationId, entry.id);
-      removed = true;
-    }
-  }
-  return removed;
+  return await repo.deleteMemoryEntry(organizationId, scope === 'org' ? null : memberId, key);
 }

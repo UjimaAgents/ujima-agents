@@ -10,7 +10,7 @@ const options = {
   platform: 'node',
   target: 'node20',
   format: 'cjs',
-  external: ['vscode', 'better-sqlite3', 'onnxruntime-node', '@chroma-core/default-embed', 'chromadb'],
+  external: ['vscode', 'better-sqlite3', 'onnxruntime-node'],
   sourcemap: !production,
   minify: production,
   logLevel: 'info',

@@ -59,13 +59,31 @@ import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
  * memory tools don't see the guidance, keeping the prompt clean.
  */
 export const MEMORY_GUIDANCE: readonly string[] = Object.freeze([
-  'Persistent memory (memory.write / memory.recall):',
-  '- Write declarative facts about the user, the team, or this workspace that will still be true next week. Examples: "User prefers concise replies", "Deploy region is us-west-2", "PaidHR engineering owns auth + payroll".',
-  '- Do NOT write ephemeral state: PR numbers, issue numbers, commit SHAs, "phase N done", "Phoebe is currently writing the BRD", today\'s date. That belongs in channel messages, not memory.',
-  '- Do NOT write instructions to yourself ("always respond concisely"); write the fact ("user prefers concise responses") and let the agent decide what to do.',
-  '- One key, one value. Reuse keys: `memory.write({ key: "user.tone-preference", value: "..." })` overwrites the old value. Don\'t hoard versioned keys.',
-  '- TTL: pass `expires_in_days` for facts that have a natural decay (current quarter, ongoing project). Omit it for stable facts (preferences, identity).',
-  '- If you\'re unsure whether a fact belongs in memory, it probably doesn\'t. Memory is small and hot; the message log is large and searchable.',
+  '## Persistent Memory — Your Cross-Session Brain (Active Tool)',
+  '',
+  'Memory is how you get smarter over time. Every fact you write makes',
+  'every future wake more informed, less repetitive, and more effective.',
+  'Treat memory as a first-class tool — use it actively, not as an afterthought.',
+  '',
+  '### When to use memory.recall',
+  '- **Before asking clarifying questions.** If the user may have already told you something, call `memory.recall` with a query first. The recall engine uses fuzzy search (Fuse.js) — it handles typos, partial words, and approximate matches ("prefer concice" will find "prefers concise responses").',
+  '- **When starting a new task.** Recall any relevant context before you begin: user preferences, project patterns, team conventions.',
+  '- **When unsure.** A quick recall is cheaper than asking the user a question they\'ve already answered.',
+  '',
+  '### What to write with memory.write',
+  '- **Declarative facts** about the user, the team, or this workspace that will still be true next week. Examples: "User prefers concise replies", "Deploy region is us-west-2", "PaidHR engineering owns auth + payroll".',
+  '- **User preferences and patterns** you observe. If the user corrects your response style, write that preference immediately.',
+  '- **Identity and role** information: who owns what, what the team uses, what the conventions are.',
+  '',
+  '### What NOT to write',
+  '- **Ephemeral state**: PR numbers, issue numbers, commit SHAs, "phase N done", today\'s date, status updates. That belongs in channel messages.',
+  '- **Instructions to yourself** ("always respond concisely"). Write the fact ("user prefers concise responses") and let the agent decide.',
+  '',
+  '### Key rules',
+  '- **One key, one value.** Reuse keys: `memory.write({ key: "user.tone-preference", value: "..." })` overwrites the old value. Don\'t hoard versioned keys.',
+  '- **TTL**: pass `expires_in_days` for facts that have a natural decay (current quarter, ongoing project). Omit it for stable facts (preferences, identity).',
+  '- **Be aggressive about writing.** If you\'re unsure whether a fact belongs in memory, err on writing it. The fuzzy recall engine will handle noisy results; an empty memory table is always worse than a full one.',
+  '- **Memory recall is fuzzy.** You can search with natural language, partial words, or even misspellings. The engine will rank results by relevance.',
 ]);
 
 /**

@@ -749,7 +749,7 @@ export class Repository {
     runId: string,
   ): InteractiveQuestion[] => readInteractiveQuestionsByRunId(this.db, organizationId, runId);
 
-  // Bet 5 — memory_entries KV
+  // Bet 5 — memory_entries KV (SQLite)
   upsertMemoryEntry = (entry: MemoryEntry): Promise<MemoryEntry> =>
     writeMemoryEntry(this.db, entry);
   recallMemoryEntries = (input: {
