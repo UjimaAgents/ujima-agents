@@ -64,7 +64,23 @@ interface ConversationMessageMetadata {
   goalMode?: boolean;
   scheduleMode?: boolean;
   reasoningEffort?: ReasoningEffort;
-  delegate?: { parentRunId?: string; kind?: DelegateKind };
+  delegate?: {
+    id?: string;
+    parentRunId?: string;
+    kind?: DelegateKind;
+    index?: number;
+    status?:
+      | 'queued'
+      | 'running'
+      | 'dispatched'
+      | 'completed'
+      | 'no_reply'
+      | 'timed_out'
+      | 'delegate_failed'
+      | 'waiting_for_approval'
+      | 'waiting_for_input'
+      | 'cancelled';
+  };
 }
 
 export type WakePolicy = 'default' | 'never';

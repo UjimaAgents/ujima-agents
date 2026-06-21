@@ -1,35 +1,9 @@
-/**
- * Tools that terminate the run loop. When any of these fired inside
- * a step, RunService must NOT publish the final assistant `text` as a
- * channel message — either the tool already published a visible reply
- * (`message`, `channel.post`, `channel.reply`, `channel.handoff`)
- * or the agent explicitly chose silence
- * (`channel.pass`).
- */
-export const RUN_TERMINATING_TOOL_NAMES = new Set([
-  'message',
-  'channel.reply',
-  'channel.post',
-  'channel.handoff',
-  'channel.ack',
-  'channel.pass',
-]);
+import {
+  RUN_TERMINATING_TOOL_NAMES,
+  normalizeToDottedToolName,
+} from '@ujima/agent-core';
 
-/**
- * Normalize a tool name to its canonical dotted form.
- *
- * `toModelToolName` replaces dots with underscores so the model sees
- * `channel_reply` instead of `channel.reply`. When we read tool names
- * back from model output (toolCalls, toolResults, run steps), we must
- * normalize them back to dotted form before comparing against
- * {@link RUN_TERMINATING_TOOL_NAMES} and {@link TERMINATOR_PRECEDENCE}.
- *
- * This is intentionally simple — `_` → `.` — because all terminating
- * tools use dots and none use native underscores.
- */
-export function normalizeToDottedToolName(name: string): string {
-  return name.replace(/_/g, '.');
-}
+export { RUN_TERMINATING_TOOL_NAMES, normalizeToDottedToolName } from '@ujima/agent-core';
 
 export function isDelegateMessage(message: { metadata?: unknown } | null | undefined): boolean {
   return !!(message?.metadata as { delegate?: unknown } | undefined)?.delegate;

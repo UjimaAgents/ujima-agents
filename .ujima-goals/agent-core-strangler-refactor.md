@@ -1,6 +1,6 @@
 # Agent Core Strangler Refactor
 
-**Status:** Planning
+**Status:** Implementing
 **Created:** 2026-06-21
 **Owner:** Carter Jordan
 
@@ -35,7 +35,7 @@ No DB migration in v1. Existing `runs`, `messages`, `run_steps`, and `MessageMet
 1. **Golden tests for agent-loop boundary** — add focused tests mocking the AI SDK, verifying orchestrator handles each event type correctly (normal reply, tool call, approval pause/resume, input pause/resume, cancel, delegate worker, delegate explorer)
 
 ### Phase 1: Create agent-core
-2. **Create `packages/agent-core`** — add package.json, tsconfig, exports, and pure types (`AgentRunInput`, `AgentRunEvent`, `ModelGateway`, `ToolGateway`, `TranscriptItem`, `AgentMessageDraft`, `RunPolicy`). No runtime behavior yet.
+2. **Create `packages/agent-core`** — add package.json, tsconfig, exports, and only the shared runtime surface currently used by orchestrator/runtime.
 
 ### Phase 2: Move Core Logic
 3. **Move Transcript + Prompt Assembly** — durable chronological replay logic into `agent-core/prompt`. Preserve current ordering: messages + run steps sorted by time/id, context at tail. Compaction explicit. Prompt-visible collections deterministic.
@@ -84,3 +84,12 @@ No DB migration in v1. Existing `runs`, `messages`, `run_steps`, and `MessageMet
 - Prompt replay remains chronological and cache-stable
 - Delegate worker/explorer enforcement is runtime policy, not prompt text
 - Existing UI/API behavior and release smoke tests still pass
+
+## Progress
+
+### 2026-06-21
+- ✅ **Phase 1 complete:** `packages/agent-core` created with package.json, tsconfig, and the active shared loop surface. Unused gateway/transcript/run-policy skeletons were removed to keep the cut small.
+- ✅ **Loop consolidation cut complete:** moved the active AI SDK run loop into `@ujima/agent-core`; `packages/orchestrator/src/services/agent-loop.ts` is now a retry/compatibility wrapper.
+- ✅ **Runtime duplicate reduced:** `packages/agent-runtime/src/ai-sdk-loop.ts` now delegates model stepping to `@ujima/agent-core` and keeps only its MCP/permission/audit host wrapper.
+- ✅ **Interrupt regression fixed:** final-text steps now peek for pending interrupts before stopping, buffer the interrupt, and inject it through `prepareStep` at the next available model step instead of completing and waking a successor run.
+- ✅ **Verification added:** `packages/agent-core/src/loop.test.ts` covers next-step interrupt injection; existing orchestrator loop tests cover compatibility helpers.

@@ -436,6 +436,7 @@ export class GoalSystemService {
         organizationId,
         goal,
         task,
+        senderId: sender,
         body,
       });
       this.lastNudgedAt.set(task.id, now);

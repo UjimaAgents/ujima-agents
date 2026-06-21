@@ -386,25 +386,44 @@ function runIsWaitingOnHuman(status: string | undefined): status is 'waiting_for
   return status === 'waiting_for_approval' || status === 'waiting_for_input';
 }
 
+type DelegateMetadata = {
+  id?: string;
+  parentRunId?: string;
+  kind?: DelegateKind;
+  index?: number;
+  status?:
+    | 'queued'
+    | 'running'
+    | 'dispatched'
+    | 'completed'
+    | 'no_reply'
+    | 'timed_out'
+    | 'delegate_failed'
+    | 'waiting_for_approval'
+    | 'waiting_for_input'
+    | 'cancelled';
+};
+
 function delegateIndex(message: { metadata?: Message['metadata'] } | null | undefined): number | undefined {
-  return message?.metadata?.delegate?.index;
+  return (message?.metadata?.delegate as DelegateMetadata | undefined)?.index;
 }
 
 function updateDelegateMessageStatus(
   repo: Pick<ApiRepository, 'updateMessage'>,
   message: Message,
-  status: NonNullable<NonNullable<Message['metadata']>['delegate']>['status'],
+  status: NonNullable<DelegateMetadata['status']>,
 ): Message {
+  const delegate = message.metadata?.delegate as DelegateMetadata | undefined;
   return repo.updateMessage({
     ...message,
     metadata: {
       ...message.metadata,
       delegate: {
-        ...message.metadata?.delegate,
+        ...delegate,
         id: message.id,
         status,
-      },
-    },
+      } as NonNullable<Message['metadata']>['delegate'],
+    } as Message['metadata'],
   });
 }
 
@@ -772,10 +791,10 @@ export async function runAgentDelegateTurn(input: {
     metadata: {
       ...delegateMessage.metadata,
       delegate: {
-        ...delegateMessage.metadata?.delegate,
+        ...(delegateMessage.metadata?.delegate as DelegateMetadata | undefined),
         id: delegateMessage.id,
-      },
-    },
+      } as NonNullable<Message['metadata']>['delegate'],
+    } as Message['metadata'],
   });
   delegateMessage = updateDelegateMessageStatus(input.repo, delegateMessage, 'running');
 
@@ -1045,10 +1064,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       metadata: {
         ...followUp.metadata,
         delegate: {
-          ...followUp.metadata?.delegate,
+          ...(followUp.metadata?.delegate as DelegateMetadata | undefined),
           id: followUp.id,
-        },
-      },
+        } as NonNullable<Message['metadata']>['delegate'],
+      } as Message['metadata'],
     });
     updateDelegateMessageStatus(context.repo, followUp, 'running');
     await wakeMember({

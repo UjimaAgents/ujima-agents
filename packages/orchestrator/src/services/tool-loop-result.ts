@@ -1,60 +1,19 @@
 import type { ToolInvocationResult } from './tool-service.js';
 import { errorMessage } from '../utils/error-message.js';
 import { ERR_PATH_ESCAPE, isPathEscapeError } from './workspace-root.js';
+import {
+  ToolApprovalRequiredError,
+  ToolInputRequiredError,
+  findToolApprovalRequiredError,
+  findToolInputRequiredError,
+} from '@ujima/agent-core';
 
-export class ToolApprovalRequiredError extends Error {
-  constructor(readonly approvalId: string) {
-    super('Tool action requires approval');
-    this.name = 'ToolApprovalRequiredError';
-  }
-}
-
-export class ToolInputRequiredError extends Error {
-  constructor(readonly questionId: string) {
-    super('Tool action requires interactive user input');
-    this.name = 'ToolInputRequiredError';
-  }
-}
-
-export function findToolApprovalRequiredError(error: unknown): ToolApprovalRequiredError | null {
-  if (error instanceof ToolApprovalRequiredError) return error;
-  if (!error || typeof error !== 'object') return null;
-
-  const record = error as Record<string, unknown>;
-  if (
-    record.name === 'ToolApprovalRequiredError' &&
-    typeof record.approvalId === 'string'
-  ) {
-    return new ToolApprovalRequiredError(record.approvalId);
-  }
-
-  for (const key of ['cause', 'error']) {
-    const nested = findToolApprovalRequiredError(record[key]);
-    if (nested) return nested;
-  }
-
-  return null;
-}
-
-export function findToolInputRequiredError(error: unknown): ToolInputRequiredError | null {
-  if (error instanceof ToolInputRequiredError) return error;
-  if (!error || typeof error !== 'object') return null;
-
-  const record = error as Record<string, unknown>;
-  if (
-    record.name === 'ToolInputRequiredError' &&
-    typeof record.questionId === 'string'
-  ) {
-    return new ToolInputRequiredError(record.questionId);
-  }
-
-  for (const key of ['cause', 'error']) {
-    const nested = findToolInputRequiredError(record[key]);
-    if (nested) return nested;
-  }
-
-  return null;
-}
+export {
+  ToolApprovalRequiredError,
+  ToolInputRequiredError,
+  findToolApprovalRequiredError,
+  findToolInputRequiredError,
+} from '@ujima/agent-core';
 
 export function toModelToolErrorOutput(error: unknown): { error: string; code?: string } {
   const approvalError = findToolApprovalRequiredError(error);

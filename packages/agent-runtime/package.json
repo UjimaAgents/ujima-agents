@@ -16,6 +16,7 @@
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {
+    "@ujima/agent-core": "workspace:*",
     "@ujima/shared": "workspace:*",
     "@ujima/context-store": "workspace:*",
     "@ujima/event-bus": "workspace:*",

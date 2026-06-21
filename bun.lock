@@ -141,10 +141,18 @@
         "typescript": "^5",
       },
     },
+    "packages/agent-core": {
+      "name": "@ujima/agent-core",
+      "version": "0.0.47",
+      "dependencies": {
+        "ai": "^6.0.168",
+      },
+    },
     "packages/agent-runtime": {
       "name": "@ujima/agent-runtime",
       "version": "0.0.47",
       "dependencies": {
+        "@ujima/agent-core": "workspace:*",
         "@ujima/context-store": "workspace:*",
         "@ujima/event-bus": "workspace:*",
         "@ujima/llm": "workspace:*",
@@ -208,7 +216,7 @@
     },
     "packages/distribution": {
       "name": "@ujima/agents",
-      "version": "0.0.47",
+      "version": "0.0.48",
       "bin": {
         "ujima": "./dist/cli.js",
       },
@@ -260,6 +268,7 @@
         "@ai-sdk/anthropic": "^3.0.71",
         "@ai-sdk/google": "^3.0.64",
         "@ai-sdk/openai": "^3.0.53",
+        "@ujima/agent-core": "workspace:*",
         "@ujima/agent-runtime": "workspace:*",
         "@ujima/context-store": "workspace:*",
         "@ujima/event-bus": "workspace:*",
@@ -844,6 +853,8 @@
     "@typescript-eslint/visitor-keys": ["@typescript-eslint/visitor-keys@8.60.1", "", { "dependencies": { "@typescript-eslint/types": "8.60.1", "eslint-visitor-keys": "^5.0.0" } }, "sha512-EbGRQg4FhrmwLodl+t3JNAnXHWVr9Vp+Zl1QBZVPY4ByfkzIT8cX3K6QWODHtkIZqqJVEWvhHSx3v5PDHsaQag=="],
 
     "@typespec/ts-http-runtime": ["@typespec/ts-http-runtime@0.3.5", "", { "dependencies": { "http-proxy-agent": "^7.0.0", "https-proxy-agent": "^7.0.0", "tslib": "^2.6.2" } }, "sha512-yURCknZhvywvQItHMMmFSo+fq5arCUIyz/CVk7jD89MSai7dkaX8ufjCWp3NttLojoTVbcE72ri+be/TnEbMHw=="],
+
+    "@ujima/agent-core": ["@ujima/agent-core@workspace:packages/agent-core"],
 
     "@ujima/agent-runtime": ["@ujima/agent-runtime@workspace:packages/agent-runtime"],
 
