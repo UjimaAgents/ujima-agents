@@ -281,12 +281,12 @@ export class AiService {
         outputTokens: memResult.usage?.outputTokens,
         totalTokens: memResult.usage?.totalTokens,
       });
-      memDebugLogger.flush().catch();
+      memDebugLogger.flush().catch(() => undefined);
       return memResult;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       memDebugLogger.setError(message);
-      memDebugLogger.flush().catch();
+      memDebugLogger.flush().catch(() => undefined);
       throw err;
     }
   }
@@ -582,8 +582,6 @@ export class AiService {
     // routinely exceed the per-turn cap when pasted inline or written via
     // tools. 4096 tokens across all wakes gives the model enough headroom.
     const turnMaxOutputTokens = 4096;
-    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
-    const provider = team.getProvider(providerName);
     const debugLogger = new AgentLoopLogger();
     debugLogger.setWorkspaceRoot(team.workspace.root);
     debugLogger.setContext({
@@ -637,12 +635,12 @@ export class AiService {
         outputTokens: result.usage?.outputTokens,
         totalTokens: result.usage?.totalTokens,
       });
-      debugLogger.flush().catch();
+      debugLogger.flush().catch(() => undefined);
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       debugLogger.setError(message);
-      debugLogger.flush().catch();
+      debugLogger.flush().catch(() => undefined);
       throw err;
     }
   }
