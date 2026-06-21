@@ -1,37 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MemoryEntry } from '@ujima/shared';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { MemoryEntrySchema } from '@ujima/shared';
 import { openDatabase } from '@ujima/context-store';
 import { Repository } from './index.js';
-
-const chromaMemory = vi.hoisted(() => new Map<string, MemoryEntry>());
-
-vi.mock('./chroma.js', () => ({
-  upsertChromaMemory: vi.fn(async (entry: MemoryEntry) => {
-    chromaMemory.set(entry.id, entry);
-    return true;
-  }),
-  deleteChromaMemory: vi.fn(async (organizationId: string, memberId: string | null, key: string) => {
-    for (const [id, entry] of chromaMemory) {
-      if (
-        entry.organizationId === organizationId &&
-        entry.key === key &&
-        (entry.memberId ?? null) === memberId
-      ) {
-        chromaMemory.delete(id);
-      }
-    }
-    return true;
-  }),
-  getChromaMemoriesByMetadata: vi.fn(async (organizationId: string, memberId: string | undefined, limit: number) =>
-    Array.from(chromaMemory.values())
-      .filter((entry) => entry.organizationId === organizationId && (!memberId || entry.memberId === memberId))
-      .slice(0, limit)
-      .map((entry) => entry.id),
-  ),
-  queryChromaMemories: vi.fn(async () => []),
-}));
 
 describe('memory entries repository', () => {
   let repo: Repository;
@@ -40,7 +11,6 @@ describe('memory entries repository', () => {
   const nowIso = new Date().toISOString();
 
   beforeEach(() => {
-    chromaMemory.clear();
     repo = new Repository(openDatabase({ dbPath: ':memory:' }));
   });
 
@@ -66,6 +36,36 @@ describe('memory entries repository', () => {
     expect(stored).not.toBeNull();
     expect(stored?.content).toBe('Quinn knows python.');
     expect(stored?.key).toBe('quinn.lang');
+  });
+
+  it('recalls memory entries by query', async () => {
+    await repo.upsertMemoryEntry(baseMemory({ id: 'm1', key: 'lang.python', content: 'Carter knows python and bun.' }));
+    await repo.upsertMemoryEntry(baseMemory({ id: 'm2', key: 'lang.ruby', content: 'Carter knows ruby too.' }));
+
+    const recalled = await repo.recallMemoryEntries({
+      organizationId,
+      memberId,
+      query: 'python',
+      limit: 5,
+    });
+
+    expect(recalled.map((entry) => entry.id)).toEqual(['m1']);
+  });
+
+  it('recalls with fuzzy matching for typos', async () => {
+    await repo.upsertMemoryEntry(baseMemory({ id: 'm1', key: 'deployment.config', content: 'Deploy config is in us-west-2.' }));
+    await repo.upsertMemoryEntry(baseMemory({ id: 'm2', key: 'user.preferences', content: 'User prefers concise replies.' }));
+
+    // "deploy config" should fuzzy-match "deployment.config"
+    const fuzzy = await repo.recallMemoryEntries({
+      organizationId,
+      memberId,
+      query: 'deploy config',
+      limit: 5,
+    });
+
+    expect(fuzzy.length).toBeGreaterThanOrEqual(1);
+    expect(fuzzy[0]?.id).toBe('m1');
   });
 
   it('deletes a memory entry', async () => {

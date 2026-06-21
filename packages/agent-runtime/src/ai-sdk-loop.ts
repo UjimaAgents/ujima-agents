@@ -1,11 +1,11 @@
 import {
   stepCountIs,
-  streamText,
   tool,
   type LanguageModel,
   type ModelMessage,
   type ToolSet,
 } from 'ai';
+import { runAgentLoop } from '@ujima/agent-core';
 import { z } from 'zod';
 import type { AgentDef, UjimaEvent } from '@ujima/shared';
 import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
@@ -16,9 +16,8 @@ import { matchesEscalation } from './escalation';
 import type { GateDecision, GateResolver } from './types';
 
 /**
- * AI-SDK-based agent turn loop. Structural mirror of {@link runToolLoop} but
- * built on top of `streamText({ tools, stopWhen })`. The per-tool `execute`
- * callback preserves the legacy permission → gate → MCP → audit sequence.
+ * Agent-runtime host wrapper. Tool execution stays local here, while the model
+ * loop itself is delegated to `@ujima/agent-core`.
  *
  * This is engine = 'ai-sdk' (the default post-E0). Engine = 'legacy' keeps
  * the hand-rolled `runToolLoop` path alive for two clean releases.
@@ -470,7 +469,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
   stream('agent_turn_started', { iteration: 1 });
 
   try {
-    const result = streamText({
+    const result = await runAgentLoop({
       model,
       system: systemPrompt,
       messages,
@@ -480,27 +479,16 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
       onStepFinish: () => {
         iterations++;
       },
+      onChunk: (chunk) => {
+        if (chunk.kind === 'text') stream('agent_thought_delta', { text: chunk.delta });
+      },
       ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
       temperature,
     });
 
-    // Drain the full stream so tool `execute` callbacks run AND the finish
-    // part fires (which carries usage). textStream closes on text-end and
-    // would miss the finish frame.
-    for await (const part of result.fullStream) {
-      if (part.type === 'error') {
-        throw part.error;
-      }
-      if (part.type === 'text-delta') {
-        stream('agent_thought_delta', { text: part.text });
-      }
-    }
-
-    const [finalText, usage, finishReason] = await Promise.all([
-      result.text,
-      result.usage,
-      result.finishReason,
-    ]);
+    const finalText = result.text;
+    const usage = result.usage;
+    const finishReason = result.finishReason ?? 'stop';
 
     const tokensUsed = (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
     if (tokensUsed > 0) {

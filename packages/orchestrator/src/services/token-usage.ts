@@ -1,32 +1,11 @@
 import type { Message } from '@ujima/shared';
+import type { NormalizedTokenUsage } from '@ujima/agent-core';
 
-export interface NormalizedTokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
-
-export function normalizeTokenUsage(usage: unknown): NormalizedTokenUsage {
-  const value = usage as { inputTokens?: unknown; outputTokens?: unknown; totalTokens?: unknown } | undefined;
-  const inputTokens = tokenTotal(value?.inputTokens);
-  const outputTokens = tokenTotal(value?.outputTokens);
-  const totalTokens = tokenTotal(value?.totalTokens) || inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
-}
+export type { NormalizedTokenUsage } from '@ujima/agent-core';
+export { normalizeTokenUsage, normalizeStepTokenUsage } from '@ujima/agent-core';
 
 export function hasTokenUsage(usage: NormalizedTokenUsage): boolean {
   return usage.inputTokens > 0 || usage.outputTokens > 0;
-}
-
-export function normalizeStepTokenUsage(steps: readonly { usage?: unknown }[]): NormalizedTokenUsage {
-  let inputTokens = 0;
-  let outputTokens = 0;
-  for (const step of steps) {
-    const usage = normalizeTokenUsage(step.usage);
-    if (usage.inputTokens > 0) inputTokens = usage.inputTokens;
-    outputTokens += usage.outputTokens;
-  }
-  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
 }
 
 /**
@@ -47,14 +26,4 @@ export function persistMessageTokens(
     outputTokens: usage.outputTokens,
     editedAt: new Date().toISOString(),
   });
-}
-
-function tokenTotal(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
-  if (value && typeof value === 'object') {
-    return tokenTotal((value as { total?: unknown }).total);
-  }
-  return 0;
 }

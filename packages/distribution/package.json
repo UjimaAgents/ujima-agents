@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.0.46",
+  "version": "0.0.48",
   "description": "Framework for building Slack-like teams of AI agents — CLI, API, and web UI.",
   "readme": "README.md",
   "keywords": [
@@ -45,8 +45,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@chroma-core/default-embed": "*",
-    "chromadb": "^3.0.0",
     "better-sqlite3": "^12.9.0"
   }
 }

@@ -8,15 +8,17 @@ const DelegateKindSchema = z.enum(DELEGATE_KINDS);
 const AgentDelegateSchema = z.object({
   kind: DelegateKindSchema.default('worker').describe('worker: edit/write tasks. explorer: read-only investigation.'),
   action: z.enum(DELEGATE_ACTIONS).default('spawn').describe(
-    'spawn: fire delegates and return ids immediately. status: check one by id. wait: block for results. stop: cancel. read: pull thread messages. send: follow-up DM.',
+    'spawn: run delegate tasks and wait for child results. status: check one by id. wait: block for results. stop: cancel. read: pull thread messages. send: follow-up DM.',
   ),
-  to: z.string().min(1).optional().describe('Target agent name or id (backward compat + single-spawn).'),
+  to: z.string().min(1).optional().describe('Target agent name or id. When omitted or no agent matches, a temporary agent is created on-the-fly with a name derived from the `name` field or the `message`.'),
+  name: z.string().min(1).max(60).optional().describe('Name for a temporary (ephemeral) delegate agent. Used when `to` does not match an existing agent. Auto-generated from the first 60 chars of `message` if omitted.'),
   message: z.string().min(1).optional().describe('Task message (spawn / send).'),
   delegates: z.array(z.object({
-    to: z.string().min(1).describe('Agent name or id.'),
+    to: z.string().min(1).optional().describe('Target agent name or id. When omitted or no agent matches, a temporary agent is created.'),
+    name: z.string().min(1).max(60).optional().describe('Name for the temp agent. Auto-generated from message if omitted.'),
     message: z.string().min(1).describe('Task message.'),
     kind: DelegateKindSchema.optional().describe('worker: edit/write tasks. explorer: read-only investigation.'),
-  })).optional().describe('Multiple delegates to spawn at once.'),
+  })).optional().describe('Multiple delegate tasks. Each entry returns its own delegate id and result. Same-agent tasks run serially.'),
   delegate_id: z.string().optional().describe('Delegate message id (status / wait / stop / read / send).'),
   delegate_ids: z.array(z.string()).optional().describe('Multiple delegate ids (wait).'),
   timeout_ms: z.number().positive().optional().describe('Max wait time in ms (default 120s).'),
@@ -24,10 +26,10 @@ const AgentDelegateSchema = z.object({
 
 type AgentDelegateArgs = z.infer<typeof AgentDelegateSchema>;
 
-function normalizeSpawnArgs(args: AgentDelegateArgs): { to: string; message: string; kind?: DelegateKind }[] {
+function normalizeSpawnArgs(args: AgentDelegateArgs): { to?: string; message: string; kind?: DelegateKind; name?: string }[] {
   if (args.delegates && args.delegates.length > 0) return args.delegates;
-  if (args.to && args.message) return [{ to: args.to, message: args.message, kind: args.kind }];
-  throw new Error('spawn action requires either (to + message) or a delegates array.');
+  if (args.message) return [{ to: args.to, message: args.message, kind: args.kind, name: args.name }];
+  throw new Error('spawn action requires a message (and optionally a target agent name).');
 }
 
 function requireDelegateId(args: AgentDelegateArgs): string {
@@ -38,6 +40,7 @@ function requireDelegateId(args: AgentDelegateArgs): string {
 function summarizeDelegateResult(result: AgentDelegateResult) {
   return {
     delegate_id: result.message_id,
+    delegate_index: result.delegate_index,
     agent: result.agent,
     agent_id: result.agent_id,
     thread_id: result.thread_id,
@@ -48,26 +51,51 @@ function summarizeDelegateResult(result: AgentDelegateResult) {
   };
 }
 
+function summarizeBatchStatus(results: AgentDelegateResult[]): string {
+  if (results.every((result) => result.status === 'completed')) return 'completed';
+  if (results.some((result) => result.status === 'waiting_for_approval' || result.status === 'waiting_for_input')) {
+    return 'waiting';
+  }
+  if (results.some((result) => result.status === 'delegate_failed')) return 'delegate_failed';
+  if (results.some((result) => result.status === 'timed_out')) return 'timed_out';
+  return 'partial';
+}
+
+function updateParentRunStep(ctx: ToolExecutionContext, step: string, summary: string): void {
+  const run = ctx.repo.getRun(ctx.invocation.organizationId, ctx.invocation.runId);
+  if (!run) return;
+  ctx.repo.saveRun({ ...run, step, summary });
+}
+
 async function executeDelegate(ctx: ToolExecutionContext, args: AgentDelegateArgs): Promise<unknown> {
   const orgId = ctx.invocation.organizationId;
 
   switch (args.action) {
     case 'spawn': {
-      const results = await Promise.all(
-        normalizeSpawnArgs(args).map((task) =>
-          ctx.delegateAgentTurn({
-            organizationId: orgId,
-            fromMemberId: ctx.invocation.memberId,
-            to: task.to,
-            message: task.message,
-            kind: task.kind ?? args.kind,
-            runId: ctx.invocation.runId,
-            mode: 'non_blocking',
-          }),
-        ),
-      );
+      const tasks = normalizeSpawnArgs(args);
+      updateParentRunStep(ctx, 'delegate_wait', `Delegated ${tasks.length} task${tasks.length === 1 ? '' : 's'}; waiting for results`);
+      const results: AgentDelegateResult[] = [];
+      for (const [index, task] of tasks.entries()) {
+        results.push(await ctx.delegateAgentTurn({
+          organizationId: orgId,
+          fromMemberId: ctx.invocation.memberId,
+          to: task.to,
+          name: task.name,
+          message: task.message,
+          kind: task.kind ?? args.kind,
+          index,
+          runId: ctx.invocation.runId,
+          mode: 'blocking',
+          timeoutMs: args.timeout_ms,
+        }));
+      }
+      updateParentRunStep(ctx, 'running', `Delegate results received (${results.length})`);
       const details = results.map(summarizeDelegateResult);
-      return { delegate_ids: details.map((detail) => detail.delegate_id), details };
+      return {
+        status: summarizeBatchStatus(results),
+        delegate_ids: details.map((detail) => detail.delegate_id),
+        details,
+      };
     }
 
     case 'status':

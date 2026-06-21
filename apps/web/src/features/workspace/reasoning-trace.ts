@@ -711,6 +711,12 @@ function deriveToolLine(
     detail,
   });
 
+  if (toolName === "agent.delegate") {
+    const args = callBody?.toolCall?.args ?? {};
+    const delegates = Array.isArray(args.delegates) ? args.delegates.length : 1;
+    return simpleToolTitle(`delegated ${delegates} task${delegates === 1 ? "" : "s"}`);
+  }
+
   if (toolName === "filesystem") {
     return parsed.action?.toLowerCase() === "write"
       ? simpleToolTitle("patch")
@@ -1123,6 +1129,23 @@ function formatStructuredToolDetail(
         const rec = item && typeof item === "object" ? item as Record<string, unknown> : {};
         return `- ${cleanVal(rec.name ?? "Schedule")} (${cleanVal(rec.cronExpression ?? "")})`;
       }).join("\n")}`);
+    }
+  } else if (name === "agent.delegate") {
+    const details = Array.isArray(resultRecord.details) ? resultRecord.details : [];
+    if (details.length > 0) {
+      parts.push(`Delegated ${details.length} task${details.length === 1 ? "" : "s"}`);
+      for (const [index, detail] of details.entries()) {
+        const rec = detail && typeof detail === "object" ? detail as Record<string, unknown> : {};
+        const label = rec.delegate_index ?? index;
+        const agent = rec.agent ? ` to ${cleanVal(rec.agent)}` : "";
+        const status = rec.status ? ` - ${cleanVal(rec.status)}` : "";
+        const reply = rec.reply_content ? `\n  ${cleanVal(rec.reply_content)}` : "";
+        const thread = rec.thread_id ? `\n  Thread: ${cleanVal(rec.thread_id)}` : "";
+        parts.push(`#${label}${agent}${status}${reply}${thread}`);
+      }
+    } else {
+      const delegates = Array.isArray(nestedInput.delegates) ? nestedInput.delegates.length : 1;
+      parts.push(`Delegated ${delegates} task${delegates === 1 ? "" : "s"}`);
     }
   } else if (name.includes("channel") || name.includes("slack") || name.includes("message")) {
     const message = nestedInput.message ?? nestedInput.content ?? nestedInput.text ?? nestedInput.body;

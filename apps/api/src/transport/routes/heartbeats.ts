@@ -10,10 +10,7 @@ import { readSessionToken } from '../session-token.js';
 import {
   CreateScheduledJobRequestSchema,
   CreateScheduledJobResponseSchema,
-  ListScheduledJobsResponseSchema,
-  GetScheduledJobResponseSchema,
   UpdateScheduledJobRequestSchema,
-  UpdateScheduledJobResponseSchema,
   type CreateScheduledJobRequest,
   type UpdateScheduledJobRequest,
 } from '@ujima/api-schema';
@@ -66,39 +63,41 @@ export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRou
     return reply.status(201).send({ job });
   });
 
+
   api.get('/heartbeats', {
     schema: {
       description: 'List all heartbeat jobs',
       tags: ['Heartbeats'],
-      response: { 200: ListScheduledJobsResponseSchema },
     },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
     const authState = deps.auth.getAuthState(readSessionToken(req));
     if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      await reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      return;
     }
     const jobs = deps.repo
       .listScheduledJobs(authState.user.organizationId)
       .filter((job) => job.type === HEARTBEAT_TYPE);
-    return reply.status(200).send({ jobs });
+    await reply.status(200).send({ jobs });
   });
 
   api.get('/heartbeats/:id', {
     schema: {
       description: 'Get a single heartbeat job',
       tags: ['Heartbeats'],
-      response: { 200: GetScheduledJobResponseSchema },
     },
   }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const authState = deps.auth.getAuthState(readSessionToken(req));
     if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      await reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      return;
     }
     const job = deps.repo.getScheduledJob(authState.user.organizationId, req.params.id);
     if (!job || job.type !== HEARTBEAT_TYPE) {
-      return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Heartbeat job not found' });
+      await reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Heartbeat job not found' });
+      return;
     }
-    return reply.status(200).send({ job });
+    await reply.status(200).send({ job });
   });
 
   api.patch('/heartbeats/:id', {
@@ -106,16 +105,17 @@ export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRou
       description: 'Update a heartbeat job',
       tags: ['Heartbeats'],
       body: UpdateScheduledJobRequestSchema,
-      response: { 200: UpdateScheduledJobResponseSchema },
     },
   }, async (req: FastifyRequest<{ Params: { id: string }; Body: UpdateScheduledJobRequest }>, reply: FastifyReply) => {
     const authState = deps.auth.getAuthState(readSessionToken(req));
     if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      await reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      return;
     }
     const existing = deps.repo.getScheduledJob(authState.user.organizationId, req.params.id);
     if (!existing || existing.type !== HEARTBEAT_TYPE) {
-      return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Heartbeat job not found' });
+      await reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Heartbeat job not found' });
+      return;
     }
     const now = new Date();
     const nextRunAt = resolveScheduledJobNextRunAt(existing, req.body, now);
@@ -125,16 +125,18 @@ export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRou
     try {
       channelId = requireChannelId(req.body.channelId ?? existing.channelId);
     } catch (error) {
-      return reply.status(400).send({
+      await reply.status(400).send({
         code: 'ERR_BAD_REQUEST',
         message: error instanceof Error ? error.message : 'channelId is required',
       });
+      return;
     }
     if ((cronChanged || activating) && !nextRunAt) {
-      return reply.status(400).send({
+      await reply.status(400).send({
         code: 'ERR_BAD_REQUEST',
         message: 'Invalid cron expression.',
       });
+      return;
     }
     const updated = ScheduledJobSchema.parse({
       ...existing,
@@ -145,25 +147,26 @@ export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRou
       updatedAt: now.toISOString(),
     });
     deps.repo.saveScheduledJob(updated);
-    return reply.status(200).send({ job: updated });
+    await reply.status(200).send({ job: updated });
   });
 
   api.delete('/heartbeats/:id', {
     schema: {
       description: 'Delete a heartbeat job',
       tags: ['Heartbeats'],
-      response: { 204: { type: 'null' } },
     },
   }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const authState = deps.auth.getAuthState(readSessionToken(req));
     if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      await reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
+      return;
     }
     const existing = deps.repo.getScheduledJob(authState.user.organizationId, req.params.id);
     if (!existing || existing.type !== HEARTBEAT_TYPE) {
-      return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Heartbeat job not found' });
+      await reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Heartbeat job not found' });
+      return;
     }
     deps.repo.deleteScheduledJob(authState.user.organizationId, req.params.id);
-    return reply.status(204).send();
+    await reply.status(204).send();
   });
 }

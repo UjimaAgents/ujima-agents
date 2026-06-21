@@ -7,11 +7,19 @@ import type { DelegateKind } from '../utils/delegate-turn.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
 
 export interface AgentDelegateResult {
-  status: 'completed' | 'no_reply' | 'timed_out' | 'delegate_failed' | 'dispatched';
+  status:
+    | 'completed'
+    | 'no_reply'
+    | 'timed_out'
+    | 'delegate_failed'
+    | 'dispatched'
+    | 'waiting_for_approval'
+    | 'waiting_for_input';
   agent: string;
   agent_id: string;
   thread_id: string;
   message_id: string;
+  delegate_index?: number;
   reply_id?: string;
   reply_content?: string;
   run_status?: string;
@@ -30,11 +38,15 @@ export interface DelegateHandlers {
   delegateAgentTurn: (input: {
     organizationId: string;
     fromMemberId: string;
-    to: string;
+    to?: string;
+    name?: string;
     message: string;
     kind?: DelegateKind;
+    index?: number;
     runId: string;
     mode?: 'blocking' | 'non_blocking';
+    timeoutMs?: number;
+    pollIntervalMs?: number;
   }) => Promise<AgentDelegateResult>;
   getDelegateStatus: (organizationId: string, delegateId: string) => Promise<AgentDelegateResult>;
   waitForDelegates: (

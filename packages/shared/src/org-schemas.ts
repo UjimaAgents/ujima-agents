@@ -265,7 +265,22 @@ export const MessageMetadataSchema = z.object({
   scheduleMode: z.boolean().optional(),
   reasoningEffort: ReasoningEffortSchema.optional(),
   delegate: z.object({
+    id: IdSchema.optional(),
     parentRunId: IdSchema.optional(),
+    kind: z.enum(['worker', 'explorer']).optional(),
+    index: z.number().int().nonnegative().optional(),
+    status: z.enum([
+      'queued',
+      'running',
+      'dispatched',
+      'completed',
+      'no_reply',
+      'timed_out',
+      'delegate_failed',
+      'waiting_for_approval',
+      'waiting_for_input',
+      'cancelled',
+    ]).optional(),
   }).optional(),
   /**
    * Set by the `channel.handoff` tool. `complete: true` signals

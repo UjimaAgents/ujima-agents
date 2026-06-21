@@ -111,6 +111,9 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
       `    <source-message-id>${escapeBody(sourceMessage.id)}</source-message-id>`,
     );
     lines.push(
+      `    <source-message-content>${escapeBody(sourceMessage.content || '(empty)')}</source-message-content>`,
+    );
+    lines.push(
       `    <explicit-mentions>${explicitMentions.length ? escapeBody(explicitMentions.join(', ')) : 'none'}</explicit-mentions>`,
     );
     lines.push(

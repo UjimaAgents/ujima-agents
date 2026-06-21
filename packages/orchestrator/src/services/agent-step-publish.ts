@@ -5,7 +5,7 @@ import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { appendGoalTaskToolCalls } from './goal-task-card.js';
 import { appendScheduleToolCalls } from './schedule-card.js';
 import type { AgentLoopStep } from './agent-loop.js';
-import { runUsedThreadPublishingTool, stepContainsSilentTerminator } from './run-reply-guard.js';
+import { normalizeToDottedToolName, runUsedThreadPublishingTool, stepContainsSilentTerminator } from './run-reply-guard.js';
 
 export interface StepPublicationTerminatorState {
   sawTerminatingTool: boolean;
@@ -35,8 +35,16 @@ export interface PreparedAgentStepPublication {
 }
 
 export function composedStepToolCalls(prepared: PreparedAgentStepPublication): MessageToolCall[] {
+  // Dedup: when a card wrapper exists for a raw tool call (e.g. card.schedule for schedule),
+  // include only the card, not the raw tool call. The raw call's data is subsumed by the card.
+  const cardToolNames = new Set(
+    prepared.cards.map((c) => normalizeToDottedToolName(c.toolName).replace(/^card\./, '')),
+  );
+  const filteredStepCalls = prepared.stepToolCalls.filter(
+    (call) => !cardToolNames.has(normalizeToDottedToolName(call.toolName)),
+  );
   return [
-    ...prepared.stepToolCalls,
+    ...filteredStepCalls,
     ...prepared.cards,
     ...(prepared.artifact ? [prepared.artifact] : []),
   ];

@@ -267,7 +267,7 @@ export class GoalSystemService {
     organizationId: string,
     task: GoalTask,
     oldStatus: GoalTaskStatus,
-    _moverMemberId: string,
+    moverMemberId: string,
   ): void {
     if (!this.conversations) return;
     const dedupKey = `moved:${task.id}`;
@@ -284,6 +284,7 @@ export class GoalSystemService {
         organizationId,
         goal,
         task,
+        senderId: moverMemberId,
         body: `@${task.assigneeId} task "${task.title}" was moved from [${fromLabel}] → [${toLabel}]. (task_id: ${task.id})`,
         skipChannelCopy: true,
       });
@@ -354,11 +355,12 @@ export class GoalSystemService {
     organizationId: string;
     goal: Goal;
     task: GoalTask;
+    senderId: string;
     body: string;
     skipChannelCopy?: boolean;
   }): void {
     if (!this.conversations) return;
-    const { organizationId, goal, task, body } = input;
+    const { organizationId, goal, task, senderId, body } = input;
 
     // Always wake the assignee via DM. The DM participant fanout
     // already excludes the sender (alertDirectMessageParticipants
@@ -368,7 +370,7 @@ export class GoalSystemService {
     // goal channel type (DM, shared, or otherwise).
     this.conversations.sendDirectMessage({
       organizationId,
-      senderId: goal.supervisorId,
+      senderId,
       recipientId: task.assigneeId,
       content: body,
       mentions: [task.assigneeId],
@@ -384,7 +386,7 @@ export class GoalSystemService {
       if (channel && channel.memberIds.includes(task.assigneeId)) {
         this.conversations.postToChannel({
           organizationId,
-          senderId: goal.supervisorId,
+          senderId,
           channelId: goal.channelId,
           body,
           mentions: [],
@@ -434,6 +436,7 @@ export class GoalSystemService {
         organizationId,
         goal,
         task,
+        senderId: sender,
         body,
       });
       this.lastNudgedAt.set(task.id, now);

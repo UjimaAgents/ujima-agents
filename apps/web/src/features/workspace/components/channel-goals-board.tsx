@@ -7,7 +7,9 @@ import {
   GripVertical,
   KanbanSquare,
   MessageSquare,
+  Pencil,
   PlayCircle,
+  Users,
 } from "lucide-react";
 import type {
   Goal,
@@ -26,11 +28,10 @@ interface ChannelGoalsBoardProps {
   members: BootstrapResponse["members"];
 }
 
-type ColumnId = "pending" | "blocked" | "in_progress" | "completed";
+type ColumnId = "pending" | "in_progress" | "completed";
 
 const COLUMNS: {id: ColumnId; label: string}[] = [
   {id: "pending", label: goalTaskColumnLabel("pending")},
-  {id: "blocked", label: goalTaskColumnLabel("blocked")},
   {id: "in_progress", label: goalTaskColumnLabel("in_progress")},
   {id: "completed", label: goalTaskColumnLabel("completed")},
 ];
@@ -39,15 +40,14 @@ const STATUS_TO_COLUMN: Record<GoalTaskStatus, ColumnId> = {
   pending: "pending",
   in_progress: "in_progress",
   completed: "completed",
-  blocked: "blocked",
-  blocked_by_failure: "blocked",
-  failed: "blocked",
-  cancelled: "blocked",
+  blocked: "pending",
+  blocked_by_failure: "pending",
+  failed: "pending",
+  cancelled: "pending",
 };
 
 const COLUMN_TO_STATUS: Record<ColumnId, GoalTaskStatus> = {
   pending: "pending",
-  blocked: "blocked",
   in_progress: "in_progress",
   completed: "completed",
 };
@@ -189,6 +189,162 @@ function GoalSwitcherDropdown({
           </button>
         );
       })()}
+    </div>
+  );
+}
+
+// ---------- Task Card (drag + blocked indicator + edit/reassign) ----------
+
+interface TaskCardProps {
+  task: GoalTask;
+  depTask: GoalTask | null | undefined;
+  isBlocked: boolean;
+  assigneeName: string;
+  actionLoading: boolean;
+  members: BootstrapResponse["members"];
+  tasks: GoalTask[];
+  refresh: () => Promise<void>;
+  onDragStart: (taskId: string) => void;
+  onDragEnd: () => void;
+}
+
+function TaskCard({
+  task,
+  depTask,
+  isBlocked,
+  assigneeName,
+  actionLoading,
+  members,
+  refresh,
+  onDragStart,
+  onDragEnd,
+}: TaskCardProps) {
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(task.title);
+  const [editAssigneeId, setEditAssigneeId] = useState(task.assigneeId);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = useCallback(async () => {
+    if (editTitle.trim().length === 0) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/goal-tasks/${encodeURIComponent(task.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: editTitle !== task.title ? editTitle : undefined,
+          assigneeId: editAssigneeId !== task.assigneeId ? editAssigneeId : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message || "Failed to update task.");
+      }
+      setEditing(false);
+      await refresh();
+    } catch {
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }, [task, editTitle, editAssigneeId, refresh]);
+
+  return (
+    <div
+      draggable
+      onDragStart={() => onDragStart(task.id)}
+      onDragEnd={onDragEnd}
+      className={`group relative flex flex-col p-3 rounded-xl border bg-white dark:bg-zinc-900 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)] hover:shadow-[0_4px_12px_-2px rgba(0,0,0,0.08)] hover:-translate-y-[1px] transition-all duration-200 cursor-grab active:cursor-grabbing ${actionLoading ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 ${isBlocked ? "border-l-[3px] border-l-red-400 dark:border-l-red-500" : task.dependsOnTaskId && task.status !== "completed" && task.status !== "in_progress" ? "border-l-[3px] border-l-amber-400 dark:border-l-amber-500" : ""}`}
+    >
+      {/* Edit button */}
+      <button
+        type="button"
+        onClick={() => { setEditTitle(task.title); setEditAssigneeId(task.assigneeId); setEditing(true); }}
+        className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 focus:opacity-100 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-800"
+        title="Edit task"
+        aria-label="Edit task"
+      >
+        <Pencil className="h-3 w-3" />
+      </button>
+
+      {editing ? (
+        /* Inline edit form */
+        <div className="flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
+          <input
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+            autoFocus
+            placeholder="Task title"
+          />
+          <select
+            value={editAssigneeId}
+            onChange={(e) => setEditAssigneeId(e.target.value)}
+            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+          >
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+          <div className="flex gap-2 justify-end mt-1">
+            <button
+              onClick={() => setEditing(false)}
+              className="rounded-md px-2 py-1 text-[10px] font-semibold text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void handleSave()}
+              disabled={saving || editTitle.trim().length === 0}
+              className="rounded-md bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <h4 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 leading-relaxed mb-2.5">
+            {task.title}
+          </h4>
+
+          {/* Blocked indicator */}
+          {isBlocked && depTask && (
+            <div
+              className="flex items-center gap-1 mb-2 px-1.5 py-1 rounded bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300 text-[9px] font-semibold cursor-help"
+              title={`Depends on: ${depTask.title}`}
+            >
+              <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">Blocked by: {depTask.title}</span>
+            </div>
+          )}
+          {isBlocked && !depTask && (
+            <div className="flex items-center gap-1 mb-2 px-1.5 py-1 rounded bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300 text-[9px] font-semibold">
+              <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+              <span>Blocked</span>
+            </div>
+          )}
+
+          {task.status === "pending" && task.lastNudgedAt && (
+            <NudgeCountdown lastNudgedAtIso={task.lastNudgedAt} />
+          )}
+
+          <div className="flex items-center justify-between mt-auto pt-3 border-t border-zinc-100 dark:border-zinc-900/60">
+            <div className="flex items-center gap-2">
+              <Avatar name={assigneeName} size="xs" />
+              {task.handoverSummary && (
+                <div
+                  className="text-zinc-400 dark:text-zinc-500 cursor-help"
+                  title={task.handoverSummary}
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                </div>
+              )}
+            </div>
+            <GripVertical className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition-colors" />
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -472,7 +628,6 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
   const columnTasks = useMemo(() => {
     const groups: Record<ColumnId, GoalTask[]> = {
       pending: [],
-      blocked: [],
       in_progress: [],
       completed: [],
     };
@@ -618,7 +773,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
         />
       ))}
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3 min-h-0 overflow-y-auto pb-4">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3 min-h-0 overflow-y-auto pb-4">
         {COLUMNS.map((col) => {
           const tasksInCol = columnTasks[col.id];
           return (
@@ -653,40 +808,22 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
                   tasksInCol.map((task) => {
                     const assignee = memberById.get(task.assigneeId);
                     const assigneeName = assignee?.name ?? task.assigneeId;
+                    const isBlocked = task.status === 'blocked' || task.status === 'blocked_by_failure' || task.status === 'failed' || task.status === 'cancelled';
+                    const depTask = task.dependsOnTaskId ? tasks.find((t) => t.id === task.dependsOnTaskId) : null;
                     return (
-                      <div
+                      <TaskCard
                         key={task.id}
-                        draggable
-                        onDragStart={() => onDragStart(task.id)}
+                        task={task}
+                        depTask={depTask}
+                        isBlocked={isBlocked}
+                        assigneeName={assigneeName}
+                        actionLoading={actionLoading === task.id}
+                        members={members}
+                        tasks={tasks}
+                        refresh={refresh}
+                        onDragStart={onDragStart}
                         onDragEnd={onDragEnd}
-                        className={`group relative flex flex-col p-3 rounded-xl border bg-white dark:bg-zinc-900 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)] hover:shadow-[0_4px_12px_-2px_rgba(0,0,0,0.08)] hover:-translate-y-[1px] transition-all duration-200 cursor-grab active:cursor-grabbing ${actionLoading === task.id ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 ${task.dependsOnTaskId && task.status !== "completed" && task.status !== "in_progress" ? "border-l-[3px] border-l-amber-400 dark:border-l-amber-500" : ""}`}
-                      >
-                        <h4
-                          className={`text-xs font-semibold text-zinc-900 dark:text-zinc-100 leading-relaxed mb-2.5`}
-                        >
-                          {task.title}
-                        </h4>
-
-                        {task.status === 'pending' && task.lastNudgedAt && (
-                          <NudgeCountdown lastNudgedAtIso={task.lastNudgedAt} />
-                        )}
-
-                        <div className="flex items-center justify-between mt-auto pt-3 border-t border-zinc-100 dark:border-zinc-900/60">
-                          <div className="flex items-center gap-2">
-                            <Avatar name={assigneeName} size="xs" />
-                            {task.handoverSummary && (
-                              <div
-                                className="text-zinc-400 dark:text-zinc-500 cursor-help"
-                                title={task.handoverSummary}
-                              >
-                                <MessageSquare className="h-3.5 w-3.5" />
-                              </div>
-                            )}
-                          </div>
-
-                          <GripVertical className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition-colors" />
-                        </div>
-                      </div>
+                      />
                     );
                   })
                 )}

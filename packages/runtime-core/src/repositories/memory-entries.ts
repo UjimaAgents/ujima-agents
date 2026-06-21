@@ -1,12 +1,7 @@
 import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { MemoryEntrySchema, type MemoryEntry, type MemoryEntryKind } from '@ujima/shared';
 import { optionalRowString, rowString } from './common.js';
-import {
-  deleteChromaMemory,
-  getChromaMemoriesByMetadata,
-  queryChromaMemories,
-  upsertChromaMemory,
-} from './chroma.js';
+import Fuse from 'fuse.js';
 
 type Row = Record<string, unknown>;
 
@@ -67,7 +62,6 @@ function rowToMemoryEntry(row: Row): MemoryEntry {
  */
 export async function upsertMemoryEntry(db: DbHandle, entry: MemoryEntry): Promise<MemoryEntry> {
   const payload = MemoryEntrySchema.parse(entry);
-  await upsertChromaMemory(payload);
   db.prepare(
     `INSERT INTO memory_entries (
        id, organization_id, member_id, kind, key, content, metadata,
@@ -77,6 +71,7 @@ export async function upsertMemoryEntry(db: DbHandle, entry: MemoryEntry): Promi
      ON CONFLICT(organization_id, member_id, key)
      WHERE key IS NOT NULL
      DO UPDATE SET
+       id = excluded.id,
        kind = excluded.kind,
        content = excluded.content,
        metadata = excluded.metadata,
@@ -100,8 +95,7 @@ export async function upsertMemoryEntry(db: DbHandle, entry: MemoryEntry): Promi
 }
 
 /**
- * Recall memory entries for an agent. Chroma selects candidate ids;
- * SQLite stores row metadata and content. Excludes expired entries.
+ * Recall memory entries for an agent from SQLite. Excludes expired entries.
  * Touches `last_recalled_at` on read so the surface order in the next
  * wake reflects what the agent uses.
  */
@@ -119,35 +113,39 @@ export async function recallMemoryEntries(
 ): Promise<MemoryEntry[]> {
   const now = new Date().toISOString();
   const limit = input.limit ?? 20;
-
-  const matchedIds = input.query
-    ? await queryChromaMemories(
-        input.organizationId,
-        input.memberId,
-        input.query,
-        limit,
-        input.kind,
-      )
-    : await getChromaMemoriesByMetadata(input.organizationId, input.memberId, limit, input.kind);
-  const entries = matchedIds
-    .map((id) =>
-      db
-        .prepare('SELECT * FROM memory_entries WHERE id = ? AND organization_id = ?')
-        .get(id, input.organizationId) as Row | null,
-    )
-    .filter((row): row is Row => row !== null)
+  // When a query is present, skip the SQL LIKE pre-filter — it's too
+  // aggressive and drops entries that Fuse.js would match via fuzzy
+  // scoring ("amber otter" won't LIKE-match "amber-otter-812"). Instead
+  // load a generous window by recency and let Fuse.js do the ranking.
+  const fetchLimit = Math.min(Math.max(limit * 5, 50), 200);
+  const rows = db.prepare(buildRecallSql()).all(
+    ...buildRecallParams(input, now, fetchLimit),
+  ) as Row[];
+  let entries = rows
     .map(rowToMemoryEntry)
-    .filter(
-      (entry) =>
-        (!entry.expiresAt || entry.expiresAt > now) &&
-        (!input.keyPrefix || entry.key.startsWith(input.keyPrefix)),
-    )
-    .sort(
-      (left, right) =>
-        Date.parse(right.lastRecalledAt ?? right.createdAt) -
-        Date.parse(left.lastRecalledAt ?? left.createdAt),
-    )
-    .slice(0, limit);
+    .filter((entry) => !input.keyPrefix || entry.key.startsWith(input.keyPrefix));
+
+  if (input.query) {
+    const fuse = new Fuse(entries, {
+      keys: [
+        { name: 'key', weight: 2 },
+        { name: 'content', weight: 1 },
+      ],
+      threshold: 0.5,
+      includeScore: true,
+      minMatchCharLength: 2,
+      shouldSort: true,
+    });
+    entries = fuse.search(input.query).slice(0, limit).map((r) => r.item);
+  } else {
+    entries = entries
+      .sort(
+        (a, b) =>
+          Date.parse(b.lastRecalledAt ?? b.createdAt) - Date.parse(a.lastRecalledAt ?? a.createdAt),
+      )
+      .slice(0, limit);
+  }
+
   if (input.touch && entries.length > 0) {
     const stmt = db.prepare('UPDATE memory_entries SET last_recalled_at = ? WHERE id = ?');
     for (const e of entries) stmt.run(now, e.id);
@@ -175,7 +173,6 @@ export async function deleteMemoryEntry(
   memberId: string | null,
   key: string,
 ): Promise<boolean> {
-  await deleteChromaMemory(organizationId, memberId, key);
   const stored = toStoredMemberId(memberId);
   const result = db
     .prepare(
@@ -186,4 +183,38 @@ export async function deleteMemoryEntry(
     )
     .run(organizationId, stored, key);
   return (result.changes ?? 0) > 0;
+}
+
+function buildRecallSql(): string {
+  return `
+    SELECT *
+      FROM memory_entries
+     WHERE organization_id = ?
+       AND (? IS NULL OR kind = ?)
+       AND (? IS NULL OR member_id IN (?, '${ORG_SCOPE_MEMBER_SENTINEL}'))
+       AND (expires_at IS NULL OR expires_at > ?)
+     ORDER BY COALESCE(last_recalled_at, created_at) DESC
+     LIMIT ?
+  `;
+}
+
+function buildRecallParams(
+  input: {
+    organizationId: string;
+    memberId?: string;
+    kind?: MemoryEntryKind;
+  },
+  now: string,
+  limit: number,
+): (string | number | null)[] {
+  const memberId = input.memberId ?? null;
+  return [
+    input.organizationId,
+    input.kind ?? null,
+    input.kind ?? null,
+    memberId,
+    memberId,
+    now,
+    limit,
+  ];
 }

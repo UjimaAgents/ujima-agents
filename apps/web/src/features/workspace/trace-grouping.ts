@@ -64,6 +64,9 @@ function toolStepToOperation(step: TraceStepData): AggregatedOperation {
   if (toolName === "schedule") {
     return { ...base, type: "schedule", toolName, detail: step.detail || "" };
   }
+  if (toolName === "agent.delegate") {
+    return { ...base, type: "delegate", toolName, detail: step.detail || "" };
+  }
   if (toolName === "message" || toolName.startsWith("channel.")) {
     return { ...base, type: "message", toolName, detail: step.detail || toolName };
   }

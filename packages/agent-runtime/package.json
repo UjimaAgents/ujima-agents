@@ -1,6 +1,6 @@
 {
   "name": "@ujima/agent-runtime",
-  "version": "0.0.46",
+  "version": "0.0.47",
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,6 +16,7 @@
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {
+    "@ujima/agent-core": "workspace:*",
     "@ujima/shared": "workspace:*",
     "@ujima/context-store": "workspace:*",
     "@ujima/event-bus": "workspace:*",

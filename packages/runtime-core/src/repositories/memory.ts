@@ -2,7 +2,6 @@ import type { SqliteDbHandle as DbHandle } from '@ujima/context-store';
 import { MemoryEntrySchema, type MemoryEntry, type MemoryEntryKind } from '@ujima/shared';
 import { rowString, optionalRowString } from './common.js';
 import { upsertMemoryEntry as writeMemoryEntry } from './memory-entries.js';
-import { deleteChromaMemoryById } from './chroma.js';
 
 type Row = Record<string, unknown>;
 const ORG_SCOPE_MEMBER_SENTINEL = '__org__';
@@ -72,7 +71,6 @@ export function listOrgMemories(db: DbHandle, organizationId: string): MemoryEnt
 }
 
 export async function deleteMemory(db: DbHandle, organizationId: string, memoryId: string): Promise<void> {
-  await deleteChromaMemoryById(memoryId);
   db.prepare('DELETE FROM memory_entries WHERE id = ? AND organization_id = ?').run(
     memoryId,
     organizationId,
