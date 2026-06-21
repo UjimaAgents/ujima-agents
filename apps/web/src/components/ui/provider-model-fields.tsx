@@ -71,20 +71,30 @@ export function ProviderModelFields({
         />
       </FieldShell>
 
-      <FieldShell label={modelLabel} htmlFor={modelId} hint={modelHintText}>
-        <TextInput
-          id={modelId}
-          value={model}
-          onChange={(event) => onModelChange(event.target.value)}
-          list={`${modelId}-options`}
-          placeholder="Type model id"
-        />
-        <datalist id={`${modelId}-options`}>
-          {modelOptions.map((option) => (
-            <option key={option.value} value={option.value} />
-          ))}
-        </datalist>
-      </FieldShell>
+      <div className="block">
+        <label className="text-sm font-semibold text-zinc-900 dark:text-zinc-100" htmlFor={modelId}>
+          {modelLabel}
+        </label>
+        <div className="mt-3">
+          <TextInput
+            id={modelId}
+            value={model}
+            onChange={(event) => onModelChange(event.target.value)}
+            list={`${modelId}-options`}
+            placeholder="Type model id"
+          />
+          {modelHintText ? (
+            <span className="mt-2 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+              {modelHintText}
+            </span>
+          ) : null}
+          <datalist id={`${modelId}-options`}>
+            {modelOptions.map((option) => (
+              <option key={option.value} value={option.value} />
+            ))}
+          </datalist>
+        </div>
+      </div>
     </div>
   );
 }
