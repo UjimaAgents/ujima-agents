@@ -11,6 +11,7 @@ import {
   type Message,
   type WakeReason,
 } from '@ujima/shared';
+import { randomUUID } from 'node:crypto';
 import { AsyncMutex } from '../utils/async-mutex.js';
 import { AiService } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
@@ -366,17 +367,45 @@ function resolveDelegateMessage(
 function delegateResultBase(
   delegateId: string,
   ctx: { threadId: string; recipientId: string; agentName: string },
-): Pick<AgentDelegateResult, 'agent' | 'agent_id' | 'thread_id' | 'message_id'> {
+  delegateIndex?: number,
+): Pick<AgentDelegateResult, 'agent' | 'agent_id' | 'thread_id' | 'message_id' | 'delegate_index'> {
   return {
     agent: ctx.agentName,
     agent_id: ctx.recipientId,
     thread_id: ctx.threadId,
     message_id: delegateId,
+    ...(delegateIndex !== undefined ? { delegate_index: delegateIndex } : {}),
   };
 }
 
 function runIsTerminal(status: string): boolean {
   return !['queued', 'running', 'waiting_for_approval', 'waiting_for_input'].includes(status);
+}
+
+function runIsWaitingOnHuman(status: string | undefined): status is 'waiting_for_approval' | 'waiting_for_input' {
+  return status === 'waiting_for_approval' || status === 'waiting_for_input';
+}
+
+function delegateIndex(message: { metadata?: Message['metadata'] } | null | undefined): number | undefined {
+  return message?.metadata?.delegate?.index;
+}
+
+function updateDelegateMessageStatus(
+  repo: Pick<ApiRepository, 'updateMessage'>,
+  message: Message,
+  status: NonNullable<NonNullable<Message['metadata']>['delegate']>['status'],
+): Message {
+  return repo.updateMessage({
+    ...message,
+    metadata: {
+      ...message.metadata,
+      delegate: {
+        ...message.metadata?.delegate,
+        id: message.id,
+        status,
+      },
+    },
+  });
 }
 
 function emitMemberAlertFailed(
@@ -521,12 +550,21 @@ async function waitForAgentDelegateReply(input: {
   threadId: string;
   delegateMessage: { id: string; createdAt: string };
   parentRunId: string;
+  delegateIndex?: number;
   timeoutMs?: number;
   pollIntervalMs?: number;
+  isTempAgent?: boolean;
 }): Promise<AgentDelegateResult> {
   let startedAt = Date.now();
   const timeoutMs = input.timeoutMs ?? AGENT_DELEGATE_TIMEOUT_MS;
   const pollIntervalMs = input.pollIntervalMs ?? AGENT_DELEGATE_POLL_INTERVAL_MS;
+
+  const retireIfTemp = () => {
+    if (input.isTempAgent) {
+      retireTempAgent(input.repo, input.organizationId, input.agentId);
+    }
+  };
+
   while (Date.now() - startedAt < timeoutMs) {
     const isAlertQueued = hasPendingMemberAlert(
       input.organizationId,
@@ -557,24 +595,40 @@ async function waitForAgentDelegateReply(input: {
       input.agentId,
       input.delegateMessage.id,
     );
+    if (runIsWaitingOnHuman(delegateRun?.status)) {
+      return {
+        status: delegateRun.status,
+        agent: input.agentName,
+        agent_id: input.agentId,
+        thread_id: input.threadId,
+        message_id: input.delegateMessage.id,
+        ...(input.delegateIndex !== undefined ? { delegate_index: input.delegateIndex } : {}),
+        run_status: delegateRun.status,
+        error: delegateRun.summary,
+      };
+    }
     if (delegateRun?.status === 'failed' || delegateRun?.status === 'cancelled') {
+      retireIfTemp();
       return {
         status: 'delegate_failed',
         agent: input.agentName,
         agent_id: input.agentId,
         thread_id: input.threadId,
         message_id: input.delegateMessage.id,
+        ...(input.delegateIndex !== undefined ? { delegate_index: input.delegateIndex } : {}),
         run_status: delegateRun.status,
         error: delegateRun.summary,
       };
     }
     if (reply && !blockingRun) {
+      retireIfTemp();
       return {
         status: 'completed',
         agent: input.agentName,
         agent_id: input.agentId,
         thread_id: input.threadId,
         message_id: input.delegateMessage.id,
+        ...(input.delegateIndex !== undefined ? { delegate_index: input.delegateIndex } : {}),
         reply_id: reply.id,
         reply_content: reply.content,
       };
@@ -585,24 +639,46 @@ async function waitForAgentDelegateReply(input: {
       delegateRun &&
       runIsTerminal(delegateRun.status)
     ) {
+      retireIfTemp();
       return {
         status: 'no_reply',
         agent: input.agentName,
         agent_id: input.agentId,
         thread_id: input.threadId,
         message_id: input.delegateMessage.id,
+        ...(input.delegateIndex !== undefined ? { delegate_index: input.delegateIndex } : {}),
       };
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
+  retireIfTemp();
   return {
     status: 'timed_out',
     agent: input.agentName,
     agent_id: input.agentId,
     thread_id: input.threadId,
     message_id: input.delegateMessage.id,
+    ...(input.delegateIndex !== undefined ? { delegate_index: input.delegateIndex } : {}),
   };
+}
+
+function deriveTempAgentName(name: string | undefined, message: string): string {
+  const trimmedName = name?.trim();
+  if (trimmedName) return trimmedName;
+  const trimmedMessage = message.trim().slice(0, 60);
+  return trimmedMessage || 'Delegate';
+}
+
+function isTempAgentRole(roleName: string): boolean {
+  return roleName.startsWith('@delegate/');
+}
+
+function retireTempAgent(repo: ApiRepository, organizationId: string, agentId: string): void {
+  const agent = repo.getMember(organizationId, agentId);
+  if (agent && isTempAgentRole(agent.roleName) && !agent.retiredAt) {
+    repo.saveMember({ ...agent, retiredAt: new Date().toISOString() });
+  }
 }
 
 export async function runAgentDelegateTurn(input: {
@@ -629,43 +705,53 @@ export async function runAgentDelegateTurn(input: {
   }) => Promise<unknown>;
   organizationId: string;
   fromMemberId: string;
-  to: string;
+  to?: string;
+  name?: string;
   message: string;
   kind?: DelegateKind;
+  index?: number;
   runId: string;
   mode?: 'blocking' | 'non_blocking';
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<AgentDelegateResult> {
-  const members = input.repo.listMembers(input.organizationId);
-  const activeAgents = members.filter(
-    (member) => member.kind === AGENT_KIND && !member.retiredAt,
-  );
-  const target = activeAgents.find(
-    (member) => member.id === input.to || member.name === input.to,
-  );
-  if (!target) {
-    const names = activeAgents.map((member) => member.name).join(', ');
-    const retiredMatch = members.find(
-      (member) =>
-        member.kind === AGENT_KIND &&
-        member.retiredAt &&
-        (member.id === input.to || member.name === input.to),
+  let target: ReturnType<typeof input.repo.getMember> | null = null;
+
+  if (input.to) {
+    const members = input.repo.listMembers(input.organizationId);
+    const activeAgents = members.filter(
+      (member) => member.kind === AGENT_KIND && !member.retiredAt,
     );
-    if (retiredMatch) {
-      throw new Error(
-        `Agent "${input.to}" has been retired. Available agents: ${names}`,
-      );
-    }
-    throw new Error(`Agent "${input.to}" not found. Available agents: ${names}`);
+    target = activeAgents.find(
+      (member) => member.id === input.to || member.name === input.to,
+    ) ?? null;
+  }
+
+  if (!target) {
+    // No existing agent found — create a temp (ephemeral) agent.
+    const agentName = deriveTempAgentName(input.name, input.message);
+    const delegateKind = input.kind ?? 'worker';
+    const roleName = delegateKind === 'explorer' ? '@delegate/explorer' : '@delegate/worker';
+    const now = new Date().toISOString();
+    target = input.repo.saveMember({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      name: agentName,
+      kind: AGENT_KIND,
+      roleName,
+      presence: 'online',
+      createdAt: now,
+    });
   }
 
   if (target.id === input.fromMemberId) {
     throw new Error('Cannot delegate to yourself. Delegate to a different agent.');
   }
 
+  const isTempAgent = isTempAgentRole(target.roleName);
   const threadId = getDirectMessageThreadId(input.fromMemberId, target.id);
-  const delegateMessage = input.conversations.sendDirectMessage({
+  const delegateKind = input.kind ?? 'worker';
+  let delegateMessage = input.conversations.sendDirectMessage({
     organizationId: input.organizationId,
     senderId: input.fromMemberId,
     recipientId: target.id,
@@ -673,9 +759,25 @@ export async function runAgentDelegateTurn(input: {
     ignore: true,
     metadata: {
       runId: input.runId,
-      delegate: { parentRunId: input.runId, kind: input.kind ?? 'worker' },
+      delegate: {
+        parentRunId: input.runId,
+        kind: delegateKind,
+        ...(input.index !== undefined ? { index: input.index } : {}),
+        status: 'queued',
+      },
     },
   });
+  delegateMessage = input.repo.updateMessage({
+    ...delegateMessage,
+    metadata: {
+      ...delegateMessage.metadata,
+      delegate: {
+        ...delegateMessage.metadata?.delegate,
+        id: delegateMessage.id,
+      },
+    },
+  });
+  delegateMessage = updateDelegateMessageStatus(input.repo, delegateMessage, 'running');
 
   await input.wakeMember({
     organizationId: input.organizationId,
@@ -689,16 +791,18 @@ export async function runAgentDelegateTurn(input: {
   });
 
   if (input.mode === 'non_blocking') {
+    updateDelegateMessageStatus(input.repo, delegateMessage, 'dispatched');
     return {
       status: 'dispatched',
       agent: target.name,
       agent_id: target.id,
       thread_id: threadId,
       message_id: delegateMessage.id,
+      ...(input.index !== undefined ? { delegate_index: input.index } : {}),
     };
   }
 
-  return waitForAgentDelegateReply({
+  const result = await waitForAgentDelegateReply({
     repo: input.repo,
     organizationId: input.organizationId,
     agentId: target.id,
@@ -706,9 +810,13 @@ export async function runAgentDelegateTurn(input: {
     threadId,
     delegateMessage,
     parentRunId: input.runId,
+    delegateIndex: input.index,
     timeoutMs: input.timeoutMs,
     pollIntervalMs: input.pollIntervalMs,
+    isTempAgent,
   });
+  updateDelegateMessageStatus(input.repo, delegateMessage, result.status);
+  return result;
 }
 
 export function createApiServices(context: ApiServicesContext): ApiServices {
@@ -764,9 +872,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const delegateAgentTurn = async (input: {
     organizationId: string;
     fromMemberId: string;
-    to: string;
+    to?: string;
+    name?: string;
     message: string;
     kind?: DelegateKind;
+    index?: number;
     runId: string;
     mode?: 'blocking' | 'non_blocking';
     timeoutMs?: number;
@@ -785,7 +895,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     delegateId: string,
   ): Promise<AgentDelegateResult> => {
     const ctx = resolveDelegateMessage(context.repo, orgId, delegateId);
-    const base = delegateResultBase(delegateId, ctx);
+    const base = delegateResultBase(delegateId, ctx, delegateIndex(ctx.msg));
     const activeRun = context.repo.findActiveRunForMemberThread?.(
       orgId,
       ctx.recipientId,
@@ -813,6 +923,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         error: delegateRun.summary,
       };
     }
+    if (runIsWaitingOnHuman(delegateRun?.status)) {
+      return {
+        ...base,
+        status: delegateRun.status,
+        run_status: delegateRun.status,
+        error: delegateRun.summary,
+      };
+    }
     if (reply && !activeRun) {
       return {
         ...base,
@@ -822,6 +940,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       };
     }
     if (activeRun) {
+      if (runIsWaitingOnHuman(activeRun.status)) {
+        return {
+          ...base,
+          status: activeRun.status,
+          run_status: activeRun.status,
+          error: activeRun.summary,
+        };
+      }
       return {
         ...base,
         status: 'dispatched',
@@ -848,6 +974,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
           threadId: ctx.threadId,
           delegateMessage: { id: delegateId, createdAt: ctx.msg.createdAt },
           parentRunId: '',
+          delegateIndex: delegateIndex(ctx.msg),
           timeoutMs,
           pollIntervalMs,
         });
@@ -859,6 +986,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     delegateId: string,
   ): Promise<{ stopped: boolean; runId?: string }> => {
     const ctx = resolveDelegateMessage(context.repo, orgId, delegateId);
+    // Retire the temp agent before cancelling the run.
+    retireTempAgent(context.repo, orgId, ctx.recipientId);
     const activeRun = context.repo.findActiveRunForMemberThread?.(
       orgId,
       ctx.recipientId,
@@ -896,7 +1025,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     fromMemberId: string,
   ): Promise<{ sent: boolean; messageId: string }> => {
     const ctx = resolveDelegateMessage(context.repo, orgId, delegateId, fromMemberId);
-    const followUp = conversations.sendDirectMessage({
+    let followUp = conversations.sendDirectMessage({
       organizationId: orgId,
       senderId: fromMemberId,
       recipientId: ctx.recipientId,
@@ -906,9 +1035,22 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         delegate: {
           parentRunId: ctx.msg.metadata?.delegate?.parentRunId,
           kind: getDelegateKind(ctx.msg),
+          index: delegateIndex(ctx.msg),
+          status: 'queued',
         },
       },
     });
+    followUp = context.repo.updateMessage({
+      ...followUp,
+      metadata: {
+        ...followUp.metadata,
+        delegate: {
+          ...followUp.metadata?.delegate,
+          id: followUp.id,
+        },
+      },
+    });
+    updateDelegateMessageStatus(context.repo, followUp, 'running');
     await wakeMember({
       organizationId: orgId,
       memberId: ctx.recipientId,
@@ -1428,12 +1570,24 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // drain-pending-member-alert, memory-review's turn counter, and
   // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
-    if (run.status !== 'cancelled' && run.sourceMessageId) {
+    if (run.sourceMessageId) {
       const sourceMsg = context.repo.getMessage(run.organizationId, run.sourceMessageId);
+      if (sourceMsg?.metadata?.delegate) {
+        updateDelegateMessageStatus(
+          context.repo,
+          sourceMsg,
+          run.status === 'completed'
+            ? 'completed'
+            : run.status === 'cancelled'
+              ? 'cancelled'
+              : 'delegate_failed',
+        );
+        retireTempAgent(context.repo, run.organizationId, run.agentId);
+      }
       const parentRunId = sourceMsg?.metadata?.delegate?.parentRunId;
-      if (parentRunId) {
+      if (run.status !== 'cancelled' && parentRunId) {
         const parentRun = context.repo.getRun(run.organizationId, parentRunId);
-        if (parentRun) {
+        if (parentRun && runIsTerminal(parentRun.status) && parentRun.status !== 'cancelled') {
           const threadId = getDirectMessageThreadId(run.agentId, parentRun.agentId);
           await wakeMember({
             organizationId: run.organizationId,

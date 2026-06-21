@@ -13,7 +13,7 @@ import { collectFileChanges } from "../../change-summary";
 /* ── Trace step (used in reasoning trace timeline) ─────────────────── */
 interface AggregatedOperation {
   id: string;
-  type: "edit" | "delete" | "read" | "search" | "shell" | "tool" | "memory" | "goal" | "question" | "procedure" | "schedule" | "message";
+  type: "edit" | "delete" | "read" | "search" | "shell" | "tool" | "memory" | "goal" | "question" | "procedure" | "schedule" | "message" | "delegate";
   file?: string;
   additions: number;
   deletions: number;
@@ -422,6 +422,29 @@ function AggregatedRunPanel({
                   {op.detail ? (
                     <div className={`mt-1.5 p-2.5 select-text font-mono text-[11px] leading-relaxed ${TERMINAL_PANEL}`}>
                       {op.detail}
+                    </div>
+                  ) : null}
+                </ExpandableRow>
+              );
+            }
+
+            if (op.type === "delegate") {
+              const [label, ...rest] = (op.detail || "Delegated tasks").split("\n");
+              const body = rest.join("\n").trim();
+              return (
+                <ExpandableRow
+                  key={op.id}
+                  expanded={isExpanded}
+                  onToggle={toggle(op.id)}
+                  header={
+                    <span className="break-words">
+                      {label || "Delegated tasks"}
+                    </span>
+                  }
+                >
+                  {body ? (
+                    <div className={`mt-1.5 p-2.5 select-text font-mono text-[11px] leading-relaxed ${TERMINAL_PANEL}`}>
+                      {body}
                     </div>
                   ) : null}
                 </ExpandableRow>

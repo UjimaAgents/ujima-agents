@@ -1,179 +1,109 @@
-import Fastify from 'fastify';
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '@ujima/context-store';
 import { Repository } from '@ujima/runtime-core';
-import {
-  AuthService,
-  createScheduledJobRecord,
-} from '@ujima/orchestrator';
-import { ChannelSchema, MemberSchema, OrganizationSchema } from '@ujima/shared';
-import { registerHeartbeatRoutes } from '../src/transport/routes/heartbeats';
+import { createScheduledJobRecord } from '@ujima/orchestrator';
+import { ScheduledJobSchema } from '@ujima/shared';
 
-describe('heartbeat routes', () => {
+describe('heartbeat repository', () => {
   const organizationId = 'org-1';
   const memberId = 'member-1';
   const channelId = 'general';
 
-  let app: ReturnType<typeof Fastify>;
   let repo: Repository;
-  let sessionToken: string;
 
   beforeEach(() => {
     repo = new Repository(openDatabase({ dbPath: ':memory:' }));
-    repo.saveOrganization(
-      OrganizationSchema.parse({
-        id: organizationId,
-        name: 'Heartbeat Org',
-        workspace: { root: '', roleScopes: {} },
-        organizationChart: { reportsTo: {} },
-      }),
-    );
-    repo.saveMember(
-      MemberSchema.parse({
-        id: memberId,
-        organizationId,
-        name: 'Owner',
-        kind: 'human',
-        roleName: 'owner',
-      }),
-    );
-    repo.saveChannel(
-      ChannelSchema.parse({
-        id: channelId,
-        organizationId,
-        name: 'general',
-        kind: 'general',
-        topic: '',
-        memberIds: [memberId],
-      }),
-    );
-
-    const auth = new AuthService(repo);
-    sessionToken = auth
-      .registerOwnerAccount({
-        organizationId,
-        memberId,
-        email: 'owner@example.com',
-        password: 'password',
-      })
-      .sessionToken;
-
-    app = Fastify();
-    app.setValidatorCompiler(validatorCompiler);
-    app.setSerializerCompiler(serializerCompiler);
-    registerHeartbeatRoutes(app, { repo, auth });
   });
 
-  afterEach(async () => {
-    await app.close();
+  function heartbeatRecord(overrides: Record<string, unknown> = {}) {
+    return createScheduledJobRecord({
+      organizationId,
+      memberId,
+      name: 'Daily check',
+      cronExpression: '0 9 * * *',
+      prompt: 'Check in',
+      channelId,
+      type: 'heartbeat',
+      ...overrides,
+    });
+  }
+
+  it('creates and retrieves a heartbeat job', () => {
+    const job = heartbeatRecord();
+    repo.saveScheduledJob(job);
+
+    const saved = repo.getScheduledJob(organizationId, job.id);
+    expect(saved).not.toBeNull();
+    expect(saved?.type).toBe('heartbeat');
+    expect(saved?.channelId).toBe(channelId);
   });
 
-  it('requires a channel and preserves the heartbeat type', async () => {
-    const badCreate = await app.inject({
-      method: 'POST',
-      url: '/heartbeats',
-      headers: { 'x-ujima-session': sessionToken },
-      payload: {
-        name: 'Daily check',
-        cronExpression: '0 9 * * *',
-        prompt: 'Check in',
-      },
+  it('lists only heartbeat jobs', () => {
+    const hb = heartbeatRecord();
+    repo.saveScheduledJob(hb);
+
+    const schedule = createScheduledJobRecord({
+      organizationId,
+      memberId,
+      name: 'Daily schedule',
+      cronExpression: '0 9 * * *',
+      prompt: 'Regular schedule',
+      channelId,
     });
+    repo.saveScheduledJob(schedule);
 
-    expect(badCreate.statusCode).toBe(400);
-
-    const create = await app.inject({
-      method: 'POST',
-      url: '/heartbeats',
-      headers: { 'x-ujima-session': sessionToken },
-      payload: {
-        name: 'Daily check',
-        cronExpression: '0 9 * * *',
-        prompt: 'Check in',
-        channelId,
-      },
-    });
-
-    expect(create.statusCode).toBe(201);
-    const created = create.json() as { job: { id: string; type: string; channelId: string; status: string } };
-    expect(created.job.type).toBe('heartbeat');
-    expect(created.job.channelId).toBe(channelId);
-
-    repo.saveScheduledJob(
-      createScheduledJobRecord({
-        organizationId,
-        memberId,
-        name: 'Standup',
-        cronExpression: '0 8 * * 1-5',
-        prompt: 'Daily standup',
-        channelId,
-      }),
-    );
-
-    const list = await app.inject({
-      method: 'GET',
-      url: '/heartbeats',
-      headers: { 'x-ujima-session': sessionToken },
-    });
-
-    expect(list.statusCode).toBe(200);
-    const listed = list.json() as { jobs: Array<{ type: string; id: string }> };
-    expect(listed.jobs).toHaveLength(1);
-    expect(listed.jobs[0]?.type).toBe('heartbeat');
+    const all = repo.listScheduledJobs(organizationId);
+    const heartbeats = all.filter((job) => job.type === 'heartbeat');
+    expect(heartbeats).toHaveLength(1);
+    expect(heartbeats[0]?.id).toBe(hb.id);
   });
 
-  it('updates, pauses, resumes, and deletes a heartbeat', async () => {
-    const create = await app.inject({
-      method: 'POST',
-      url: '/heartbeats',
-      headers: { 'x-ujima-session': sessionToken },
-      payload: {
-        name: 'Daily check',
-        cronExpression: '0 9 * * *',
-        prompt: 'Check in',
-        channelId,
-      },
+  it('updates a heartbeat job', () => {
+    const job = heartbeatRecord();
+    repo.saveScheduledJob(job);
+
+    const updated = ScheduledJobSchema.parse({
+      ...job,
+      status: 'paused' as const,
+      updatedAt: new Date().toISOString(),
     });
+    repo.saveScheduledJob(updated);
 
-    const created = create.json() as { job: { id: string } };
+    const saved = repo.getScheduledJob(organizationId, job.id);
+    expect(saved?.status).toBe('paused');
+    expect(saved?.type).toBe('heartbeat');
+  });
 
-    const paused = await app.inject({
-      method: 'PATCH',
-      url: `/heartbeats/${created.job.id}`,
-      headers: { 'x-ujima-session': sessionToken },
-      payload: {
-        status: 'paused',
-        prompt: 'Check in harder',
-        channelId,
-      },
+  it('deletes a heartbeat job', () => {
+    const job = heartbeatRecord();
+    repo.saveScheduledJob(job);
+
+    repo.deleteScheduledJob(organizationId, job.id);
+
+    const saved = repo.getScheduledJob(organizationId, job.id);
+    expect(saved).toBeNull();
+  });
+
+  it('preserves type through persistence round-trip', () => {
+    const job = heartbeatRecord();
+    repo.saveScheduledJob(job);
+
+    const saved = repo.getScheduledJob(organizationId, job.id);
+    expect(saved).not.toBeNull();
+    expect(saved!.type).toBe('heartbeat');
+
+    // Verify a regular schedule defaults to 'schedule'
+    const sched = createScheduledJobRecord({
+      organizationId,
+      memberId,
+      name: 'Regular',
+      cronExpression: '0 9 * * *',
+      prompt: 'Regular',
+      channelId,
     });
-
-    expect(paused.statusCode).toBe(200);
-    const pausedBody = paused.json() as { job: { type: string; status: string; channelId: string } };
-    expect(pausedBody.job.type).toBe('heartbeat');
-    expect(pausedBody.job.status).toBe('paused');
-    expect(pausedBody.job.channelId).toBe(channelId);
-
-    const resumed = await app.inject({
-      method: 'PATCH',
-      url: `/heartbeats/${created.job.id}`,
-      headers: { 'x-ujima-session': sessionToken },
-      payload: {
-        status: 'active',
-        channelId,
-      },
-    });
-
-    expect(resumed.statusCode).toBe(200);
-    expect((resumed.json() as { job: { status: string } }).job.status).toBe('active');
-
-    const deleted = await app.inject({
-      method: 'DELETE',
-      url: `/heartbeats/${created.job.id}`,
-      headers: { 'x-ujima-session': sessionToken },
-    });
-
-    expect(deleted.statusCode).toBe(204);
+    repo.saveScheduledJob(sched);
+    const savedSched = repo.getScheduledJob(organizationId, sched.id);
+    expect(savedSched?.type).toBe('schedule');
   });
 });

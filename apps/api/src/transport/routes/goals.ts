@@ -18,6 +18,11 @@ type AuthedMember = AuthState & {
   member: NonNullable<AuthState['member']>;
 };
 
+const UpdateTaskBodySchema = z.object({
+  title: z.string().min(1).optional(),
+  assigneeId: z.string().min(1).optional(),
+});
+
 const StatusBodySchema = z.object({
   status: GoalTaskStatusSchema,
   handoverSummary: z.string().min(1).optional(),
@@ -217,6 +222,28 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
     try {
       if (!requireGoalAccess(deps, reply, auth.user.organizationId, req.params.id, auth.member.id)) return;
       return reply.status(200).send(deps.goals.implement(auth.user.organizationId, req.params.id));
+    } catch (error) {
+      return sendRouteError(reply, error);
+    }
+  });
+
+  api.patch('/goal-tasks/:id', {
+    schema: { body: UpdateTaskBodySchema },
+  }, async (req: FastifyRequest<{ Params: { id: string }; Body: z.infer<typeof UpdateTaskBodySchema> }>, reply) => {
+    const auth = requireMember(deps, req, reply);
+    if (!auth) return;
+    try {
+      const existing = deps.repo.getGoalTask(auth.user.organizationId, req.params.id);
+      if (!existing) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
+      const task = deps.goals.updateTask({
+        organizationId: auth.user.organizationId,
+        taskId: req.params.id,
+        title: req.body.title,
+        assigneeId: req.body.assigneeId,
+        callerMemberId: auth.member.id,
+      });
+      if (!task) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
+      return reply.status(200).send({ task });
     } catch (error) {
       return sendRouteError(reply, error);
     }

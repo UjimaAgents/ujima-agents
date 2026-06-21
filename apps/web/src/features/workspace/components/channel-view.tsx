@@ -23,7 +23,6 @@ import {
   ApprovalCard,
   type ChatTab,
   type ChatMessageData,
-  type TraceStepData,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
@@ -67,6 +66,7 @@ import {
   countSemanticActivityEvents,
   isLiveRun,
 } from "../feed-selectors";
+import { buildReasoningTraceSteps } from "../reasoning-trace";
 import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
 
 const CHANNEL_TABS: ChatTab[] = [
@@ -501,10 +501,29 @@ export function ChannelView({
     }
     return [...byId.values()];
   }, [currentThreadId, feed.runs, globalActiveRuns]);
-  const liveChangeSummary = useMemo(() => {
-    const liveRunIds = new Set(liveThreadRuns.map((run) => run.id));
-    return summarizeFileChanges(reasoningTraceSteps.filter((step: TraceStepData) => step.runId && liveRunIds.has(step.runId)));
-  }, [liveThreadRuns, reasoningTraceSteps]);
+  const liveTraceSteps = useMemo(() => {
+    if (!currentThreadId || liveThreadRuns.length === 0) return [];
+    return buildReasoningTraceSteps({
+      threadId: currentThreadId,
+      agentIdFilter: conversation.type === "agent" ? conversation.id : undefined,
+      conversationName: conversation.name,
+      conversationType: conversation.type,
+      members: traceMembers,
+      activity: feed.activity,
+      runs: liveThreadRuns,
+      organizationId: bootstrap.organization?.id,
+    });
+  }, [
+    bootstrap.organization?.id,
+    conversation.id,
+    conversation.name,
+    conversation.type,
+    currentThreadId,
+    feed.activity,
+    liveThreadRuns,
+    traceMembers,
+  ]);
+  const liveChangeSummary = useMemo(() => summarizeFileChanges(liveTraceSteps), [liveTraceSteps]);
   const waitingInputRunIds = useMemo(
     () => liveThreadRuns.filter((run) => run.status === "waiting_for_input").map((run) => run.id),
     [liveThreadRuns],
