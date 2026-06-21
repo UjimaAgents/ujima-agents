@@ -23,6 +23,8 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
   kimi: "kimi",
   "zhipu": "zhipu",
   "zhipu-ai": "zhipu",
+  "z.ai": "zhipu",
+  "z-ai": "zhipu",
   "openai-codex": "openai-codex",
 };
 

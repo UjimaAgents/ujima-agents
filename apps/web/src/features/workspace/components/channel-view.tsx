@@ -336,9 +336,9 @@ export function ChannelView({
   const reasoningMember = conversation.type === "agent" ? feed.selectedMember ?? undefined : currentMember;
   const reasoningModelSelection = useMemo(() => {
     if (!reasoningMember) return undefined;
-    const selectedModel = resolveMemberModelSelection(reasoningMember, bootstrap.providers);
+    const selectedModel = resolveMemberModelSelection(reasoningMember);
     return parseConfiguredProviderModelValue(selectedModel) ?? undefined;
-  }, [bootstrap.providers, reasoningMember]);
+  }, [reasoningMember]);
   const currentThreadId = useMemo(() => {
     const senderId = bootstrap.auth.member?.id;
     if (!senderId) return undefined;

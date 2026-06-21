@@ -28,7 +28,7 @@ export async function detectAvailableModels(): Promise<DetectedModel[]> {
 
   if (process.env.ANTHROPIC_API_KEY) {
     results.push(
-      { id: 'claude-opus-4-7', label: 'claude-opus-4-7', description: 'Anthropic · best judgment (ANTHROPIC_API_KEY set)', source: 'anthropic', available: true },
+      { id: 'claude-opus-4-8', label: 'claude-opus-4-8', description: 'Anthropic · best judgment (ANTHROPIC_API_KEY set)', source: 'anthropic', available: true },
       { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6', description: 'Anthropic · balanced (ANTHROPIC_API_KEY set)', source: 'anthropic', available: true },
       { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5', description: 'Anthropic · fast (ANTHROPIC_API_KEY set)', source: 'anthropic', available: true },
     );
@@ -36,8 +36,11 @@ export async function detectAvailableModels(): Promise<DetectedModel[]> {
 
   if (process.env.OPENAI_API_KEY) {
     results.push(
-      { id: 'gpt-4o', label: 'gpt-4o', description: 'OpenAI · GPT-4o (OPENAI_API_KEY set)', source: 'openai', available: true },
-      { id: 'gpt-4o-mini', label: 'gpt-4o-mini', description: 'OpenAI · fast (OPENAI_API_KEY set)', source: 'openai', available: true },
+      { id: 'gpt-5.5', label: 'gpt-5.5', description: 'OpenAI · flagship (OPENAI_API_KEY set)', source: 'openai', available: true },
+      { id: 'gpt-5.4', label: 'gpt-5.4', description: 'OpenAI · balanced (OPENAI_API_KEY set)', source: 'openai', available: true },
+      { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini', description: 'OpenAI · fast (OPENAI_API_KEY set)', source: 'openai', available: true },
+      { id: 'gpt-5.4-nano', label: 'gpt-5.4-nano', description: 'OpenAI · tiny (OPENAI_API_KEY set)', source: 'openai', available: true },
+      { id: 'gpt-4o', label: 'gpt-4o', description: 'OpenAI · stable (OPENAI_API_KEY set)', source: 'openai', available: true },
     );
   }
 
@@ -55,7 +58,8 @@ export async function detectAvailableModels(): Promise<DetectedModel[]> {
   if (results.length === 0) {
     results.push(
       { id: 'vscode-lm', label: 'vscode-lm', description: 'VS Code LM API — requires Copilot or compatible provider', source: 'fallback', available: false },
-      { id: 'claude-opus-4-7', label: 'claude-opus-4-7', description: 'Anthropic — set ANTHROPIC_API_KEY', source: 'fallback', available: false },
+      { id: 'claude-opus-4-8', label: 'claude-opus-4-8', description: 'Anthropic — set ANTHROPIC_API_KEY', source: 'fallback', available: false },
+      { id: 'gpt-5.5', label: 'gpt-5.5', description: 'OpenAI — set OPENAI_API_KEY', source: 'fallback', available: false },
       { id: 'gpt-4o', label: 'gpt-4o', description: 'OpenAI — set OPENAI_API_KEY', source: 'fallback', available: false },
       { id: 'ollama/llama3', label: 'ollama/llama3', description: 'Local — run Ollama on :11434', source: 'fallback', available: false },
     );

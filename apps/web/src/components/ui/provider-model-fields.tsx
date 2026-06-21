@@ -1,5 +1,5 @@
 import { Select } from "@/components/ui/select";
-import { FieldShell } from "@/components/ui/form-fields";
+import { FieldShell, TextInput } from "@/components/ui/form-fields";
 import { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared/browser";
 import { PROVIDER_OPTIONS, normalizeProviderKey } from "@/features/providers/catalog";
 import { useEffect, useMemo, useState } from "react";
@@ -49,7 +49,7 @@ export function ProviderModelFields({
   const modelHintText = discovering
     ? "Discovering models from your configured endpoint…"
     : discoverError
-      ? `Falling back to catalog (${discoverError})`
+      ? `Using catalog (${discoverError})`
       : discovered.length > 0
         ? `${discovered.length} live + ${getModelOptionsForProvider(provider).length} catalog`
         : modelHint;
@@ -71,16 +71,30 @@ export function ProviderModelFields({
         />
       </FieldShell>
 
-      <FieldShell label={modelLabel} htmlFor={modelId} hint={modelHintText}>
-        <Select
-          id={modelId}
-          value={model}
-          onChange={(event) => onModelChange(event.target.value)}
-          className="w-full"
-          placeholder="Select model"
-          options={modelOptions.map((option) => ({ value: option.value, label: option.label }))}
-        />
-      </FieldShell>
+      <div className="block">
+        <label className="text-sm font-semibold text-zinc-900 dark:text-zinc-100" htmlFor={modelId}>
+          {modelLabel}
+        </label>
+        <div className="mt-3">
+          <TextInput
+            id={modelId}
+            value={model}
+            onChange={(event) => onModelChange(event.target.value)}
+            list={`${modelId}-options`}
+            placeholder="Type model id"
+          />
+          {modelHintText ? (
+            <span className="mt-2 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+              {modelHintText}
+            </span>
+          ) : null}
+          <datalist id={`${modelId}-options`}>
+            {modelOptions.map((option) => (
+              <option key={option.value} value={option.value} />
+            ))}
+          </datalist>
+        </div>
+      </div>
     </div>
   );
 }

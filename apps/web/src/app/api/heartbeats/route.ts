@@ -29,10 +29,11 @@ export async function POST(request: Request) {
       !payload ||
       typeof payload.name !== "string" ||
       typeof payload.cronExpression !== "string" ||
-      typeof payload.prompt !== "string"
+      typeof payload.prompt !== "string" ||
+      typeof payload.channelId !== "string"
     ) {
       return NextResponse.json(
-        { code: "ERR_BAD_REQUEST", message: "name, cronExpression, and prompt are required." },
+        { code: "ERR_BAD_REQUEST", message: "name, cronExpression, prompt, and channelId are required." },
         { status: 400 },
       );
     }

@@ -1,6 +1,6 @@
 {
   "name": "ujima",
-  "version": "0.0.45",
+  "version": "0.0.46",
   "private": true,
   "main": "./dist/main.js",
   "bin": {

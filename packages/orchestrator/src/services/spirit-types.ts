@@ -22,12 +22,6 @@ export interface ModelResolverInput {
   organizationId: string;
   memberId: string;
   role: SpiritRole;
-  // When set, the resolver must ignore any per-member or per-role
-  // model override and pick the provider's safe-default model
-  // (`safeFallbackModelForProvider` from @ujima/shared). Used by the
-  // runtime retry path after `ModelNotFoundError` to recover from
-  // misconfigured / deprecated ids without dead-stopping the run.
-  forceSafeFallback?: boolean;
   reasoningEffort?: ReasoningEffort;
 }
 

@@ -176,16 +176,6 @@ function resolveHomeDir(): string {
 
 // Fix #7: Shared model-resolution ladder.
 // Walk: member → agent → role → provider → modelId → apiKey → LanguageModel.
-//
-// Provider-fallback (Option 1, runtime-fallback): when the role's
-// configured provider has no API key in this org, walk
-// `team.providers` and pick the first provider that DOES have a
-// key. This decouples agent config from a specific provider —
-// adding a Gemini key auto-propagates to all agents that were
-// configured for DeepSeek, without per-role migration. The
-// fallback provider's `defaultModel` is used because the role's
-// configured `model` field belongs to the original provider and
-// almost certainly isn't a valid id on the new one.
 export function resolveSpiritModel(params: {
   organizationId: string;
   memberId: string;
@@ -199,14 +189,6 @@ export function resolveSpiritModel(params: {
     teamRole: { model?: string },
     provider: { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
     role: SpiritRole,
-    /**
-     * `true` when we are NOT on the originally-requested provider (the
-     * preferred one was rejected, e.g. missing API key). Resolvers that
-     * honor per-member or per-role model overrides MUST ignore those
-     * overrides when this flag is set — those ids are provider-specific
-     * and almost certainly won't resolve on the fallback provider.
-     */
-    isFallback: boolean,
     memberModel?: string,
   ) => string | undefined;
 }): LanguageModel {
@@ -225,112 +207,36 @@ export function resolveSpiritModel(params: {
   if (!preferredProviderName) {
     throw new Error(`Provider not resolved for member "${params.memberId}"`);
   }
-
-  // Try the preferred provider first, then fall back to any other
-  // team-configured provider that has a key. Iteration order over
-  // `team.providers` is the config-declaration order, which is
-  // deterministic.
-  const tried: { name: string; rejected: string }[] = [];
-  const candidates: string[] = [preferredProviderName];
-  for (const candidate of Object.keys(params.team.providers)) {
-    if (candidate !== preferredProviderName && !candidates.includes(candidate)) {
-      candidates.push(candidate);
-    }
+  const provider = params.team.getProvider(preferredProviderName);
+  if (!provider) {
+    throw new Error(`Provider not configured for member "${params.memberId}": ${preferredProviderName}`);
+  }
+  const apiKey = resolveOpenAIAccessToken({
+    providerName: preferredProviderName,
+    authMode: provider.authMode,
+    storedCredential: params.getProviderCredential(params.organizationId, preferredProviderName),
+  });
+  if (!apiKey) {
+    throw new Error(`No API key for member "${params.memberId}": ${preferredProviderName}`);
   }
 
-  for (const providerName of candidates) {
-    const provider = params.team.getProvider(providerName);
-    if (!provider) {
-      tried.push({ name: providerName, rejected: 'provider not configured' });
-      continue;
-    }
-    const apiKey = resolveOpenAIAccessToken({
-      providerName,
-      authMode: provider.authMode,
-      storedCredential: params.getProviderCredential(params.organizationId, providerName),
-    });
-    if (!apiKey) {
-      tried.push({
-        name: providerName,
-        rejected: provider.authMode === 'chatgpt' || providerName === 'openai-codex'
-          ? 'no Codex login or API key'
-          : 'no API key',
-      });
-      continue;
-    }
-
-    // Use the role's configured model only when we're on the
-    // originally-requested provider. After fallback, the role's
-    // model id won't be valid on the new provider — pick its
-    // defaultModel instead. If the provider config didn't declare
-    // a defaultModel either, fall back to a built-in per-kind
-    // default so a Google key with no `defaultModel` set in
-    // team.config still works.
-    const isFallback = providerName !== preferredProviderName;
-    const teamRoleForModel = isFallback ? { model: undefined } : { model: teamRole.model };
-    const providerForResolve = isFallback
-      ? { ...provider, defaultModel: provider.defaultModel ?? defaultModelIdForKind(provider.kind) }
-      : provider;
-    const modelId = params.resolveModelId(
-      teamRoleForModel,
-      providerForResolve,
-      params.role,
-      isFallback,
-      params.member.model,
-    );
-    if (!modelId) {
-      tried.push({ name: providerName, rejected: 'no model id resolved (provider config is missing defaultModel and there is no built-in default for this kind)' });
-      continue;
-    }
-
-    if (providerName !== preferredProviderName) {
-      // Single line to make the fallback observable in logs.
-      console.warn(
-        `[ujima] provider fallback: org "${params.organizationId}" preferred "${preferredProviderName}" unusable, falling back to "${providerName}" (model "${modelId}")`,
-      );
-    }
-    return selectLanguageModel({
-      kind: provider.kind,
-      modelId,
-      apiKey,
-      baseUrl: provider.baseUrl,
-      reasoningEffort: params.reasoningEffort,
-    });
-  }
-
-  const triedSummary = tried.map((t) => `${t.name} (${t.rejected})`).join('; ');
-  throw new Error(
-    `No usable provider for member "${params.memberId}". Tried: ${triedSummary}`,
+  const modelId = params.resolveModelId(
+    { model: teamRole.model },
+    provider,
+    params.role,
+    params.member.model,
   );
-}
-
-/**
- * Built-in default model per provider kind, used when the team
- * config's `providers.<name>.defaultModel` is empty. Lets a user
- * who pasted just an API key (via the UI) end up with a working
- * model id without needing to also write defaultModel into config.
- *
- * These defaults are intentionally conservative (fast/cheap
- * variants) — power users override via `provider.defaultModel`
- * in team config or via `role.model`.
- */
-function defaultModelIdForKind(kind: string): string | undefined {
-  switch (kind) {
-    case 'google':
-      return 'gemini-2.5-flash';
-    case 'openai':
-      return 'gpt-4o';
-    case 'anthropic':
-      return 'claude-sonnet-4-6';
-    case 'deepseek':
-      return 'deepseek-chat';
-    case 'xai':
-      return 'grok-3';
-    case 'mistral':
-      return 'mistral-large-latest';
-    default:
-      return undefined;
+  if (!modelId) {
+    throw new Error(`No model id resolved for member "${params.memberId}"`);
   }
+
+  return selectLanguageModel({
+    kind: provider.kind,
+    modelId,
+    apiKey,
+    baseUrl: provider.baseUrl,
+    reasoningEffort: params.reasoningEffort,
+  });
 }
 
 // Fix #7: Default provider-name resolver (uses agent/member llm first).
@@ -350,10 +256,9 @@ export function defaultResolveModelId(
   teamRole: { model?: string },
   provider: { defaultModel?: string; supervisorModel?: string; supervisor_model?: string },
   role: SpiritRole,
-  isFallback?: boolean,
   memberModel?: string,
 ): string | undefined {
-  const baseModel = (isFallback ? undefined : memberModel) ?? teamRole.model ?? provider.defaultModel;
+  const baseModel = memberModel ?? teamRole.model ?? provider.defaultModel;
   if (role !== 'supervisor') return baseModel;
   const supervisorTier = provider.supervisorModel ?? provider.supervisor_model;
   return supervisorTier ?? baseModel;

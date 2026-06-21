@@ -202,7 +202,7 @@ describe('buildAgentSystemPrompt', () => {
       undefined,
       undefined,
       undefined,
-      { provider: 'anthropic', modelId: 'claude-3-5-sonnet' }
+      { provider: 'anthropic', modelId: 'claude-sonnet-4-6' }
     );
 
     expect(systemClaude).toContain('## Workspace Rules');
@@ -229,7 +229,7 @@ describe('buildAgentSystemPrompt', () => {
       undefined,
       undefined,
       undefined,
-      { provider: 'google', modelId: 'gemini-2.5-flash' }
+      { provider: 'google', modelId: 'gemini-3.1-pro' }
     );
 
     expect(systemGemini).toContain('## Workspace Rules');

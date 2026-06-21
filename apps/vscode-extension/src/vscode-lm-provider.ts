@@ -188,10 +188,13 @@ function toLmTool(t: LLMToolSpec): vscode.LanguageModelChatTool {
 const PREFERRED_FAMILIES = [
   'gpt-4o',
   'gpt-4o-mini',
-  'claude-3.5-sonnet',
-  'claude-3-5-sonnet',
-  'claude-3.7-sonnet',
+  'claude-opus-4.8',
+  'claude-opus-4-8',
   'claude-sonnet-4',
+  'claude-sonnet-4.6',
+  'claude-sonnet-4-6',
+  'claude-haiku-4.5',
+  'claude-haiku-4-5',
 ];
 
 function orderCandidates(

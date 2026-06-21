@@ -52,7 +52,6 @@ import {
   filterDelegateTurnToolSet,
   getDelegateKind,
 } from './utils/delegate-turn.js';
-import { createProviderSafeFallbackHandler } from './utils/model-fallback.js';
 import { isDelegateMessage } from './services/run-reply-guard.js';
 import { collectCursorPages } from './utils/cursor-pages.js';
 
@@ -282,12 +281,12 @@ export class AiService {
         outputTokens: memResult.usage?.outputTokens,
         totalTokens: memResult.usage?.totalTokens,
       });
-      memDebugLogger.flush().catch();
+      memDebugLogger.flush().catch(() => undefined);
       return memResult;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       memDebugLogger.setError(message);
-      memDebugLogger.flush().catch();
+      memDebugLogger.flush().catch(() => undefined);
       throw err;
     }
   }
@@ -331,15 +330,7 @@ export class AiService {
       getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
       resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
       reasoningEffort,
-      // `member.model` is provider-specific to the agent's preferred
-      // provider. When `resolveSpiritModel` falls back to a different
-      // provider (e.g. the preferred one has no key), that override
-      // almost certainly isn't a valid id on the new provider —
-      // ignore it on fallback and let the provider/default chain
-      // resolve a usable id. The same rule applies to `r.model`,
-      // which `resolveSpiritModel` already clears on fallback.
-      resolveModelId: (r, p, _role, isFallback) =>
-        (isFallback ? undefined : member.model) ?? r.model ?? p.defaultModel,
+      resolveModelId: (r, p) => member.model ?? r.model ?? p.defaultModel,
     });
 
     // Mandatory-reply enforcement at the tool-palette layer.
@@ -591,8 +582,6 @@ export class AiService {
     // routinely exceed the per-turn cap when pasted inline or written via
     // tools. 4096 tokens across all wakes gives the model enough headroom.
     const turnMaxOutputTokens = 4096;
-    const providerName = normalizeProviderKey(member.llm ?? role.provider ?? '');
-    const provider = team.getProvider(providerName);
     const debugLogger = new AgentLoopLogger();
     debugLogger.setWorkspaceRoot(team.workspace.root);
     debugLogger.setContext({
@@ -638,15 +627,6 @@ export class AiService {
             cursor: interruptCursor,
             runId: input.runId,
           }),
-        onModelNotFound: createProviderSafeFallbackHandler({
-          logLabel: 'ai-service',
-          memberLabel: input.agentId,
-          providerKind: provider?.kind ?? '',
-          providerName,
-          getApiKey: (name) => this.repo.getProviderCredential(input.organizationId, name),
-          baseUrl: provider?.baseUrl,
-          reasoningEffort,
-        }),
         logLabel: 'ai-service',
         memberLabel: input.agentId,
       });
@@ -655,12 +635,12 @@ export class AiService {
         outputTokens: result.usage?.outputTokens,
         totalTokens: result.usage?.totalTokens,
       });
-      debugLogger.flush().catch();
+      debugLogger.flush().catch(() => undefined);
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       debugLogger.setError(message);
-      debugLogger.flush().catch();
+      debugLogger.flush().catch(() => undefined);
       throw err;
     }
   }

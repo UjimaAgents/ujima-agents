@@ -52,7 +52,6 @@ import {
   createMessageCursor,
   loadChannelInterruptModelMessages,
 } from '../utils/interrupt-loader.js';
-import { createSpiritModelNotFoundHandler } from '../utils/model-fallback.js';
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
 import { selectPromptContextMessages } from '../utils/prompt-context.js';
@@ -392,17 +391,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
           cursor: interruptCursor,
           runId: spirit.runId ?? spirit.id,
         }),
-        onModelNotFound: createSpiritModelNotFoundHandler({
-          logLabel: 'spirit-agent-run',
-          memberLabel: input.memberId,
-          resolve: () =>
-            this.modelResolver({
-              organizationId: input.organizationId,
-              memberId: input.memberId,
-              role,
-              forceSafeFallback: true,
-            }),
-        }),
         logLabel: 'spirit-agent-run',
         memberLabel: input.memberId,
       });
@@ -413,7 +401,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         outputTokens: usage?.outputTokens,
         totalTokens: usage?.totalTokens,
       });
-      debugLogger.flush().catch();
+      debugLogger.flush().catch(() => undefined);
 
       // Compute token counts early so they're available when persisting
       // the last step's message below.
@@ -517,7 +505,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         terminatingTool: finalTerminatingTool,
       };
     } catch (err) {
-      debugLogger.flush().catch();
+      debugLogger.flush().catch(() => undefined);
       const latestRun = this.repo.getRun(input.organizationId, runId);
       if (latestRun?.status === 'cancelled') {
         const cancelled: Spirit = SpiritSchema.parse({
@@ -646,7 +634,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       this.emit(SocketEventNames.spiritCompleted, failed);
       this.maybeFinalizeTaskSession(failed.organizationId, failed.taskSessionId, message);
       debugLogger.setError(message);
-      debugLogger.flush().catch();
+      debugLogger.flush().catch(() => undefined);
       throw err;
     } finally {
       this.runAbortControllers.delete(abortKey);

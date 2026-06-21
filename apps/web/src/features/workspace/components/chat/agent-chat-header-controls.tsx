@@ -41,7 +41,21 @@ export function AgentChatHeaderControls({
     [providers],
   );
 
-  const selectedModelValue = resolveMemberModelSelection(member, providers);
+  const selectedModelValue = resolveMemberModelSelection(member);
+  const selectedModelOptions = useMemo(() => {
+    if (!selectedModelValue || modelOptions.some((option) => option.value === selectedModelValue)) {
+      return modelOptions;
+    }
+    const parsed = parseConfiguredProviderModelValue(selectedModelValue);
+    const providerLabel = parsed ? (PROVIDER_LABELS[parsed.provider] ?? parsed.provider.charAt(0).toUpperCase() + parsed.provider.slice(1)) : selectedModelValue;
+    return [
+      {
+        value: selectedModelValue,
+        label: parsed ? `${providerLabel} · ${parsed.model}` : selectedModelValue,
+      },
+      ...modelOptions,
+    ];
+  }, [modelOptions, selectedModelValue]);
 
   const patchPreferences = async (body: {
     shellApprovalMode?: MemberShellApprovalMode;
@@ -101,7 +115,7 @@ export function AgentChatHeaderControls({
               if (!parsed) return;
               void patchPreferences({ llm: parsed.provider, model: parsed.model });
             }}
-            options={modelOptions}
+            options={selectedModelOptions}
             placeholder="Select model"
             className="w-[8.8rem] sm:w-40"
           />

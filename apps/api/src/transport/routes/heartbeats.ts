@@ -25,6 +25,13 @@ interface HeartbeatRouteDeps {
 
 const HEARTBEAT_TYPE = 'heartbeat' as const;
 
+function requireChannelId(channelId?: string): string {
+  if (!channelId) {
+    throw new Error('channelId is required');
+  }
+  return channelId;
+}
+
 export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRouteDeps): void {
   api.post('/heartbeats', {
     schema: {
@@ -46,7 +53,7 @@ export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRou
         name: req.body.name,
         cronExpression: req.body.cronExpression,
         prompt: req.body.prompt,
-        channelId: req.body.channelId,
+        channelId: requireChannelId(req.body.channelId),
         type: HEARTBEAT_TYPE,
       });
     } catch (error) {
@@ -114,6 +121,15 @@ export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRou
     const nextRunAt = resolveScheduledJobNextRunAt(existing, req.body, now);
     const cronChanged = req.body.cronExpression !== undefined;
     const activating = (req.body.status ?? existing.status) === 'active' && existing.status !== 'active';
+    let channelId: string;
+    try {
+      channelId = requireChannelId(req.body.channelId ?? existing.channelId);
+    } catch (error) {
+      return reply.status(400).send({
+        code: 'ERR_BAD_REQUEST',
+        message: error instanceof Error ? error.message : 'channelId is required',
+      });
+    }
     if ((cronChanged || activating) && !nextRunAt) {
       return reply.status(400).send({
         code: 'ERR_BAD_REQUEST',
@@ -123,6 +139,7 @@ export function registerHeartbeatRoutes(api: FastifyInstance, deps: HeartbeatRou
     const updated = ScheduledJobSchema.parse({
       ...existing,
       ...req.body,
+      channelId,
       type: HEARTBEAT_TYPE,
       nextRunAt,
       updatedAt: now.toISOString(),
