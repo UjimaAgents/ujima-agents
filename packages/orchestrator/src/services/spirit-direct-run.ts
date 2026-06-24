@@ -70,6 +70,8 @@ export class SpiritService extends SpiritServiceSupervisor {
         return failed;
       }
 
+      await this.replayApprovedToolsForSpirit(spirit);
+
       if (spirit.status === 'running') {
         return spirit;
       }
@@ -78,7 +80,6 @@ export class SpiritService extends SpiritServiceSupervisor {
         return spirit;
       }
 
-      await this.replayApprovedToolsForSpirit(spirit);
       return this.run({
         organizationId,
         taskSessionId: spirit.taskSessionId,

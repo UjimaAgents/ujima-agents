@@ -6,6 +6,7 @@ import { openDatabase } from '@ujima/context-store';
 import { loadAgentTeam } from '@ujima/framework';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
+  ApprovedRunScopeTracker,
   ConversationService,
   AuthService,
   GoalSystemService,
@@ -626,6 +627,7 @@ describe('workspace path hardening', () => {
         readDelegateThread: async () => [],
         sendToDelegate: async () => ({ sent: false, messageId: '' }),
       },
+      new ApprovedRunScopeTracker(),
     );
 
     const result = await onboarding.onboard({

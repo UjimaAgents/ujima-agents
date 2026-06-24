@@ -14,37 +14,46 @@ export interface ShellAutoReviewDecision {
   rationale: string;
 }
 
+const REVIEW_TIMEOUT_MS = 30_000;
+
 export class ShellAutoReviewService {
   async review(input: ShellAutoReviewInput): Promise<ShellAutoReviewDecision> {
     const command = formatShellCommand(input.scope);
     try {
-      const { text } = await generateText({
-        model: input.model,
-        system: [
-          'You are a security reviewer for shell commands requested by an AI agent.',
-          'Respond with a single JSON object only — no markdown fences, no prose.',
-          'Shape: {"decision":"approve"|"escalate","rationale":"short reason"}',
-          'Approve only when the command is clearly safe, scoped, and aligned with normal development work.',
-          'Escalate when the command is destructive, exfiltrates secrets, spans outside the workspace, or intent is unclear.',
-          'When uncertain, escalate.',
-        ].join('\n'),
-        prompt: [
-          `Agent: ${input.memberName}`,
-          `Role: ${input.roleName}`,
-          `Command: ${command}`,
-          input.scope.cwd ? `Working directory: ${input.scope.cwd}` : null,
-          input.policyReason ? `Policy note: ${input.policyReason}` : null,
-        ]
-          .filter(Boolean)
-          .join('\n'),
-        maxOutputTokens: 8_000,
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REVIEW_TIMEOUT_MS);
+      try {
+        const { text } = await generateText({
+          model: input.model,
+          system: [
+            'You are a security reviewer for shell commands requested by an AI agent.',
+            'Respond with a single JSON object only — no markdown fences, no prose.',
+            'Shape: {"decision":"approve"|"escalate","rationale":"short reason"}',
+            'Approve only when the command is clearly safe, scoped, and aligned with normal development work.',
+            'Escalate when the command is destructive, exfiltrates secrets, spans outside the workspace, or intent is unclear.',
+            'When uncertain, escalate.',
+          ].join('\n'),
+          prompt: [
+            `Agent: ${input.memberName}`,
+            `Role: ${input.roleName}`,
+            `Command: ${command}`,
+            input.scope.cwd ? `Working directory: ${input.scope.cwd}` : null,
+            input.policyReason ? `Policy note: ${input.policyReason}` : null,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          maxOutputTokens: 8_000,
+          abortSignal: controller.signal,
+        });
 
-      const parsed = parseReviewerJson(text);
-      if (!parsed) {
-        return { decision: 'escalate', rationale: 'Reviewer returned unparseable JSON' };
+        const parsed = parseReviewerJson(text);
+        if (!parsed) {
+          return { decision: 'escalate', rationale: 'Reviewer returned unparseable JSON' };
+        }
+        return parsed;
+      } finally {
+        clearTimeout(timeout);
       }
-      return parsed;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Reviewer failed';
       return { decision: 'escalate', rationale: message };
@@ -60,7 +69,7 @@ function formatShellCommand(scope: NormalizedShellScope): string {
   return parts.join(' ').trim() || '(empty command)';
 }
 
-function parseReviewerJson(
+export function parseReviewerJson(
   raw: string,
 ): ShellAutoReviewDecision | null {
   const trimmed = raw.trim();

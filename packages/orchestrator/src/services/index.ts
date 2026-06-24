@@ -60,6 +60,7 @@ import {
   type ToolService,
 } from './tool-service.js';
 import { ToolServiceImpl, type ApprovalRequester } from './tool-service-impl.js';
+import { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { modelContextWindowTokens } from '../utils/model-context-window.js';
 import type { AgentDelegateResult } from '../tools/types.js';
@@ -217,6 +218,7 @@ export {
   validateProviderKeys,
 } from './team.js';
 export type { TeamSummary } from './team.js';
+export { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 export { createPermissionGatedToolService } from './tool-service.js';
 export type {
   PermissionContextBuilder,
@@ -1160,6 +1162,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const attachmentStoreRoot = join(ujimaHome, 'attachments');
   const agentAttachmentRoot = join(attachmentStoreRoot, 'agent-generated');
 
+  const approvedRunScopes = new ApprovedRunScopeTracker();
+
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
@@ -1168,6 +1172,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     goals,
     context.realtime,
     delegateHandlers,
+    approvedRunScopes,
     context.mcpPool,
     spiritModelResolver,
     undefined,
@@ -1179,6 +1184,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     innerTools,
     context.permissions,
     context.buildPermissionContext,
+    approvedRunScopes,
     approvalRequester.requestApproval,
     (invocation, approvalId) => {
       saveBlockedToolRunStep(

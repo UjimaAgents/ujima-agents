@@ -87,6 +87,7 @@ export {
   IMPLEMENT_QUESTION_TEXT,
   publishGoalTaskUpdatedCard,
   taskRunChannelId,
+  ApprovedRunScopeTracker,
   ToolServiceImpl,
   createApiServices,
   createPermissionGatedToolService,
