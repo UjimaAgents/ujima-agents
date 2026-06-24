@@ -40,6 +40,18 @@ function findChannel(
   );
 }
 
+// Channel-scoped delegation threads are created server-side as
+// `delegate:<uuid>` (see createDelegateRun). They are not listed in
+// bootstrap.channels, so the only way a deep-link / reload can reopen one
+// is to recognize the prefix and pass the synthetic id straight through —
+// the server authorizes the owner to read agent-only delegation threads.
+const DELEGATION_THREAD_PREFIX = "delegate:";
+
+function resolveDelegationThread(value: string): SelectedConversation | undefined {
+  if (!value.startsWith(DELEGATION_THREAD_PREFIX)) return;
+  return { type: "channel", id: value, name: "Delegation" };
+}
+
 function resolveAgentOnlyDm(
   bootstrap: BootstrapResponse,
   value: string,
@@ -75,6 +87,9 @@ export function resolveSelectedConversationFromSearchParams(
     if (channel) {
       return { type: "channel", id: channel.id, name: channel.name };
     }
-    return resolveAgentOnlyDm(bootstrap, channelValue);
+    return (
+      resolveDelegationThread(channelValue) ??
+      resolveAgentOnlyDm(bootstrap, channelValue)
+    );
   }
 }

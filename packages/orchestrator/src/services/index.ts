@@ -434,14 +434,13 @@ function postDelegateDoneMarker(
   const delegate = message?.metadata?.delegate as DelegateMetadata | undefined;
   if (!message || !delegate?.parentChannelId || delegate.markerPosted) return;
 
-  repo.updateMessage({
-    ...message,
-    metadata: {
-      ...message.metadata,
-      delegate: { ...delegate, markerPosted: true } as NonNullable<Message['metadata']>['delegate'],
-    } as Message['metadata'],
-  });
-
+  // Post the marker FIRST, then persist `markerPosted: true` only after
+  // the send succeeds. If we flipped the flag first and sendMessage threw,
+  // the marker would be lost forever and every retry suppressed because
+  // the delegate message already looks "done". Send-then-flag means a
+  // failed send leaves the flag false so a retry re-attempts; the only
+  // downside (a duplicate marker if the flag write itself fails after a
+  // good send) is strictly preferable to a silently dropped completion.
   const trimmed = summary ? summarizeDelegateTask(summary) : '';
   conversations.sendMessage({
     organizationId,
@@ -456,6 +455,14 @@ function postDelegateDoneMarker(
         delegationThreadId: message.threadId,
       },
     },
+  });
+
+  repo.updateMessage({
+    ...message,
+    metadata: {
+      ...message.metadata,
+      delegate: { ...delegate, markerPosted: true } as NonNullable<Message['metadata']>['delegate'],
+    } as Message['metadata'],
   });
 }
 

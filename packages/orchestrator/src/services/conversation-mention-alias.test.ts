@@ -48,7 +48,7 @@ describe('mention resolution with suffix-stripped aliases', () => {
     expect(resolveIds([laylaReds, laylaLane], '@Layla Lane ping')).toEqual(['m_lane']);
   });
 
-  it('does NOT alias an ambiguous base shared by two members', () => {
+  it('does NOT alias an ambiguous base shared by two suffixed members', () => {
     // Two members strip to the same base "Bob" → alias withheld, so a bare
     // "@Bob" resolves to neither rather than silently the wrong one.
     const bobOsint = { id: 'm_bo', name: 'Bob ( OSINT )' };
@@ -56,5 +56,16 @@ describe('mention resolution with suffix-stripped aliases', () => {
     expect(resolveIds([bobOsint, bobSales], '@Bob take a look')).toEqual([]);
     // The fully-qualified names still resolve.
     expect(resolveIds([bobOsint, bobSales], '@Bob ( Sales ) take a look')).toEqual(['m_bs']);
+  });
+
+  it('does NOT let a suffixed member hijack a plain member with the same base name', () => {
+    // "Layla Reds" (plain) + "Layla Reds ( OSINT )": the stripped base
+    // collides with the plain member's FULL name, so the alias must be
+    // withheld — bare "@Layla Reds" resolves to the plain member only.
+    const plain = { id: 'm_plain', name: 'Layla Reds' };
+    const osint = { id: 'm_osint', name: 'Layla Reds ( OSINT )' };
+    expect(resolveIds([plain, osint], '@Layla Reds ping')).toEqual(['m_plain']);
+    // The suffixed member is still reachable by its full name.
+    expect(resolveIds([plain, osint], '@Layla Reds ( OSINT ) ping')).toEqual(['m_osint']);
   });
 });

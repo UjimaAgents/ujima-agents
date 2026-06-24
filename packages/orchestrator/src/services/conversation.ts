@@ -66,34 +66,50 @@ export function stripMentionSuffix(name: string): string {
  * exact `startsWith(handle)` match fails (the typed text never contains
  * "( OSINT )"), so the agent is never treated as addressed and stands
  * down as a passive broadcast bystander. The alias is only registered
- * when exactly one member shares that stripped base, so an ambiguous
- * base (two members differing only by suffix) stays unaliased rather
- * than silently resolving to the wrong agent.
+ * when exactly one member could answer to that base, so an ambiguous
+ * base stays unaliased rather than silently resolving to the wrong
+ * agent. A base is ambiguous if it collides with ANY other member's
+ * base — whether that other member reaches it via its own stripped
+ * suffix ("Layla Reds ( Sales )") OR via its plain full name ("Layla
+ * Reds"). The plain-name case is the important one: last-write-wins in
+ * buildMentionHandleRegistry would otherwise let a suffixed member
+ * hijack the bare name of a differently-named plain member.
  */
 export function buildMemberMentionEntries(
   members: readonly { id: string; name: string }[],
   valueOf: (member: { id: string; name: string }) => string,
 ): { handle: string; value: string }[] {
-  const strippedCounts = new Map<string, number>();
-  for (const member of members) {
-    const stripped = stripMentionSuffix(member.name);
-    if (stripped && stripped.toLowerCase() !== member.name.toLowerCase()) {
-      const key = stripped.toLowerCase();
-      strippedCounts.set(key, (strippedCounts.get(key) ?? 0) + 1);
+  // For each candidate base (lowercased), the set of member ids that
+  // could be addressed by it — via either the full name or the
+  // suffix-stripped base. Size > 1 ⇒ ambiguous ⇒ no alias.
+  const ownersByBase = new Map<string, Set<string>>();
+  const addOwner = (base: string, id: string): void => {
+    const key = base.toLowerCase();
+    if (!key) return;
+    let owners = ownersByBase.get(key);
+    if (!owners) {
+      owners = new Set();
+      ownersByBase.set(key, owners);
     }
+    owners.add(id);
+  };
+  for (const member of members) {
+    addOwner(member.name, member.id);
+    addOwner(stripMentionSuffix(member.name), member.id);
   }
+
   const entries: { handle: string; value: string }[] = [];
   for (const member of members) {
     const value = valueOf(member);
     entries.push({ handle: member.id, value });
     entries.push({ handle: member.name, value });
     const stripped = stripMentionSuffix(member.name);
-    if (
-      stripped &&
-      stripped.toLowerCase() !== member.name.toLowerCase() &&
-      strippedCounts.get(stripped.toLowerCase()) === 1
-    ) {
-      entries.push({ handle: stripped, value });
+    if (stripped && stripped.toLowerCase() !== member.name.toLowerCase()) {
+      const owners = ownersByBase.get(stripped.toLowerCase());
+      // Only alias when this member is the SOLE owner of the base.
+      if (owners && owners.size === 1 && owners.has(member.id)) {
+        entries.push({ handle: stripped, value });
+      }
     }
   }
   return entries;
