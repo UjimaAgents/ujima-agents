@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
-import { CheckCircle2, ChevronDown, Copy, Loader2, Maximize2, Sparkles } from "lucide-react";
+import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Loader2, Maximize2, Sparkles } from "lucide-react";
 import { type AttachmentCategory } from "@ujima/shared/browser";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
@@ -59,11 +59,27 @@ export interface ChatMessageData {
     content: string;
   };
   detail?: string;
+  /**
+   * Present on the in-channel pointer posted when a delegation runs as a
+   * channel-scoped thread. Rendered as a compact, clickable row that opens
+   * the delegation thread.
+   */
+  delegateMarker?: {
+    delegationThreadId: string;
+    kind: "start" | "done";
+    agentName?: string;
+  };
   tag?: { label: string; variant: TagVariant };
   status?: "success" | "warning";
   pending?: boolean;
   inputTokens?: number;
   outputTokens?: number;
+  /**
+   * Trace-only reasoning record for a silent (channel.pass) turn — empty
+   * `content`. Kept in the store for the reasoning trace but filtered out
+   * of the rendered timeline so it doesn't show as a blank bubble.
+   */
+  traceOnly?: boolean;
 }
 
 const DRAG_THRESHOLD = 30;
@@ -87,7 +103,7 @@ export const ChatMessage = memo(function ChatMessage({
   organizationId?: string;
   members?: BootstrapResponse["members"];
   onOpenTasksTab?: () => void;
-  onNavigateChannel?: (channelId: string) => void;
+  onNavigateChannel?: (channelId: string, fallbackName?: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
@@ -159,6 +175,23 @@ export const ChatMessage = memo(function ChatMessage({
       inlineCards.length > 0 &&
       (isBoilerplateStepContent(message.content) || message.kind === "system")
     );
+
+  if (message.delegateMarker) {
+    const marker = message.delegateMarker;
+    return (
+      <button
+        type="button"
+        onClick={() => onNavigateChannel?.(marker.delegationThreadId, marker.agentName)}
+        className="flex w-full items-center gap-2 rounded-lg border border-dashed border-violet-300/60 bg-violet-50/40 px-3 py-1.5 text-left text-xs text-violet-700 transition hover:border-violet-400 hover:bg-violet-50 dark:border-violet-500/30 dark:bg-violet-500/5 dark:text-violet-300 dark:hover:bg-violet-500/10"
+      >
+        <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{message.content}</span>
+        <span className="shrink-0 font-medium underline-offset-2 group-hover:underline">
+          Open thread
+        </span>
+      </button>
+    );
+  }
 
   return (
     <>

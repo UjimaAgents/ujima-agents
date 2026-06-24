@@ -43,6 +43,10 @@ describe('runAgentLoop interrupts', () => {
       prepareStep: (input: { stepNumber: number; messages: ModelMessage[] }) => Promise<{ messages: ModelMessage[] } | undefined>;
     }) => ({
       fullStream: {
+        // This mock drives the loop entirely through the onStepFinish /
+        // stopWhen / prepareStep callbacks rather than emitting stream parts,
+        // so the async iterator intentionally yields nothing.
+        // eslint-disable-next-line require-yield
         async *[Symbol.asyncIterator]() {
           const firstStep = { text: 'Done.' };
           await options.onStepFinish(firstStep);

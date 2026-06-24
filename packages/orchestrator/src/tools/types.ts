@@ -107,6 +107,14 @@ export interface BuildSchemaContext {
   organizationId: string;
   memberId: string;
   repo: RepositoryReader;
+  /**
+   * Whether this invocation is happening inside a channel or a 1:1 DM
+   * thread. Lets schema factories constrain affordances by surface —
+   * e.g. `channel.dm` drops the agent roster (allowing only `self`)
+   * when the run originates in a channel, so agents collaborate
+   * in-channel via `@`-mentions instead of siloing into private DMs.
+   */
+  conversationKind: 'dm' | 'channel';
 }
 
 export interface OrchestratorTool<TArgs extends z.ZodTypeAny = z.ZodTypeAny> {

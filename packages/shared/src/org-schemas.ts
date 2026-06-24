@@ -267,6 +267,15 @@ export const MessageMetadataSchema = z.object({
   delegate: z.object({
     id: IdSchema.optional(),
     parentRunId: IdSchema.optional(),
+    /**
+     * Channel the delegation was initiated from. Present when the
+     * delegation runs as a channel-scoped thread (Slack-style) rather
+     * than a private DM; used to post the in-channel pointer and to
+     * route the completion marker back to the right channel.
+     */
+    parentChannelId: IdSchema.optional(),
+    /** Guards the in-channel completion marker so it fires exactly once. */
+    markerPosted: z.boolean().optional(),
     kind: z.enum(['worker', 'explorer']).optional(),
     index: z.number().int().nonnegative().optional(),
     status: z.enum([
@@ -281,6 +290,18 @@ export const MessageMetadataSchema = z.object({
       'waiting_for_input',
       'cancelled',
     ]).optional(),
+  }).optional(),
+  /**
+   * Lightweight, clickable pointer posted into the main channel when a
+   * delegation runs as a channel-scoped thread. Lets the channel show
+   * that delegation happened (and its outcome) and links into the
+   * delegate thread without flooding the main feed.
+   */
+  delegateMarker: z.object({
+    kind: z.enum(['start', 'done']),
+    delegationThreadId: IdSchema,
+    to: IdSchema.optional(),
+    agentName: z.string().min(1).optional(),
   }).optional(),
   /**
    * Set by the `channel.handoff` tool. `complete: true` signals

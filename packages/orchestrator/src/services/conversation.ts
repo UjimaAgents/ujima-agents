@@ -49,6 +49,56 @@ import {
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { DelegateKind } from '../utils/delegate-turn.js';
 
+/**
+ * Strip a trailing parenthetical role/disambiguation suffix from a
+ * member display name: "Layla Reds ( OSINT )" → "Layla Reds". Used to
+ * register a bare-name mention alias so "@Layla Reds" resolves.
+ */
+export function stripMentionSuffix(name: string): string {
+  return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+/**
+ * Mention-handle entries for a member list: the id, the full display
+ * name, AND — when unique — the name with its trailing parenthetical
+ * suffix stripped. The suffix alias is what lets "@Layla Reds" resolve
+ * to a member named "Layla Reds ( OSINT )": without it the scanner's
+ * exact `startsWith(handle)` match fails (the typed text never contains
+ * "( OSINT )"), so the agent is never treated as addressed and stands
+ * down as a passive broadcast bystander. The alias is only registered
+ * when exactly one member shares that stripped base, so an ambiguous
+ * base (two members differing only by suffix) stays unaliased rather
+ * than silently resolving to the wrong agent.
+ */
+export function buildMemberMentionEntries(
+  members: readonly { id: string; name: string }[],
+  valueOf: (member: { id: string; name: string }) => string,
+): { handle: string; value: string }[] {
+  const strippedCounts = new Map<string, number>();
+  for (const member of members) {
+    const stripped = stripMentionSuffix(member.name);
+    if (stripped && stripped.toLowerCase() !== member.name.toLowerCase()) {
+      const key = stripped.toLowerCase();
+      strippedCounts.set(key, (strippedCounts.get(key) ?? 0) + 1);
+    }
+  }
+  const entries: { handle: string; value: string }[] = [];
+  for (const member of members) {
+    const value = valueOf(member);
+    entries.push({ handle: member.id, value });
+    entries.push({ handle: member.name, value });
+    const stripped = stripMentionSuffix(member.name);
+    if (
+      stripped &&
+      stripped.toLowerCase() !== member.name.toLowerCase() &&
+      strippedCounts.get(stripped.toLowerCase()) === 1
+    ) {
+      entries.push({ handle: stripped, value });
+    }
+  }
+  return entries;
+}
+
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
 const WAKEABLE_AGENT_DM_TERMINATORS = new Set([
@@ -67,6 +117,10 @@ interface ConversationMessageMetadata {
   delegate?: {
     id?: string;
     parentRunId?: string;
+    /** Channel a channel-scoped delegation was initiated from (Slack-style). */
+    parentChannelId?: string;
+    /** Guards the in-channel completion marker so it fires exactly once. */
+    markerPosted?: boolean;
     kind?: DelegateKind;
     index?: number;
     status?:
@@ -80,6 +134,13 @@ interface ConversationMessageMetadata {
       | 'waiting_for_approval'
       | 'waiting_for_input'
       | 'cancelled';
+  };
+  /** Clickable pointer posted into the parent channel for a channel-scoped delegation. */
+  delegateMarker?: {
+    kind: 'start' | 'done';
+    delegationThreadId: string;
+    to?: string;
+    agentName?: string;
   };
 }
 
@@ -1600,10 +1661,7 @@ export class ConversationService {
   ): string[] {
     const mentionIds = new Set<string>(explicitMentionIds);
     const registry = buildMentionHandleRegistry(
-      this.repo.listMembers(organizationId).flatMap((member) => [
-        { handle: member.id, value: member.id },
-        { handle: member.name, value: member.id },
-      ]),
+      this.memberMentionEntries(organizationId, (member) => member.id),
     );
 
     scanMentionsInContent(content, registry, {
@@ -1648,10 +1706,7 @@ export class ConversationService {
     channel: Channel | null,
   ): string[] {
     const registry = buildMentionHandleRegistry(
-      this.repo.listMembers(organizationId).flatMap((member) => [
-        { handle: member.id, value: member.name },
-        { handle: member.name, value: member.name },
-      ]),
+      this.memberMentionEntries(organizationId, (member) => member.name),
     );
 
     scanMentionsInContent(content, registry, {
@@ -1663,6 +1718,16 @@ export class ConversationService {
     });
 
     return [...registry.values];
+  }
+
+  private memberMentionEntries(
+    organizationId: string,
+    valueOf: (member: { id: string; name: string }) => string,
+  ): { handle: string; value: string }[] {
+    return buildMemberMentionEntries(
+      this.repo.listMembers(organizationId),
+      valueOf,
+    );
   }
 
   private decorateMessages(

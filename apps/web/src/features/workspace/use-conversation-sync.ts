@@ -503,8 +503,16 @@ export function useConversationSync(
       ? archivingState.mode
       : null;
 
+  // Trace-only records (silent channel.pass reasoning with empty content)
+  // stay in the store for the reasoning trace but must not render as blank
+  // bubbles in the timeline.
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => !message.traceOnly),
+    [messages],
+  );
+
   return {
-    messages,
+    messages: visibleMessages,
     approvals,
     runs,
     activity,
@@ -880,8 +888,20 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     pending: false,
     inputTokens: message.inputTokens,
     outputTokens: message.outputTokens,
+    ...(message.metadata?.traceOnly ? { traceOnly: true } : {}),
     ...(message.metadata?.runId ? { streamRunId: message.metadata.runId } : {}),
     ...(messageModeTag(message.metadata) ? { tag: messageModeTag(message.metadata) } : {}),
+    ...(message.metadata?.delegateMarker
+      ? {
+          delegateMarker: {
+            delegationThreadId: message.metadata.delegateMarker.delegationThreadId,
+            kind: message.metadata.delegateMarker.kind,
+            ...(message.metadata.delegateMarker.agentName
+              ? { agentName: message.metadata.delegateMarker.agentName }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 

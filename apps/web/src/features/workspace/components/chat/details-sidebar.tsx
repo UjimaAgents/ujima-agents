@@ -177,7 +177,7 @@ function AggregatedRunPanel({
 
   const counts = operations.reduce<Record<AggregatedOperation["type"], number>>(
     (acc, op) => ({ ...acc, [op.type]: (acc[op.type] ?? 0) + 1 }),
-    { edit: 0, delete: 0, read: 0, search: 0, shell: 0, tool: 0, memory: 0, goal: 0, question: 0, procedure: 0, schedule: 0, message: 0 },
+    { edit: 0, delete: 0, read: 0, search: 0, shell: 0, tool: 0, memory: 0, goal: 0, question: 0, procedure: 0, schedule: 0, message: 0, delegate: 0 },
   );
   const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
   const summaryParts = [

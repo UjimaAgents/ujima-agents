@@ -5,6 +5,7 @@ import { requireTeam } from './require-team.js';
 import {
   defaultResolveModelId,
   defaultResolveProviderName,
+  makeProviderModelsInUseLookup,
   resolveSpiritModel,
 } from './to-model-messages.js';
 
@@ -27,6 +28,8 @@ export function createSpiritModelResolver(
       getProviderCredential: (orgId, key) => repo.getProviderCredential(orgId, key),
       resolveProviderName: defaultResolveProviderName,
       resolveModelId: defaultResolveModelId,
+      listConfiguredProviders: () => repo.listProviderCredentials(organizationId),
+      listProviderModelsInUse: makeProviderModelsInUseLookup(repo, organizationId),
       reasoningEffort,
     });
   };

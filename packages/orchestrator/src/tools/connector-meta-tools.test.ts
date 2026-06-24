@@ -13,6 +13,7 @@ import type {
 import {
   buildConnectorMetaTools,
   hasEgressSignals,
+  isServerAttachedToSpirit,
   type ConnectorMetaToolRepo,
 } from './connector-meta-tools.js';
 
@@ -416,6 +417,49 @@ describe('meta-tools enforce attachment scope (same boundary as the legacy spawn
     expect(toolService.lastInvocation).toBeNull();
   });
 
+});
+
+describe('isServerAttachedToSpirit — §17.5.3 union (native-invoke + meta-tools share this gate)', () => {
+  const server = makeServer(); // id 'srv_x'
+
+  it('accepts per-agent attachments', () => {
+    const repo = stubRepo({ server, attached: true });
+    expect(
+      isServerAttachedToSpirit(repo, 'org_test', 'mem_test', 'srv_x', 'worker'),
+    ).toBe(true);
+  });
+
+  it('accepts channel-inherited attachments not present in the per-agent set', () => {
+    // The exact live regression: tools appear in the native palette via
+    // the channel attachment, but the per-agent set is empty. Without
+    // the channel branch the invoke gate would throw "not attached".
+    const repo = stubRepo({
+      server,
+      attached: false,
+      channelAttachments: [{ mcpServerId: 'srv_x', scope: 'both' }],
+    });
+    expect(
+      isServerAttachedToSpirit(repo, 'org_test', 'mem_test', 'srv_x', 'worker'),
+    ).toBe(true);
+  });
+
+  it('honours channel scope — a supervisor-only channel row is not reachable from a worker turn', () => {
+    const repo = stubRepo({
+      server,
+      attached: false,
+      channelAttachments: [{ mcpServerId: 'srv_x', scope: 'supervisor' }],
+    });
+    expect(
+      isServerAttachedToSpirit(repo, 'org_test', 'mem_test', 'srv_x', 'worker'),
+    ).toBe(false);
+  });
+
+  it('rejects a server attached neither per-agent nor via any channel', () => {
+    const repo = stubRepo({ server, attached: false });
+    expect(
+      isServerAttachedToSpirit(repo, 'org_test', 'mem_test', 'srv_x', 'worker'),
+    ).toBe(false);
+  });
 });
 
 describe('hasEgressSignals — egress classifier contract', () => {

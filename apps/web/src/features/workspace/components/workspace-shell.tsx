@@ -15,6 +15,7 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/shared/browser";
 import { ChannelView } from "./channel-view";
 import { ChannelGoalsBoard } from "./channel-goals-board";
+import { GlobalApprovalIndicator } from "./global-approval-indicator";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
@@ -585,6 +586,7 @@ export function WorkspaceShell(props: {
         open={searchPaletteOpen}
         onOpenChange={setSearchPaletteOpen}
       />
+      {organizationId ? <GlobalApprovalIndicator organizationId={organizationId} /> : null}
     </div>
   );
 }

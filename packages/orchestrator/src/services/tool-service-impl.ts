@@ -52,6 +52,7 @@ import { normalizeShellScope } from "./shell-scope.js";
 import type { ModelResolver } from "./spirit-types.js";
 import { ShellAutoReviewService } from "./shell-auto-review.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
+import { isServerAttachedToSpirit } from "../tools/connector-meta-tools.js";
 import { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
 import { formatReadableToolOutput } from "../utils/tool-output.js";
 import { isPathScopedToolId, usesPathResolution } from "../path-scoped-tools.js";
@@ -570,16 +571,36 @@ export class ToolServiceImpl implements ToolService {
     }
 
     const role = invocation.spiritRole ?? "worker";
-    const attachment = this.repo
-      .listAttachedServersForSpirit(invocation.organizationId, invocation.memberId, role)
-      .find((current) => current.server.id === serverId);
-    if (!attachment) {
+    // Validate against the §17.5.3 union: per-agent attachments AND the
+    // channel attachments the member inherits via channel membership.
+    // The V2 spawn builds the native palette from the same union
+    // (resolveConnectorCatalog), and the dispatch meta-tools gate on this
+    // exact helper — so re-checking per-agent rows alone here would reject
+    // a channel-attached tool that's legitimately in the agent's toolset:
+    // it appears in the palette yet throws "not attached" on invoke.
+    // Reusing isServerAttachedToSpirit keeps the spawn, dispatch, and
+    // native-invoke surfaces in lock-step.
+    if (
+      !isServerAttachedToSpirit(
+        this.repo,
+        invocation.organizationId,
+        invocation.memberId,
+        serverId,
+        role,
+      )
+    ) {
+      throw new Error(
+        `MCP server "${serverId}" is not attached to member "${invocation.memberId}" for ${role} spirits`,
+      );
+    }
+    const server = this.repo.getMcpServer(invocation.organizationId, serverId);
+    if (!server) {
       throw new Error(
         `MCP server "${serverId}" is not attached to member "${invocation.memberId}" for ${role} spirits`,
       );
     }
 
-    const def = materializeMcpDef(this.repo, attachment.server);
+    const def = materializeMcpDef(this.repo, server);
     // Use the org's workspace_root as the child cwd so file
     // outputs land where the agent expects.
     const org = this.repo.getOrganization(invocation.organizationId);

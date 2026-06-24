@@ -80,10 +80,15 @@ describe('channel.* tools — toInvocation()', () => {
   });
 
   describe('channel.dm delivery', () => {
+    // Default to a DM-thread context: agent-to-agent / agent-to-human DMs are
+    // only allowed when the run originates in a DM thread (see the
+    // dm_blocked_in_channel guard). Channel-context runs are exercised
+    // separately below by passing a non-DM threadId (or none).
     const baseInvocation = (memberId: string) => ({
       organizationId: 'org-1',
       runId: 'run-1',
       memberId,
+      threadId: 'dm:agent-1:agent-2',
       toolCallId: 'call-1',
       toolId: 'channel.dm',
       action: 'message',
@@ -154,6 +159,80 @@ describe('channel.* tools — toInvocation()', () => {
         } as never,
       });
       expect(sent).toBe(true);
+    });
+
+    it('blocks DMing a teammate from a channel run (no DM thread)', async () => {
+      let sent = false;
+      const result = await channelDmTool.execute({
+        invocation: {
+          ...baseInvocation('agent-1'),
+          // Channel-context run: threadId is a channel thread, not a DM.
+          threadId: 'channel-thread-1',
+          input: { member_id: 'agent-2', body: 'psst', mentions: [] },
+        } as never,
+        team: {} as never,
+        repo: repoWith({
+          'agent-1': { id: 'agent-1', name: 'Layla', kind: 'agent' },
+          'agent-2': { id: 'agent-2', name: 'Phoebe', kind: 'agent' },
+        }),
+        conversations: {
+          tryMirrorSuppress: () => false,
+          sendDirectMessage: () => {
+            sent = true;
+            return { id: 'm1' };
+          },
+        } as never,
+      });
+      expect(sent).toBe(false);
+      expect(result).toMatchObject({ status: 'dm_blocked_in_channel', message_sent: false });
+    });
+
+    it('still allows a self-note from a channel run', async () => {
+      let sent = false;
+      await channelDmTool.execute({
+        invocation: {
+          ...baseInvocation('agent-1'),
+          threadId: 'channel-thread-1',
+          input: { member_id: 'self', body: 'note', mentions: [] },
+        } as never,
+        team: {} as never,
+        repo: repoWith({ 'agent-1': { id: 'agent-1', name: 'Layla', kind: 'agent' } }),
+        conversations: {
+          tryMirrorSuppress: () => false,
+          sendDirectMessage: () => {
+            sent = true;
+            return { id: 'm1' };
+          },
+        } as never,
+      });
+      expect(sent).toBe(true);
+    });
+  });
+
+  describe('buildDmSchemaForOrg — conversationKind constraint', () => {
+    const ctx = (conversationKind?: 'channel' | 'dm') => ({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      conversationKind,
+      repo: {
+        listMembers: () => [
+          { id: 'agent-1', name: 'Agent One', kind: 'agent' },
+          { id: 'agent-2', name: 'Phoebe', kind: 'agent' },
+        ],
+      },
+    });
+
+    it('constrains member_id to "self" only for channel runs', () => {
+      const schema = channelDmTool.buildSchema?.(ctx('channel') as never);
+      expect(schema).toBeDefined();
+      expect(schema!.safeParse({ member_id: 'self', body: 'note', mentions: [] }).success).toBe(true);
+      expect(schema!.safeParse({ member_id: 'agent-2', body: 'hi', mentions: [] }).success).toBe(false);
+    });
+
+    it('keeps the full roster for DM runs', () => {
+      const schema = channelDmTool.buildSchema?.(ctx('dm') as never);
+      expect(schema).toBeDefined();
+      expect(schema!.safeParse({ member_id: 'agent-2', body: 'hi', mentions: [] }).success).toBe(true);
     });
   });
 

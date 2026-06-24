@@ -20,7 +20,7 @@ import {
   CollapsibleHeaderActions,
   DetailsSidebar,
   ChatMessage,
-  ApprovalCard,
+  ApprovalQueue,
   type ChatTab,
   type ChatMessageData,
 } from "./chat";
@@ -799,10 +799,16 @@ export function ChannelView({
   }, [handleTabChange]);
 
   const handleNavigateChannel = useCallback(
-    (channelId: string) => {
+    (channelId: string, fallbackName?: string) => {
       const channel = channelById.get(channelId);
-      if (!channel) return;
-      onSelectConversation?.({ type: "channel", id: channel.id, name: channel.name });
+      if (channel) {
+        onSelectConversation?.({ type: "channel", id: channel.id, name: channel.name });
+        return;
+      }
+      // Not a known channel — e.g. a channel-scoped delegation thread.
+      // Open it directly by thread id (the server allows the owner to read
+      // agent-only threads).
+      onSelectConversation?.({ type: "channel", id: channelId, name: fallbackName ?? "Delegation" });
     },
     [channelById, onSelectConversation],
   );
@@ -1070,16 +1076,12 @@ export function ChannelView({
             <TabPanel><MemberListSkeleton /></TabPanel>
           ) : visibleApprovals.length > 0 ? (
             <TabPanel>
-              <div className="space-y-2">
-                {visibleApprovals.map((approval) => (
-                  <ApprovalCard
-                    key={approval.id}
-                    data={{ ...approval, error: approvalErrors[approval.id] }}
-                    resolving={!!resolvingApprovals[approval.id]}
-                    onResolve={resolveApproval}
-                  />
-                ))}
-              </div>
+              <ApprovalQueue
+                approvals={visibleApprovals}
+                resolving={resolvingApprovals}
+                errors={approvalErrors}
+                onResolve={resolveApproval}
+              />
             </TabPanel>
           ) : (
             <TabEmpty context="approvals" label="No approvals." />
@@ -1239,14 +1241,12 @@ export function ChannelView({
               {stopError ? (
                 <p className="text-[11px] text-red-500">{stopError}</p>
               ) : null}
-              {pendingThreadApprovals.map((approval) => (
-                <ApprovalCard
-                  key={approval.id}
-                  data={{ ...approval, error: approvalErrors[approval.id] }}
-                  resolving={!!resolvingApprovals[approval.id]}
-                  onResolve={resolveApproval}
-                />
-              ))}
+              <ApprovalQueue
+                approvals={pendingThreadApprovals}
+                resolving={resolvingApprovals}
+                errors={approvalErrors}
+                onResolve={resolveApproval}
+              />
               {activeQuestion ? (
                 <QuestionCard
                   key={activeQuestion.id}
