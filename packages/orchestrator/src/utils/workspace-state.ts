@@ -6,8 +6,8 @@ import type { ApiRepository } from '../services/repository-reader.js';
  * Companion to the existing `<thread-state>`: where thread-state
  * answers "who said what in this thread", workspace-state answers
  * "what does this agent currently OWN across the whole workspace?"
- * Surfaces recent artifact paths (from `run_steps` write/edit calls),
- * recent decision-log entries, and memory for the current channel.
+ * Surfaces recent artifact paths (from `run_steps` write/edit calls)
+ * and recent decision-log entries for the current channel.
  *
  * Read-only — no new tables, no new write paths. Just a projection
  * of `run_steps` + `decision_log` shaped for the model.

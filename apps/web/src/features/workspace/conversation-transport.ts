@@ -17,6 +17,12 @@ export interface ConversationMessageMetadata {
   goalMode?: boolean;
   scheduleMode?: boolean;
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Trace-only messages carry an agent's reasoning for a silent
+   * (channel.pass) turn with empty `content`. They feed the reasoning
+   * trace but must NOT render as (blank) bubbles in the channel timeline.
+   */
+  traceOnly?: boolean;
 }
 
 export type ConversationStreamEnvelope =

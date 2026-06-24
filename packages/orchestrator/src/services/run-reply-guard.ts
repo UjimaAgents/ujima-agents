@@ -1,6 +1,4 @@
-import {
-  normalizeToDottedToolName,
-} from '@ujima/agent-core';
+import { normalizeToDottedToolName } from '@ujima/agent-core';
 
 export { RUN_TERMINATING_TOOL_NAMES, normalizeToDottedToolName } from '@ujima/agent-core';
 

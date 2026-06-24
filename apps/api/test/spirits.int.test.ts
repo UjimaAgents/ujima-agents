@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import type { LanguageModel } from 'ai';
@@ -73,7 +73,15 @@ function mcpDef(id: string, name: string): MCPDef {
 describe('SpiritService — Phase 2.A lifecycle', () => {
   const tempDirs: string[] = [];
   afterEach(async () => {
-    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    vi.unstubAllEnvs();
+    // maxRetries rides out the race where a spawned spirit's agent-loop is
+    // still flushing files into <dir>/.agent-loop as cleanup runs — without
+    // it, rm throws ENOTEMPTY and fails the (otherwise-passing) test.
+    await Promise.all(
+      tempDirs
+        .splice(0)
+        .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })),
+    );
   });
 
   it('spawn is idempotent per (session, member, role) triple and registers in ActiveSpiritRegistry', async () => {
@@ -304,6 +312,13 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
   });
 
   it('surfaces cached MCP tools when live listTools fails', async () => {
+    // These three cases exercise the legacy `mcpResolver` spawn path
+    // (cache fallback, unique ids, permission-name namespacing). The V2
+    // dispatch path is now default-on (feature-flags §13.2 flip) and
+    // builds its palette from repo attachments via resolveConnectorCatalog
+    // — ignoring the injected resolver — so pin the legacy kill switch to
+    // keep covering the resolver mechanics until that path is retired.
+    vi.stubEnv('UJIMA_MCP_DISPATCH', 'false');
     const capturedToolNames: string[][] = [];
     const serverId = 'server-cached';
     const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
@@ -353,6 +368,7 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
   });
 
   it('keeps MCP tool ids unique for servers whose names sanitize the same way', async () => {
+    vi.stubEnv('UJIMA_MCP_DISPATCH', 'false'); // legacy resolver path (see note above)
     const capturedToolNames: string[][] = [];
     const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
       get: async () => ({
@@ -400,6 +416,7 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
   });
 
   it('namespaces MCP permission tool names away from built-in tool names', async () => {
+    vi.stubEnv('UJIMA_MCP_DISPATCH', 'false'); // legacy resolver path (see note above)
     const invocations: ToolInvocationInput[] = [];
     const serverId = 'server-policy';
     const mcpPool: NonNullable<SpiritServiceOptions['mcpPool']> = {
@@ -476,7 +493,14 @@ describe('SpiritService — Phase 2.A lifecycle', () => {
 describe('SpiritService alert dispatch — Phase 2.C', () => {
   const tempDirs: string[] = [];
   afterEach(async () => {
-    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    // maxRetries rides out the race where a spawned spirit's agent-loop is
+    // still flushing files into <dir>/.agent-loop as cleanup runs — without
+    // it, rm throws ENOTEMPTY and fails the (otherwise-passing) test.
+    await Promise.all(
+      tempDirs
+        .splice(0)
+        .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })),
+    );
   });
 
   it('returns no-active-spirit when no active spirit (caller falls through to regular wake path)', async () => {
@@ -993,7 +1017,14 @@ describe('SpiritService alert dispatch — Phase 2.C', () => {
 describe('TaskSessionService.create — audit fix regressions', () => {
   const tempDirs: string[] = [];
   afterEach(async () => {
-    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    // maxRetries rides out the race where a spawned spirit's agent-loop is
+    // still flushing files into <dir>/.agent-loop as cleanup runs — without
+    // it, rm throws ENOTEMPTY and fails the (otherwise-passing) test.
+    await Promise.all(
+      tempDirs
+        .splice(0)
+        .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })),
+    );
   });
 
   // -------------------------------------------------------------------

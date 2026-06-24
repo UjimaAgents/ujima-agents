@@ -41,31 +41,90 @@ function message(input: Partial<Message> & Pick<Message, 'id' | 'senderId' | 'co
   });
 }
 
-function repoFixture(options: { activeRun?: RunState | null; reply?: Message | null; runs?: RunState[] } = {}) {
+function repoFixture(
+  options: {
+    activeRun?: RunState | null;
+    reply?: Message | null;
+    runs?: RunState[];
+    /**
+     * Parent conversation context. Defaults to a DM (legacy behavior). Pass a
+     * non-dm/self kind to exercise the channel-scoped delegation routing.
+     */
+    parentChannel?: { id: string; kind: string };
+  } = {},
+) {
   const messages: Message[] = [];
   const members = new Map<string, typeof caller>([
     [caller.id, caller],
     [target.id, target],
   ]);
-  const finishedRuns = [{
-    id: 'delegate-run-1',
+  // The run the delegation originates from. Its thread resolves to the parent
+  // channel, which drives the DM-vs-channel routing decision.
+  const parentChannel = options.parentChannel ?? { id: 'dm:agent-1:agent-2', kind: 'dm' };
+  const parentRun = {
+    id: 'run-1',
     organizationId: orgId,
-    agentId: target.id,
-    threadId: 'dm:agent-1:agent-2',
-    status: 'completed',
-    step: 'completed',
-    summary: 'completed',
+    agentId: caller.id,
+    threadId: parentChannel.id,
+    status: 'running',
+    step: 'running',
+    summary: '',
     startedAt: '2026-05-31T10:00:00.000Z',
-    endedAt: '2026-05-31T10:00:01.000Z',
-    sourceMessageId: 'delegate-1',
-  }] as RunState[];
+  } as RunState;
+  // The delegate run is correlated to the delegate by agentId + sourceMessageId.
+  // For named targets that's agent-2; for temp agents it's the random id minted
+  // in saveMember, so track it dynamically and build the default run from it.
+  let delegateTargetId = target.id;
+  const finishedRuns = (): RunState[] =>
+    options.runs ?? ([{
+      id: 'delegate-run-1',
+      organizationId: orgId,
+      agentId: delegateTargetId,
+      threadId: 'dm:agent-1:agent-2',
+      status: 'completed',
+      step: 'completed',
+      summary: 'completed',
+      startedAt: '2026-05-31T10:00:00.000Z',
+      endedAt: '2026-05-31T10:00:01.000Z',
+      sourceMessageId: 'delegate-1',
+    }] as RunState[]);
+  const ensuredThreads: { id: string; channelId: string; memberIds: string[] }[] = [];
+  const delegateMessage = message({
+    id: 'delegate-1',
+    senderId: caller.id,
+    content: 'please check this',
+  });
+  // Faithful to the real sendMessage/sendDirectMessage: the returned (and
+  // stored) message carries the metadata the caller passed in, so downstream
+  // updateMessage / delegate-status transitions can read delegate.kind etc.
+  const recordSeed = (metadata?: Record<string, unknown>): Message => {
+    const seed = { ...delegateMessage, metadata } as Message;
+    messages.push(seed);
+    if (options.reply) messages.push(options.reply);
+    return seed;
+  };
   const repo = {
     listMembers: vi.fn(() => [...members.values()]),
     getMember: vi.fn((_: string, memberId: string) => members.get(memberId) ?? null),
     saveMember: vi.fn((member: typeof caller) => {
       members.set(member.id, member);
+      if (member.roleName?.startsWith('@delegate/')) delegateTargetId = member.id;
       return member;
     }),
+    getRun: vi.fn(() => parentRun),
+    getThread: vi.fn((_: string, threadId: string) => ({
+      id: threadId,
+      channelId: parentChannel.id,
+      memberIds: [caller.id, delegateTargetId],
+    })),
+    getChannel: vi.fn((_: string, channelId: string) =>
+      channelId === parentChannel.id ? { id: parentChannel.id, kind: parentChannel.kind } : null,
+    ),
+    ensureThread: vi.fn((thread: { id: string; channelId: string; memberIds: string[] }) => {
+      ensuredThreads.push(thread);
+      return thread;
+    }),
+    getMessage: vi.fn((_: string, id: string) => messages.find((item) => item.id === id) ?? null),
     updateMessage: vi.fn((next: Message) => {
       const index = messages.findIndex((item) => item.id === next.id);
       if (index >= 0) messages[index] = next;
@@ -73,22 +132,19 @@ function repoFixture(options: { activeRun?: RunState | null; reply?: Message | n
     }),
     listMessages: vi.fn(() => ({ data: messages, hasMore: false })),
     findActiveRunForMemberThread: vi.fn(() => options.activeRun ?? null),
-    listThreadRuns: vi.fn(() => ({ data: options.runs ?? finishedRuns, hasMore: false })),
+    listThreadRuns: vi.fn(() => ({ data: finishedRuns(), hasMore: false })),
   };
-  const delegateMessage = message({
-    id: 'delegate-1',
-    senderId: caller.id,
-    content: 'please check this',
-  });
   const conversations = {
-    sendDirectMessage: vi.fn(() => {
-      messages.push(delegateMessage);
-      if (options.reply) messages.push(options.reply);
-      return delegateMessage;
+    sendDirectMessage: vi.fn((input: { metadata?: Record<string, unknown> }) => recordSeed(input.metadata)),
+    sendMessage: vi.fn((input: { metadata?: Record<string, unknown> }) => {
+      // The channel-scoped path posts the seed (delegate metadata) here and,
+      // separately, the clickable marker pointer (delegateMarker metadata).
+      if (input.metadata && 'delegate' in input.metadata) return recordSeed(input.metadata);
+      return { ...delegateMessage, id: 'marker-1', metadata: input.metadata } as Message;
     }),
   };
   const createRun = vi.fn(async () => null);
-  return { repo, conversations, delegateMessage, messages, createRun };
+  return { repo, conversations, delegateMessage, messages, createRun, ensuredThreads };
 }
 
 describe('agent delegation', () => {
@@ -133,6 +189,55 @@ describe('agent delegation', () => {
       reply_id: reply.id,
       reply_content: reply.content,
     });
+  });
+
+  it('routes a channel-originated delegation to a channel-scoped thread with a clickable marker', async () => {
+    const { repo, conversations, ensuredThreads } = repoFixture({
+      parentChannel: { id: 'channel-general', kind: 'general' },
+    });
+    const wakeMember = vi.fn();
+
+    const result = await runAgentDelegateTurn({
+      repo: repo as unknown as ApiRepository,
+      conversations: conversations as unknown as ConversationService,
+      wakeMember,
+      createRun: vi.fn(async () => null),
+      organizationId: orgId,
+      fromMemberId: caller.id,
+      to: target.id,
+      message: 'investigate the channel issue',
+      runId: 'run-1',
+      mode: 'non_blocking',
+    });
+
+    // The delegation runs in a fresh thread tied to the parent channel — not a DM.
+    expect(conversations.sendDirectMessage).not.toHaveBeenCalled();
+    expect(ensuredThreads).toHaveLength(1);
+    expect(ensuredThreads[0]).toMatchObject({
+      channelId: 'channel-general',
+      memberIds: [caller.id, target.id],
+    });
+    expect(ensuredThreads[0].id).not.toBe('dm:agent-1:agent-2');
+    expect(result.thread_id).toBe(ensuredThreads[0].id);
+
+    // A clickable pointer is posted into the parent channel feed.
+    expect(conversations.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'channel-general',
+        metadata: expect.objectContaining({
+          delegateMarker: expect.objectContaining({
+            kind: 'start',
+            delegationThreadId: ensuredThreads[0].id,
+            to: target.id,
+          }),
+        }),
+      }),
+    );
+
+    // The delegate is woken as a channel mention, not a DM.
+    expect(wakeMember).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: target.id, wakeReason: 'mention' }),
+    );
   });
 
   it('tags explorer delegates in metadata', async () => {

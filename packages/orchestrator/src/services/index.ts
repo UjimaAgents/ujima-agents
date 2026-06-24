@@ -390,6 +390,8 @@ function runIsWaitingOnHuman(status: string | undefined): status is 'waiting_for
 interface DelegateMetadata {
   id?: string;
   parentRunId?: string;
+  parentChannelId?: string;
+  markerPosted?: boolean;
   kind?: DelegateKind;
   index?: number;
   status?:
@@ -407,6 +409,61 @@ interface DelegateMetadata {
 
 function delegateIndex(message: { metadata?: Message['metadata'] } | null | undefined): number | undefined {
   return (message?.metadata?.delegate as DelegateMetadata | undefined)?.index;
+}
+
+/** First non-empty line of a delegation task, trimmed to a chat-friendly length. */
+function summarizeDelegateTask(message: string): string {
+  const firstLine = message.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? message.trim();
+  return firstLine.length > 140 ? `${firstLine.slice(0, 139)}…` : firstLine;
+}
+
+/**
+ * Post the "← <agent> returned" pointer into the parent channel once a
+ * channel-scoped delegation completes. No-op for DM delegations and
+ * idempotent via the `markerPosted` flag on the delegate message, so the
+ * blocking and non-blocking completion paths can both call it safely.
+ */
+function postDelegateDoneMarker(
+  repo: Pick<ApiRepository, 'getMessage' | 'updateMessage'>,
+  conversations: Pick<ConversationService, 'sendMessage'>,
+  organizationId: string,
+  delegateMessageId: string,
+  summary?: string,
+): void {
+  const message = repo.getMessage(organizationId, delegateMessageId);
+  const delegate = message?.metadata?.delegate as DelegateMetadata | undefined;
+  if (!message || !delegate?.parentChannelId || delegate.markerPosted) return;
+
+  // Post the marker FIRST, then persist `markerPosted: true` only after
+  // the send succeeds. If we flipped the flag first and sendMessage threw,
+  // the marker would be lost forever and every retry suppressed because
+  // the delegate message already looks "done". Send-then-flag means a
+  // failed send leaves the flag false so a retry re-attempts; the only
+  // downside (a duplicate marker if the flag write itself fails after a
+  // good send) is strictly preferable to a silently dropped completion.
+  const trimmed = summary ? summarizeDelegateTask(summary) : '';
+  conversations.sendMessage({
+    organizationId,
+    threadId: delegate.parentChannelId,
+    channelId: delegate.parentChannelId,
+    senderId: message.senderId,
+    content: trimmed ? `← Delegation returned: ${trimmed}` : '← Delegation completed.',
+    mentions: [],
+    metadata: {
+      delegateMarker: {
+        kind: 'done',
+        delegationThreadId: message.threadId,
+      },
+    },
+  });
+
+  repo.updateMessage({
+    ...message,
+    metadata: {
+      ...message.metadata,
+      delegate: { ...delegate, markerPosted: true } as NonNullable<Message['metadata']>['delegate'],
+    } as Message['metadata'],
+  });
 }
 
 function updateDelegateMessageStatus(
@@ -768,24 +825,86 @@ export async function runAgentDelegateTurn(input: {
   }
 
   const isTempAgent = isTempAgentRole(target.roleName);
-  const threadId = getDirectMessageThreadId(input.fromMemberId, target.id);
   const delegateKind = input.kind ?? 'worker';
-  let delegateMessage = input.conversations.sendDirectMessage({
-    organizationId: input.organizationId,
-    senderId: input.fromMemberId,
-    recipientId: target.id,
-    content: input.message,
-    ignore: true,
-    metadata: {
-      runId: input.runId,
-      delegate: {
-        parentRunId: input.runId,
-        kind: delegateKind,
-        ...(input.index !== undefined ? { index: input.index } : {}),
-        status: 'queued',
+
+  // Decide where the delegation runs. When the delegator is working in a
+  // shared channel, run the delegation as a channel-scoped thread
+  // (Slack-style) so the work is visible and clickable from the channel
+  // rather than buried in a private DM. Delegations initiated from a DM
+  // (or a self channel) keep the legacy DM-thread behavior.
+  const parentRun = input.repo.getRun(input.organizationId, input.runId);
+  const parentThreadId = parentRun?.threadId;
+  const parentChannelId = parentThreadId
+    ? input.repo.getThread(input.organizationId, parentThreadId)?.channelId ?? parentThreadId
+    : undefined;
+  const parentChannel = parentChannelId
+    ? input.repo.getChannel(input.organizationId, parentChannelId)
+    : null;
+  const useChannelThread =
+    !!parentChannelId &&
+    !!parentChannel &&
+    parentChannel.kind !== 'dm' &&
+    parentChannel.kind !== 'self';
+
+  const threadId = useChannelThread
+    ? `delegate:${randomUUID()}`
+    : getDirectMessageThreadId(input.fromMemberId, target.id);
+  const fromMember = input.repo.getMember(input.organizationId, input.fromMemberId);
+  const fromName = fromMember?.name ?? input.fromMemberId;
+  const shortTask = summarizeDelegateTask(input.message);
+
+  let delegateMessage: Message;
+  if (useChannelThread && parentChannelId) {
+    // Register the delegation thread up front so it is scoped to the two
+    // agents (drives the frontend's agent-only thread name + membership)
+    // and tied to the parent channel for in-channel visibility.
+    input.repo.ensureThread({
+      id: threadId,
+      organizationId: input.organizationId,
+      channelId: parentChannelId,
+      title: `${fromName} → ${target.name}: ${shortTask}`,
+      memberIds: [input.fromMemberId, target.id],
+      createdAt: new Date().toISOString(),
+    });
+    // No mentions on the seed message — the explicit wakeMember below
+    // drives the delegate run with the right wake reason, so we don't
+    // want publishMessage's mention fan-out to wake it a second time.
+    delegateMessage = input.conversations.sendMessage({
+      organizationId: input.organizationId,
+      threadId,
+      channelId: parentChannelId,
+      senderId: input.fromMemberId,
+      content: input.message,
+      mentions: [],
+      metadata: {
+        runId: input.runId,
+        delegate: {
+          parentRunId: input.runId,
+          parentChannelId,
+          kind: delegateKind,
+          ...(input.index !== undefined ? { index: input.index } : {}),
+          status: 'queued',
+        },
       },
-    },
-  });
+    }) as Message;
+  } else {
+    delegateMessage = input.conversations.sendDirectMessage({
+      organizationId: input.organizationId,
+      senderId: input.fromMemberId,
+      recipientId: target.id,
+      content: input.message,
+      ignore: true,
+      metadata: {
+        runId: input.runId,
+        delegate: {
+          parentRunId: input.runId,
+          kind: delegateKind,
+          ...(input.index !== undefined ? { index: input.index } : {}),
+          status: 'queued',
+        },
+      },
+    }) as Message;
+  }
   delegateMessage = input.repo.updateMessage({
     ...delegateMessage,
     metadata: {
@@ -802,15 +921,37 @@ export async function runAgentDelegateTurn(input: {
   });
   delegateMessage = updateDelegateMessageStatus(input.repo, delegateMessage, 'running');
 
+  // Clickable pointer in the main channel feed so the delegation is
+  // visible without flooding the channel with the delegate's turns.
+  if (useChannelThread && parentChannelId) {
+    input.conversations.sendMessage({
+      organizationId: input.organizationId,
+      threadId: parentChannelId,
+      channelId: parentChannelId,
+      senderId: input.fromMemberId,
+      content: `→ Delegated to ${target.name}: ${shortTask}`,
+      mentions: [],
+      metadata: {
+        runId: input.runId,
+        delegateMarker: {
+          kind: 'start',
+          delegationThreadId: threadId,
+          to: target.id,
+          agentName: target.name,
+        },
+      },
+    });
+  }
+
   await input.wakeMember({
     organizationId: input.organizationId,
     memberId: target.id,
     threadId,
-    channelId: threadId,
+    channelId: useChannelThread && parentChannelId ? parentChannelId : threadId,
     messageId: delegateMessage.id,
     byMemberId: input.fromMemberId,
-    reason: 'dm',
-    wakeReason: 'dm',
+    reason: useChannelThread ? 'mention' : 'dm',
+    wakeReason: useChannelThread ? 'mention' : 'dm',
   });
 
   if (input.mode === 'non_blocking') {
@@ -838,7 +979,16 @@ export async function runAgentDelegateTurn(input: {
     pollIntervalMs: input.pollIntervalMs,
     isTempAgent,
   });
-  updateDelegateMessageStatus(input.repo, delegateMessage, result.status);
+  delegateMessage = updateDelegateMessageStatus(input.repo, delegateMessage, result.status);
+  if (result.status === 'completed') {
+    postDelegateDoneMarker(
+      input.repo,
+      input.conversations,
+      input.organizationId,
+      delegateMessage.id,
+      result.reply_content,
+    );
+  }
   return result;
 }
 
@@ -954,6 +1104,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       };
     }
     if (reply && !activeRun) {
+      // Non-blocking delegations resolve here; post the in-channel
+      // completion pointer once (idempotent via the markerPosted flag).
+      postDelegateDoneMarker(context.repo, conversations, orgId, delegateId, reply.content);
       return {
         ...base,
         status: 'completed',

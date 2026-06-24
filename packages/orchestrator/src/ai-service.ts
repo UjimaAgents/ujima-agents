@@ -28,6 +28,8 @@ import {
   toModelMessages,
   resolveSpiritModel,
   buildToolDefinitions,
+  makeProviderModelsInUseLookup,
+  defaultResolveModelId,
 } from './utils/to-model-messages.js';
 import { requireTeam } from './utils/require-team.js';
 import { resolveVisiblePromptChannels } from './utils/visible-prompt-channels.js';
@@ -162,7 +164,7 @@ export class AiService {
       throw new Error(`Role not found: ${agent.roleName}`);
     }
 
-    const model = resolveSpiritModel({
+    const model = await resolveSpiritModel({
       organizationId: input.organizationId,
       memberId: input.memberId,
       role: 'worker' as SpiritRole,
@@ -170,8 +172,17 @@ export class AiService {
       team,
       getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
       resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
-      resolveModelId: (r, p, _role, isFallback) =>
-        (isFallback ? undefined : member.model) ?? r.model ?? p.defaultModel,
+      // Reuse the shared resolver so the member→role→default ladder (and
+      // the fallback's member-model drop) stays identical to every other
+      // call site — an inline copy previously drifted and leaked a
+      // cross-provider model onto the fallback.
+      resolveModelId: defaultResolveModelId,
+      listConfiguredProviders: () =>
+        this.repo.listProviderCredentials(input.organizationId),
+      listProviderModelsInUse: makeProviderModelsInUseLookup(
+        this.repo,
+        input.organizationId,
+      ),
     });
 
     const reviewToolIds = [
@@ -321,7 +332,7 @@ export class AiService {
       : null;
     const reasoningEffort = sourceMessage?.metadata?.reasoningEffort as ReasoningEffort | undefined;
 
-    const model = resolveSpiritModel({
+    const model = await resolveSpiritModel({
       organizationId: input.organizationId,
       memberId: input.agentId,
       role: 'worker' as SpiritRole,
@@ -330,7 +341,17 @@ export class AiService {
       getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
       resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
       reasoningEffort,
-      resolveModelId: (r, p) => member.model ?? r.model ?? p.defaultModel,
+      // Reuse the shared resolver so the member→role→default ladder (and
+      // the fallback's member-model drop) stays identical to every other
+      // call site — an inline copy previously drifted and leaked a
+      // cross-provider model onto the fallback.
+      resolveModelId: defaultResolveModelId,
+      listConfiguredProviders: () =>
+        this.repo.listProviderCredentials(input.organizationId),
+      listProviderModelsInUse: makeProviderModelsInUseLookup(
+        this.repo,
+        input.organizationId,
+      ),
     });
 
     // Mandatory-reply enforcement at the tool-palette layer.

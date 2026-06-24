@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Message, ReasoningEffort, SpiritRole } from "@ujima/shared";
+import { isDirectMessageThread, type Message, type ReasoningEffort, type SpiritRole } from "@ujima/shared";
 import { selectLanguageModel } from '@ujima/llm';
-import type { AgentTeamHandle } from '@ujima/framework';
-import { tool } from 'ai';
+import { normalizeProviderKey, type AgentTeamHandle } from '@ujima/framework';
+import { generateText, tool } from 'ai';
 import type {
   FilePart,
   ImagePart,
@@ -184,9 +184,74 @@ function resolveHomeDir(): string {
   return join(homedir(), '.ujima');
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// Fallback health probe + TTL cache
+//
+// The provider fallback fires a real (tiny) call to a candidate before
+// pairing it, so a down endpoint (local Ollama not running) or a model
+// the provider rejects (e.g. a Google model id sent to DeepSeek) is
+// skipped instead of handed to the run. Results are cached per
+// (org, provider, model): a healthy result is trusted for HEALTHY_TTL_MS,
+// a failure is re-checked sooner (UNHEALTHY_TTL_MS) so a recovered
+// provider isn't stuck failing. The cache keeps per-spawn latency at one
+// probe per provider per TTL window rather than every spawn.
+// ───────────────────────────────────────────────────────────────────────
+
+const HEALTHY_TTL_MS = 5 * 60_000;
+const UNHEALTHY_TTL_MS = 30_000;
+const PROBE_TIMEOUT_MS = 6_000;
+
+interface ProbeCacheEntry {
+  ok: boolean;
+  expiresAt: number;
+}
+const providerHealthCache = new Map<string, ProbeCacheEntry>();
+
+/** Test seam — clear the module-level probe cache between cases. */
+export function __clearProviderHealthCache(): void {
+  providerHealthCache.clear();
+}
+
+/**
+ * Default fallback probe: fire a 1-token completion against the built
+ * (provider, model) with a short timeout. Success → reachable. Any
+ * throw (connect refused, auth error, unknown-model) → not reachable.
+ * Cached per (org, provider, model) with a TTL.
+ */
+export async function probeModelReachable(input: {
+  organizationId: string;
+  providerName: string;
+  modelId: string;
+  model: LanguageModel;
+  now?: () => number;
+}): Promise<boolean> {
+  const now = input.now ?? Date.now;
+  const key = `${input.organizationId}:${normalizeProviderKey(input.providerName)}:${input.modelId}`;
+  const cached = providerHealthCache.get(key);
+  if (cached && cached.expiresAt > now()) return cached.ok;
+
+  let ok = false;
+  try {
+    await generateText({
+      model: input.model,
+      prompt: 'ping',
+      maxOutputTokens: 1,
+      abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    ok = true;
+  } catch {
+    ok = false;
+  }
+  providerHealthCache.set(key, {
+    ok,
+    expiresAt: now() + (ok ? HEALTHY_TTL_MS : UNHEALTHY_TTL_MS),
+  });
+  return ok;
+}
+
 // Fix #7: Shared model-resolution ladder.
 // Walk: member → agent → role → provider → modelId → apiKey → LanguageModel.
-export function resolveSpiritModel(params: {
+export async function resolveSpiritModel(params: {
   organizationId: string;
   memberId: string;
   role: SpiritRole;
@@ -201,7 +266,42 @@ export function resolveSpiritModel(params: {
     role: SpiritRole,
     memberModel?: string,
   ) => string | undefined;
-}): LanguageModel {
+  /**
+   * Provider-fallback hook. Returns the set of provider names that have
+   * a configured credential (keys normalized). When the member's
+   * preferred provider has no usable API key, the resolver falls back
+   * to one of these that yields a usable (provider, model) pair.
+   * Optional so narrower call sites keep the strict "preferred provider
+   * only" behavior.
+   */
+  listConfiguredProviders?: () => Record<string, boolean>;
+  /**
+   * Returns the model ids other agents actually run on a given provider
+   * (distinct `members.model` where `llm = provider`). Used to pick a
+   * fallback model WITHOUT requiring an org to set `provider.defaultModel`
+   * — we reuse a model already known to work for that provider in this
+   * org. A provider with an in-use model is also preferred over one with
+   * none, so the fallback lands on a provider that's demonstrably wired
+   * up rather than the alphabetically-first one.
+   */
+  listProviderModelsInUse?: (providerName: string) => string[];
+  /**
+   * Live-probe a built fallback candidate before pairing it. Returns
+   * true when a real call to (provider, model) succeeds. Used ONLY on
+   * the fallback path so we never hand the run a provider that's down
+   * (e.g. a local Ollama that isn't running) or a model the provider
+   * rejects. The preferred provider is used as-is (no probe) to keep
+   * the hot path fast; if it's down the run surfaces the normal API
+   * error. Defaults to {@link probeModelReachable} (with a TTL health
+   * cache); tests inject a stub.
+   */
+  probeFallbackModel?: (input: {
+    organizationId: string;
+    providerName: string;
+    modelId: string;
+    model: LanguageModel;
+  }) => Promise<boolean>;
+}): Promise<LanguageModel> {
   const agent = params.team.getAgent(params.member.id) ?? params.team.getAgent(params.member.name);
   if (!agent) {
     throw new Error(`Agent not found: ${params.memberId}`);
@@ -217,36 +317,111 @@ export function resolveSpiritModel(params: {
   if (!preferredProviderName) {
     throw new Error(`Provider not resolved for member "${params.memberId}"`);
   }
-  const provider = params.team.getProvider(preferredProviderName);
-  if (!provider) {
-    throw new Error(`Provider not configured for member "${params.memberId}": ${preferredProviderName}`);
-  }
-  const apiKey = resolveOpenAIAccessToken({
-    providerName: preferredProviderName,
-    authMode: provider.authMode,
-    storedCredential: params.getProviderCredential(params.organizationId, preferredProviderName),
-  });
-  if (!apiKey) {
-    throw new Error(`No API key for member "${params.memberId}": ${preferredProviderName}`);
+
+  // Build a (model, modelId) for one provider, or null if it isn't
+  // configured / has no usable key / can't resolve a model id. A
+  // fallback uses the provider's own default model — the member/role
+  // model id won't exist cross-provider — so memberModel/roleModel are
+  // dropped when `isFallback` is set.
+  const buildForProvider = (
+    providerName: string,
+    isFallback: boolean,
+  ): { model: LanguageModel; modelId: string } | null => {
+    const provider = params.team.getProvider(providerName);
+    if (!provider) return null;
+    const apiKey = resolveOpenAIAccessToken({
+      providerName,
+      authMode: provider.authMode,
+      storedCredential: params.getProviderCredential(
+        params.organizationId,
+        providerName,
+      ),
+    });
+    if (!apiKey) return null;
+    let modelId = params.resolveModelId(
+      { model: isFallback ? undefined : teamRole.model },
+      provider,
+      params.role,
+      isFallback ? undefined : params.member.model,
+    );
+    // On fallback the member/role model id is dropped (it won't exist on
+    // a different provider), so resolveModelId can only return the
+    // provider's defaultModel. Many orgs never set one, so derive the
+    // model from real config/usage instead of requiring a default:
+    //   provider.defaultModel → provider.models[0] → a model another
+    //   agent already runs on this provider (listProviderModelsInUse).
+    if (!modelId && isFallback) {
+      modelId =
+        (provider as { models?: string[] }).models?.[0] ??
+        params.listProviderModelsInUse?.(providerName)?.[0];
+    }
+    if (!modelId) return null;
+    return {
+      modelId,
+      model: selectLanguageModel({
+        kind: provider.kind,
+        modelId,
+        apiKey,
+        baseUrl: provider.baseUrl,
+        reasoningEffort: params.reasoningEffort,
+      }),
+    };
+  };
+
+  // 1. Preferred provider (member → role) on its configured model. Used
+  //    as-is without a probe — it's the operator's explicit choice and
+  //    the hot path stays fast.
+  const preferred = buildForProvider(preferredProviderName, false);
+  if (preferred) return preferred.model;
+
+  // 2. Fallback — pick the first OTHER configured provider that BUILDS
+  //    and PROBES OK. Probing is what makes this correct: it skips a
+  //    provider that's down (Ollama not running) or a model the provider
+  //    rejects, instead of blindly pairing the first that builds.
+  //    Candidates are ordered so providers other agents actually use come
+  //    first (demonstrably wired up + give us a known-good model), then
+  //    alphabetical for stability.
+  const preferredKey = normalizeProviderKey(preferredProviderName);
+  const configured = params.listConfiguredProviders?.() ?? {};
+  const inUseCount = (name: string): number =>
+    params.listProviderModelsInUse?.(name)?.length ?? 0;
+  const candidates = Object.keys(configured)
+    .filter((name) => normalizeProviderKey(name) !== preferredKey)
+    .sort((a, b) => {
+      const aUsed = inUseCount(a) > 0 ? 0 : 1;
+      const bUsed = inUseCount(b) > 0 ? 0 : 1;
+      return aUsed !== bUsed ? aUsed - bUsed : a.localeCompare(b);
+    });
+  const probe = params.probeFallbackModel ?? probeModelReachable;
+  const triedButUnhealthy: string[] = [];
+  for (const candidate of candidates) {
+    const built = buildForProvider(candidate, true);
+    if (!built) continue;
+    const healthy = await probe({
+      organizationId: params.organizationId,
+      providerName: candidate,
+      modelId: built.modelId,
+      model: built.model,
+    });
+    if (!healthy) {
+      triedButUnhealthy.push(`${candidate}:${built.modelId}`);
+      continue;
+    }
+    console.warn(
+      `[model-resolver] member "${params.memberId}" provider "${preferredProviderName}" ` +
+        `has no usable API key; validated fallback to "${candidate}" (${built.modelId}).`,
+    );
+    return built.model;
   }
 
-  const modelId = params.resolveModelId(
-    { model: teamRole.model },
-    provider,
-    params.role,
-    params.member.model,
+  const triedNote =
+    triedButUnhealthy.length > 0
+      ? ` Tried but unreachable: ${triedButUnhealthy.join(', ')}.`
+      : '';
+  throw new Error(
+    `No usable provider for member "${params.memberId}": preferred "${preferredProviderName}" ` +
+      `has no API key and no fallback provider passed a live health check.${triedNote}`,
   );
-  if (!modelId) {
-    throw new Error(`No model id resolved for member "${params.memberId}"`);
-  }
-
-  return selectLanguageModel({
-    kind: provider.kind,
-    modelId,
-    apiKey,
-    baseUrl: provider.baseUrl,
-    reasoningEffort: params.reasoningEffort,
-  });
 }
 
 // Fix #7: Default provider-name resolver (uses agent/member llm first).
@@ -259,6 +434,32 @@ export function defaultResolveProviderName(
     throw new Error(`Role is missing a provider`);
   }
   return provider;
+}
+
+/**
+ * Build the `listProviderModelsInUse` hook for `resolveSpiritModel` from
+ * a repository: the distinct model ids that active agents already run on
+ * a given provider in this org. Lets provider fallback reuse a
+ * known-good model without the org having to set `provider.defaultModel`.
+ */
+export function makeProviderModelsInUseLookup(
+  repo: { listMembers: (orgId: string) => { kind: string; llm?: string; model?: string; retiredAt?: string }[] },
+  organizationId: string,
+): (providerName: string) => string[] {
+  return (providerName: string) => {
+    const key = normalizeProviderKey(providerName);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const m of repo.listMembers(organizationId)) {
+      if (m.kind !== 'agent' || m.retiredAt || !m.model || !m.llm) continue;
+      if (normalizeProviderKey(m.llm) !== key) continue;
+      if (!seen.has(m.model)) {
+        seen.add(m.model);
+        out.push(m.model);
+      }
+    }
+    return out;
+  };
 }
 
 // Fix #7: Default model-ID resolver using the cheaper-tier picker (uses agent/member model first).
@@ -327,6 +528,7 @@ export function buildToolDefinition(
             organizationId: ctx.organizationId,
             memberId: ctx.memberId,
             repo: ctx.repo,
+            conversationKind: isDirectMessageThread(ctx.threadId) ? 'dm' : 'channel',
           })
         : toolDef.schema;
     return tool({

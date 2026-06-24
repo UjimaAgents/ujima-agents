@@ -49,6 +49,72 @@ import {
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { DelegateKind } from '../utils/delegate-turn.js';
 
+/**
+ * Strip a trailing parenthetical role/disambiguation suffix from a
+ * member display name: "Layla Reds ( OSINT )" → "Layla Reds". Used to
+ * register a bare-name mention alias so "@Layla Reds" resolves.
+ */
+export function stripMentionSuffix(name: string): string {
+  return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+/**
+ * Mention-handle entries for a member list: the id, the full display
+ * name, AND — when unique — the name with its trailing parenthetical
+ * suffix stripped. The suffix alias is what lets "@Layla Reds" resolve
+ * to a member named "Layla Reds ( OSINT )": without it the scanner's
+ * exact `startsWith(handle)` match fails (the typed text never contains
+ * "( OSINT )"), so the agent is never treated as addressed and stands
+ * down as a passive broadcast bystander. The alias is only registered
+ * when exactly one member could answer to that base, so an ambiguous
+ * base stays unaliased rather than silently resolving to the wrong
+ * agent. A base is ambiguous if it collides with ANY other member's
+ * base — whether that other member reaches it via its own stripped
+ * suffix ("Layla Reds ( Sales )") OR via its plain full name ("Layla
+ * Reds"). The plain-name case is the important one: last-write-wins in
+ * buildMentionHandleRegistry would otherwise let a suffixed member
+ * hijack the bare name of a differently-named plain member.
+ */
+export function buildMemberMentionEntries(
+  members: readonly { id: string; name: string }[],
+  valueOf: (member: { id: string; name: string }) => string,
+): { handle: string; value: string }[] {
+  // For each candidate base (lowercased), the set of member ids that
+  // could be addressed by it — via either the full name or the
+  // suffix-stripped base. Size > 1 ⇒ ambiguous ⇒ no alias.
+  const ownersByBase = new Map<string, Set<string>>();
+  const addOwner = (base: string, id: string): void => {
+    const key = base.toLowerCase();
+    if (!key) return;
+    let owners = ownersByBase.get(key);
+    if (!owners) {
+      owners = new Set();
+      ownersByBase.set(key, owners);
+    }
+    owners.add(id);
+  };
+  for (const member of members) {
+    addOwner(member.name, member.id);
+    addOwner(stripMentionSuffix(member.name), member.id);
+  }
+
+  const entries: { handle: string; value: string }[] = [];
+  for (const member of members) {
+    const value = valueOf(member);
+    entries.push({ handle: member.id, value });
+    entries.push({ handle: member.name, value });
+    const stripped = stripMentionSuffix(member.name);
+    if (stripped && stripped.toLowerCase() !== member.name.toLowerCase()) {
+      const owners = ownersByBase.get(stripped.toLowerCase());
+      // Only alias when this member is the SOLE owner of the base.
+      if (owners && owners.size === 1 && owners.has(member.id)) {
+        entries.push({ handle: stripped, value });
+      }
+    }
+  }
+  return entries;
+}
+
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
 const WAKEABLE_AGENT_DM_TERMINATORS = new Set([
@@ -67,6 +133,10 @@ interface ConversationMessageMetadata {
   delegate?: {
     id?: string;
     parentRunId?: string;
+    /** Channel a channel-scoped delegation was initiated from (Slack-style). */
+    parentChannelId?: string;
+    /** Guards the in-channel completion marker so it fires exactly once. */
+    markerPosted?: boolean;
     kind?: DelegateKind;
     index?: number;
     status?:
@@ -80,6 +150,13 @@ interface ConversationMessageMetadata {
       | 'waiting_for_approval'
       | 'waiting_for_input'
       | 'cancelled';
+  };
+  /** Clickable pointer posted into the parent channel for a channel-scoped delegation. */
+  delegateMarker?: {
+    kind: 'start' | 'done';
+    delegationThreadId: string;
+    to?: string;
+    agentName?: string;
   };
 }
 
@@ -1600,10 +1677,7 @@ export class ConversationService {
   ): string[] {
     const mentionIds = new Set<string>(explicitMentionIds);
     const registry = buildMentionHandleRegistry(
-      this.repo.listMembers(organizationId).flatMap((member) => [
-        { handle: member.id, value: member.id },
-        { handle: member.name, value: member.id },
-      ]),
+      this.memberMentionEntries(organizationId, (member) => member.id),
     );
 
     scanMentionsInContent(content, registry, {
@@ -1648,10 +1722,7 @@ export class ConversationService {
     channel: Channel | null,
   ): string[] {
     const registry = buildMentionHandleRegistry(
-      this.repo.listMembers(organizationId).flatMap((member) => [
-        { handle: member.id, value: member.name },
-        { handle: member.name, value: member.name },
-      ]),
+      this.memberMentionEntries(organizationId, (member) => member.name),
     );
 
     scanMentionsInContent(content, registry, {
@@ -1663,6 +1734,16 @@ export class ConversationService {
     });
 
     return [...registry.values];
+  }
+
+  private memberMentionEntries(
+    organizationId: string,
+    valueOf: (member: { id: string; name: string }) => string,
+  ): { handle: string; value: string }[] {
+    return buildMemberMentionEntries(
+      this.repo.listMembers(organizationId),
+      valueOf,
+    );
   }
 
   private decorateMessages(

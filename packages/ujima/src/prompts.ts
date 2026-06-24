@@ -373,8 +373,14 @@ export function buildAgentSystemPrompt(
     `Current thread ID: ${currentThreadId}`,
     'Accessible channel IDs:',
     formatChannelTargets(accessibleChannels),
-    'Direct message recipients (channel.dm — id or display name):',
-    formatDirectMessageTargets(currentMemberId, members),
+    ...(conversationKind === 'channel'
+      ? [
+          'You are working in a channel. Collaborate with teammates IN THIS CHANNEL — post with channel.post / channel.reply and `@`-mention the people you need. Do NOT open a private DM to a teammate (channel.dm to another member is disabled here); it hides the work, buries approvals, and wastes effort. To hand a task to another agent use agent.delegate. channel.dm is limited to private notes to yourself (member_id: "self").',
+        ]
+      : [
+          'Direct message recipients (channel.dm — id or display name):',
+          formatDirectMessageTargets(currentMemberId, members),
+        ]),
     'channel.read: channel id/name from the list above; DMs use dm_thread_id or peer member_id from channel.list.',
     ...(conversationKind === 'dm'
       ? MESSAGE_TOOL_USAGE_GUIDANCE.filter(

@@ -265,7 +265,7 @@ function applicableGrantedNames(
  * attachment + role; the meta-tools must do the same before either
  * tool reads or dispatches.
  */
-function isServerAttachedToSpirit(
+export function isServerAttachedToSpirit(
   repo: ConnectorMetaToolRepo,
   organizationId: string,
   memberId: string,

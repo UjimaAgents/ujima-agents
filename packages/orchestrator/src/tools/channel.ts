@@ -8,6 +8,7 @@ import {
   MessageSchema,
   channelRoom,
   getDirectMessageThreadId,
+  isDirectMessageThread,
   memberRoom,
   normalizeDmChannelRef,
   orgRoom,
@@ -265,6 +266,17 @@ function rosterDmHandles(ctx: BuildSchemaContext): string[] {
 }
 
 function buildDmSchemaForOrg(ctx: BuildSchemaContext) {
+  // In a channel, agents must collaborate in-channel via `@`-mentions —
+  // not peel off into private DMs (which hide the work, bury approvals,
+  // and burn tokens). Constrain the recipient enum to `self` only so the
+  // model can still keep private scratch notes but cannot DM a teammate.
+  // DM threads keep the full roster. Mirrors the `channel.handoff`
+  // decode-time recipient constraint.
+  if (ctx.conversationKind === 'channel') {
+    return ChannelDmSchema.extend({
+      member_id: z.enum(['self']),
+    });
+  }
   const handles = rosterDmHandles(ctx);
   if (handles.length === 0) return ChannelDmSchema;
   return ChannelDmSchema.extend({
@@ -616,6 +628,26 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     const recipientRef = String(invocation.input.member_id);
     const recipientId =
       recipientRef === 'self' ? 'self' : resolveMemberId(repo, invocation.organizationId, recipientRef);
+
+    // Defense-in-depth: even though the decode-time schema drops the
+    // roster for channel runs (buildDmSchemaForOrg), catch any path that
+    // bypasses it (improvised tool calls, supervisor turns, MCP). When
+    // the run originates in a channel, agents must not open a private DM
+    // to a teammate — they collaborate in-channel via `@`-mentions.
+    // Self-notes (`self`) stay allowed everywhere.
+    if (recipientId !== 'self' && !isDirectMessageThread(invocation.threadId)) {
+      return {
+        status: 'dm_blocked_in_channel',
+        message_sent: false,
+        error:
+          'Direct messages to teammates are disabled while working in a channel — this keeps the work visible and avoids siloed side-conversations.',
+        recovery: {
+          instruction:
+            'Post in the channel with channel.post or channel.reply and `@`-mention the teammate instead. Use channel.dm only for private notes to yourself (member_id: "self"), or agent.delegate to hand off a task.',
+          body_you_tried_to_send: body,
+        },
+      };
+    }
 
     const dmThreadId =
       recipientId === 'self'
