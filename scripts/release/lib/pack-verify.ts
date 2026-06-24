@@ -19,7 +19,7 @@ export function assertDistributionReadme(distPkgDir = DIST_PKG_DIR): void {
 
 export function assertPackManifestIncludesReadme(packLog: string): void {
   if (!/README\.md/.test(packLog)) {
-    throw new Error('README.md not listed in npm pack output');
+    throw new Error('README.md not listed in pack output');
   }
 }
 

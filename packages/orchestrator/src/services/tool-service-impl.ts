@@ -271,6 +271,13 @@ export class ToolServiceImpl implements ToolService {
           },
         );
 
+    // In goal mode, auto-review applies to ALL tools that require
+    // approval (not just shell), so the agent can self-approve safe
+    // operations without blocking on the user.
+    if (goalModeActive && policy.requiresApproval) {
+      policy.shellAutoReview = true;
+    }
+
     if (!policy.allowed) {
       this.audit(preparedInvocation, "blocked", { reason: policy.reason });
       this.saveRunStep(preparedInvocation, "blocked", {
