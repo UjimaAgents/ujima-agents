@@ -434,36 +434,43 @@ function postDelegateDoneMarker(
   const delegate = message?.metadata?.delegate as DelegateMetadata | undefined;
   if (!message || !delegate?.parentChannelId || delegate.markerPosted) return;
 
-  // Post the marker FIRST, then persist `markerPosted: true` only after
-  // the send succeeds. If we flipped the flag first and sendMessage threw,
-  // the marker would be lost forever and every retry suppressed because
-  // the delegate message already looks "done". Send-then-flag means a
-  // failed send leaves the flag false so a retry re-attempts; the only
-  // downside (a duplicate marker if the flag write itself fails after a
-  // good send) is strictly preferable to a silently dropped completion.
-  const trimmed = summary ? summarizeDelegateTask(summary) : '';
-  conversations.sendMessage({
-    organizationId,
-    threadId: delegate.parentChannelId,
-    channelId: delegate.parentChannelId,
-    senderId: message.senderId,
-    content: trimmed ? `← Delegation returned: ${trimmed}` : '← Delegation completed.',
-    mentions: [],
-    metadata: {
-      delegateMarker: {
-        kind: 'done',
-        delegationThreadId: message.threadId,
+  // The completion pointer is optional UI sugar — a transient failure here
+  // must NOT turn an already-completed delegation into an error. Swallow +
+  // log instead of throwing. Within the try we post the marker FIRST, then
+  // persist `markerPosted: true` only after the send succeeds: flipping the
+  // flag first would, on a send failure, lose the marker forever and
+  // suppress every retry. A duplicate marker (flag write fails after a good
+  // send) is preferable to a silently dropped completion.
+  try {
+    const trimmed = summary ? summarizeDelegateTask(summary) : '';
+    conversations.sendMessage({
+      organizationId,
+      threadId: delegate.parentChannelId,
+      channelId: delegate.parentChannelId,
+      senderId: message.senderId,
+      content: trimmed ? `← Delegation returned: ${trimmed}` : '← Delegation completed.',
+      mentions: [],
+      metadata: {
+        delegateMarker: {
+          kind: 'done',
+          delegationThreadId: message.threadId,
+        },
       },
-    },
-  });
+    });
 
-  repo.updateMessage({
-    ...message,
-    metadata: {
-      ...message.metadata,
-      delegate: { ...delegate, markerPosted: true } as NonNullable<Message['metadata']>['delegate'],
-    } as Message['metadata'],
-  });
+    repo.updateMessage({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        delegate: { ...delegate, markerPosted: true } as NonNullable<Message['metadata']>['delegate'],
+      } as Message['metadata'],
+    });
+  } catch (err) {
+    console.warn(
+      `[delegate] failed to post completion marker for "${delegateMessageId}":`,
+      err,
+    );
+  }
 }
 
 function updateDelegateMessageStatus(
@@ -1200,21 +1207,38 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     fromMemberId: string,
   ): Promise<{ sent: boolean; messageId: string }> => {
     const ctx = resolveDelegateMessage(context.repo, orgId, delegateId, fromMemberId);
-    let followUp = conversations.sendDirectMessage({
-      organizationId: orgId,
-      senderId: fromMemberId,
-      recipientId: ctx.recipientId,
-      content: message,
-      ignore: true,
-      metadata: {
-        delegate: {
-          parentRunId: ctx.msg.metadata?.delegate?.parentRunId,
-          kind: getDelegateKind(ctx.msg),
-          index: delegateIndex(ctx.msg),
-          status: 'queued',
-        },
-      },
-    });
+    const existingDelegate = ctx.msg.metadata?.delegate as DelegateMetadata | undefined;
+    const parentChannelId = existingDelegate?.parentChannelId;
+    const followUpDelegateMeta = {
+      parentRunId: existingDelegate?.parentRunId,
+      ...(parentChannelId ? { parentChannelId } : {}),
+      kind: getDelegateKind(ctx.msg),
+      index: delegateIndex(ctx.msg),
+      status: 'queued' as const,
+    };
+    // Channel-scoped delegations keep follow-ups inside the
+    // `delegate:<uuid>` thread (ctx.threadId) tied to the parent channel,
+    // matching the initial seed message — so the conversation stays in one
+    // visible thread instead of peeling off into a private DM. DM
+    // delegations (no parentChannelId) stay private via sendDirectMessage.
+    let followUp = parentChannelId
+      ? conversations.sendMessage({
+          organizationId: orgId,
+          threadId: ctx.threadId,
+          channelId: parentChannelId,
+          senderId: fromMemberId,
+          content: message,
+          mentions: [],
+          metadata: { delegate: followUpDelegateMeta },
+        })
+      : conversations.sendDirectMessage({
+          organizationId: orgId,
+          senderId: fromMemberId,
+          recipientId: ctx.recipientId,
+          content: message,
+          ignore: true,
+          metadata: { delegate: followUpDelegateMeta },
+        });
     followUp = context.repo.updateMessage({
       ...followUp,
       metadata: {
@@ -1230,11 +1254,11 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       organizationId: orgId,
       memberId: ctx.recipientId,
       threadId: ctx.threadId,
-      channelId: ctx.threadId,
+      channelId: parentChannelId ?? ctx.threadId,
       messageId: followUp.id,
       byMemberId: fromMemberId,
-      reason: 'dm',
-      wakeReason: 'dm',
+      reason: parentChannelId ? 'mention' : 'dm',
+      wakeReason: parentChannelId ? 'mention' : 'dm',
     });
     return { sent: true, messageId: followUp.id };
   };
