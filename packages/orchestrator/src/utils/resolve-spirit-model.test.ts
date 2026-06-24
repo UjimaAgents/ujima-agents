@@ -104,7 +104,7 @@ describe('resolveSpiritModel', () => {
   });
 
   it('validates the fallback with a live probe and uses the first that passes', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const team = buildTeam({
       agentName: 'agent-1',
       roleName: 'engineer',
@@ -138,7 +138,7 @@ describe('resolveSpiritModel', () => {
   });
 
   it('SKIPS an unreachable fallback (probe fails) and picks the next reachable one', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     // ollama sorts/used first but is DOWN; deepseek is reachable.
     const team = buildTeam({
       agentName: 'agent-1',
@@ -174,7 +174,7 @@ describe('resolveSpiritModel', () => {
   });
 
   it('derives the fallback model from in-use models when the provider has no defaultModel', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const team = buildTeam({
       agentName: 'agent-1',
       roleName: 'engineer',
