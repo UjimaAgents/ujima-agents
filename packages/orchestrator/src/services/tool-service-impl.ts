@@ -22,7 +22,7 @@ import type { ConversationService } from "./conversation.js";
 import type { GoalSystemService } from "./goal-system.js";
 import { requireTeam } from "../utils/require-team.js";
 import { isAgentOnlyDmThread } from "../utils/wake-reply-policy.js";
-import { checkToolPolicy } from "./policy.js";
+import { checkToolPolicy, policyResult } from "./policy.js";
 import { isToolApprovalSatisfied } from "./tool-approval-gate.js";
 import type { ApiRepository } from "./repository-reader.js";
 import type { TeamStore } from "./team-store.js";
@@ -50,12 +50,15 @@ import { pathEscapeToolResult } from "./tool-service.js";
 import { isGoalModeActiveForThread } from "./goal-mode-prompt.js";
 import { normalizeShellScope } from "./shell-scope.js";
 import type { ModelResolver } from "./spirit-types.js";
-import { ShellAutoReviewService } from "./shell-auto-review.js";
+import { generateText, type LanguageModel } from 'ai';
+import { ShellAutoReviewService, parseReviewerJson, type ShellAutoReviewDecision } from "./shell-auto-review.js";
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
 import { isServerAttachedToSpirit } from "../tools/connector-meta-tools.js";
-import { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
+import type { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
 import { formatReadableToolOutput } from "../utils/tool-output.js";
 import { isPathScopedToolId, usesPathResolution } from "../path-scoped-tools.js";
+
+const REVIEW_TIMEOUT_MS = 30_000;
 
 /** Merge top-level invocation fields into `input` for client / reasoning-trace payloads. */
 function toolCallArgsForClient(inv: ToolInvocationInput): Record<string, unknown> {
@@ -82,8 +85,6 @@ export interface ApprovalRequester {
 }
 
 export class ToolServiceImpl implements ToolService {
-  private readonly approvedRunScopes = new ApprovedRunScopeTracker();
-
   constructor(
     private readonly teamStore: TeamStore,
     private readonly repo: ApiRepository,
@@ -92,6 +93,7 @@ export class ToolServiceImpl implements ToolService {
     private readonly goals: GoalSystemService,
     private readonly realtime: RealtimeService,
     private readonly delegates: DelegateHandlers,
+    private readonly approvedRunScopes: ApprovedRunScopeTracker,
     private readonly mcpPool?: McpRuntimePool,
     private readonly modelResolver?: ModelResolver,
     private readonly shellAutoReview = new ShellAutoReviewService(),
@@ -244,7 +246,7 @@ export class ToolServiceImpl implements ToolService {
     // (spirit-service-base.replayApprovedToolSteps), never propagated
     // from a model-controlled input.
     const policy = isSubOperation || preparedInvocation.bypassPermission
-      ? { allowed: true, requiresApproval: false, shellAutoReview: false, reason: isSubOperation ? "sub-operation" : "approved-replay" }
+      ? policyResult(true, false, { reason: isSubOperation ? "sub-operation" : "approved-replay" })
       : preparedInvocation.toolId === "mcp"
         ? this.resolveMcpPolicy(preparedInvocation)
       : checkToolPolicy(
@@ -271,6 +273,20 @@ export class ToolServiceImpl implements ToolService {
             effectiveShellApprovalMode,
           },
         );
+
+    // In goal mode, auto-review applies to ALL non-read tool actions
+    // that require approval (not just shell), so the agent can self-
+    // approve safe operations without blocking on the user.
+    if (goalModeActive) {
+      // Force approval for in-scope writes that normally bypass it
+      // (e.g. write/edit/multiedit to scoped paths).
+      if (policy.allowed && !policy.requiresApproval && invocation.action !== 'read') {
+        policy.requiresApproval = true;
+      }
+      if (policy.requiresApproval) {
+        policy.shellAutoReview = true;
+      }
+    }
 
     if (!policy.allowed) {
       this.audit(preparedInvocation, "blocked", { reason: policy.reason });
@@ -342,6 +358,17 @@ export class ToolServiceImpl implements ToolService {
 
     try {
       const result = await this.executeTool(preparedInvocation);
+      // Consume the scope for bypass (replay) invocations since
+      // isToolApprovalSatisfied was skipped (requiresApproval: false).
+      // This prevents the scope from lingering unused and accidentally
+      // authorizing a subsequent tool call with the same scope.
+      if (preparedInvocation.bypassPermission) {
+        this.approvedRunScopes.consumeApprovedRun(
+          preparedInvocation.organizationId,
+          preparedInvocation.runId,
+          approvalScope,
+        );
+      }
       const output = summarizeToolOutput(result);
       this.audit(preparedInvocation, "ok", { status: "completed" });
       this.saveRunStep(preparedInvocation, "ok", output);
@@ -533,22 +560,17 @@ export class ToolServiceImpl implements ToolService {
 
     switch (evaluation.state) {
       case "deny":
-        return {
-          allowed: false,
-          requiresApproval: false,
-          shellAutoReview: false,
-          reason:
-            evaluation.reason ??
-            `Tool "${rawToolName}" denied by governance policy`,
-        };
+        return policyResult(false, false, {
+          reason: evaluation.reason ?? `Tool "${rawToolName}" denied by governance policy`,
+        });
       case "allow":
-        return { allowed: true, requiresApproval: false, shellAutoReview: false, reason: evaluation.reason };
+        return policyResult(true, false, { reason: evaluation.reason });
       case "require_approval":
       case "require_input":
-        return { allowed: true, requiresApproval: true, shellAutoReview: false, reason: evaluation.reason };
+        return policyResult(true, true, { reason: evaluation.reason });
       case "inherit":
       default:
-        return { allowed: true, requiresApproval: true, shellAutoReview: false };
+        return policyResult(true, true);
     }
   }
 
@@ -877,16 +899,27 @@ export class ToolServiceImpl implements ToolService {
           role: input.spiritRole,
         }),
       );
-      const scope = normalizeShellScope({
-        input: input.invocation.input ?? {},
-        resourcePath: input.invocation.resourcePath,
-      });
-      const review = await this.shellAutoReview.review({
-        model,
-        scope,
-        memberName: input.member.name,
-        roleName: input.teamRoleName,
-      });
+
+      const isShell =
+        input.invocation.toolId === 'shell' ||
+        input.invocation.resourceType === 'shell';
+      let review: ShellAutoReviewDecision;
+
+      if (isShell) {
+        const scope = normalizeShellScope({
+          input: input.invocation.input ?? {},
+          resourcePath: input.invocation.resourcePath,
+        });
+        review = await this.shellAutoReview.review({
+          model,
+          scope,
+          memberName: input.member.name,
+          roleName: input.teamRoleName,
+        });
+      } else {
+        review = await this.reviewGenericTool(input, model);
+      }
+
       const note = review.rationale.trim() || "Auto review";
       if (review.decision === "approve") {
         this.allowRun(
@@ -910,6 +943,60 @@ export class ToolServiceImpl implements ToolService {
         status: "auto_review_escalated",
         reason: `auto_review:escalated;note=${message}`,
       });
+    }
+  }
+
+  private async reviewGenericTool(
+    input: {
+      invocation: ToolInvocationInput;
+      member: Member;
+    },
+    model: LanguageModel,
+  ): Promise<ShellAutoReviewDecision> {
+    const inv = input.invocation;
+    const inputSummary = inv.input
+      ? JSON.stringify(inv.input).slice(0, 2000)
+      : '(no input)';
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REVIEW_TIMEOUT_MS);
+      try {
+        const { text } = await generateText({
+          model,
+          system: [
+            'You are a security reviewer for AI agent tool calls.',
+            'Respond with a single JSON object only — no markdown fences, no prose.',
+            'Shape: {"decision":"approve"|"escalate","rationale":"short reason"}',
+            'Approve only when the operation is clearly safe, scoped, and aligned with normal development work.',
+            'Escalate when the operation could be destructive, exfiltrate secrets, or intent is unclear.',
+            'When uncertain, escalate.',
+          ].join('\n'),
+          prompt: [
+            `Agent: ${input.member.name}`,
+            `Tool: ${inv.toolId}`,
+            inv.action ? `Action: ${inv.action}` : null,
+            inv.resourceType ? `Resource type: ${inv.resourceType}` : null,
+            inv.resourcePath ? `Resource path: ${inv.resourcePath}` : null,
+            `Input: ${inputSummary}`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          maxOutputTokens: 8_000,
+          abortSignal: controller.signal,
+        });
+
+        const parsed = parseReviewerJson(text);
+        if (!parsed) {
+          return { decision: 'escalate', rationale: 'Reviewer returned unparseable JSON' };
+        }
+        return parsed;
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Reviewer failed';
+      return { decision: 'escalate', rationale: message };
     }
   }
 }

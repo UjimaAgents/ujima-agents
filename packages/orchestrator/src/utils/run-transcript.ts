@@ -34,10 +34,20 @@ export function extractToolCallIdsFromMessages(messages: readonly Message[]): Se
   const ids = new Set<string>();
   for (const message of messages) {
     for (const call of message.toolCalls) {
-      if (call.toolCallId && call.result !== undefined) ids.add(call.toolCallId);
+      if (call.toolCallId && call.result !== undefined && !isPendingResult(call.result)) {
+        ids.add(call.toolCallId);
+      }
     }
   }
   return ids;
+}
+
+function isPendingResult(result: unknown): boolean {
+  if (result && typeof result === 'object') {
+    const r = result as { status?: string };
+    return r.status === 'waiting_for_approval' || r.status === 'waiting_for_input';
+  }
+  return false;
 }
 
 export function runStepsToModelMessages(steps: readonly RunStep[]): ModelMessage[] {

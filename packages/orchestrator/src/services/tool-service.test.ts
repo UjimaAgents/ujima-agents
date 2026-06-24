@@ -68,6 +68,7 @@ describe('createPermissionGatedToolService', () => {
         taskId: 'task-1',
         sessionId: 'session-1',
       }),
+      undefined,
       (input) => {
         approvals++;
         lastApprovalScope = input.approvalScope ?? '';
@@ -93,7 +94,7 @@ describe('createPermissionGatedToolService', () => {
     expect(lastApprovalScope).toBe('shell:{"cwd":"/workspace","command":"rm","args":["-rf","/"]}');
     expect(innerCalls).toBe(0);
 
-    tools.allowRun('org-1', 'run-1');
+    tools.allowRun('org-1', 'run-1', lastApprovalScope);
     const second = await tools.invoke({
       organizationId: 'org-1',
       runId: 'run-1',
@@ -118,7 +119,7 @@ describe('createPermissionGatedToolService', () => {
       action: 'execute',
       resourceType: 'shell',
       resourcePath: '/workspace',
-      input: { command: 'rm -rf /', cwd: '/workspace' },
+      input: { command: 'echo hello', cwd: '/workspace' },
     });
 
     expect(third.ok).toBe(false);
@@ -176,6 +177,7 @@ describe('createPermissionGatedToolService', () => {
         taskId: 'task-1',
         sessionId: 'session-1',
       }),
+      undefined,
       () => ({ id: 'approval-1' }),
       (input, approvalId) => {
         recorded = { toolCallId: input.toolCallId, approvalId };
@@ -252,6 +254,7 @@ describe('createPermissionGatedToolService', () => {
         taskId: 'task-1',
         sessionId: 'session-1',
       }),
+      undefined,
       () => ({ id: 'unused-approval' }),
     );
 
