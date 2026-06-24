@@ -26,6 +26,8 @@ export interface BuildThreadStateInput {
   threadId?: string;
   /** Why the run was woken. */
   wakeReason?: WakeReason | string | null;
+  /** Current channel name (e.g. "general", "design"). */
+  channelName?: string;
 }
 
 export function buildThreadStateBlock(input: BuildThreadStateInput): string | null {
@@ -66,6 +68,11 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
     .filter((m) => !respondedByAgentIds.has(m.id))
     .map((m) => m.name);
 
+  // Who sent the source message — the current conversation partner.
+  const senderName = sourceMessage
+    ? memberById.get(sourceMessage.senderId)?.name ?? sourceMessage.senderId
+    : undefined;
+
   // Explicit @ mentions on the source message — fact, from the
   // mentions table.
   const explicitMentions = sourceMessage
@@ -104,9 +111,15 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
   // ---------- render ----------
   const lines: string[] = [];
   lines.push('<thread-state>');
+  if (input.channelName) {
+    lines.push(`  <current-channel>${escapeBody(input.channelName)}</current-channel>`);
+  }
   if (sourceMessage) {
     lines.push('  <addressing>');
     lines.push(`    <conversation-kind>${isDmThread ? 'dm' : 'channel'}</conversation-kind>`);
+    if (senderName) {
+      lines.push(`    <from>${escapeBody(senderName)}</from>`);
+    }
     lines.push(
       `    <source-message-id>${escapeBody(sourceMessage.id)}</source-message-id>`,
     );

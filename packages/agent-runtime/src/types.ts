@@ -69,6 +69,9 @@ export interface HydrationBundle {
   approvedArtifacts: ContextEntry[];
   peerOutputs: ContextEntry[];
   systemPrompt: string;
+  /** Per-wake recent events block. Emitted as a user-role message (Zone 2)
+   * so the system prompt stays cache-stable. */
+  eventsBlock?: string;
 }
 
 export interface AgentRunResult {

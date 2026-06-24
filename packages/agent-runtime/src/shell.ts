@@ -1,3 +1,5 @@
+import type { ModelMessage } from 'ai';
+import { buildEnvironmentTimezone } from '@ujima/shared';
 import type { UjimaEvent } from '@ujima/shared';
 import { hydrate } from './hydrate';
 import { runAiSdkLoop } from './ai-sdk-loop';
@@ -102,6 +104,21 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
 
     const tools = await mcp.listTools();
 
+    // Per-wake context messages (Zone 2) — keeps the system prompt
+    // cache-stable by moving dynamic content into user-role messages.
+    const contextMessages: ModelMessage[] = [];
+    const envLines = [buildEnvironmentTimezone()];
+    contextMessages.push({
+      role: 'user',
+      content: `<wake-context>\n${envLines.join('\n')}\n</wake-context>`,
+    });
+    if (bundle.eventsBlock) {
+      contextMessages.push({
+        role: 'user',
+        content: bundle.eventsBlock,
+      });
+    }
+
     agentLogger.setContext({
       agentId: agent.id,
       taskId: task.task_id,
@@ -124,6 +141,7 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
       audit,
       systemPrompt: bundle.systemPrompt,
       userPrompt: bundle.taskPrompt,
+      contextMessages,
       maxIterations: maxToolIterations,
       abortSignal: controller.signal,
       emitEvent: emit,
