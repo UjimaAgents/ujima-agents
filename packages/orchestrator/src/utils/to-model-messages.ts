@@ -59,7 +59,9 @@ function messageToModelMessages(message: Message, selfId?: string, includeReason
       : ('user' as const);
 
   if (role === 'assistant' && message.toolCalls.length > 0) {
-    const completedToolCalls = message.toolCalls.filter((call) => call.result !== undefined);
+    const completedToolCalls = message.toolCalls.filter(
+      (call) => call.result !== undefined && !isPendingResult(call.result),
+    );
     if (completedToolCalls.length === 0) {
       return message.content.trim().length > 0 ? [{ role: 'assistant', content: message.content }] : [];
     }
@@ -164,6 +166,14 @@ interface AttachmentLike {
   storagePath: string;
   filename: string;
   mimeType: string;
+}
+
+function isPendingResult(result: unknown): boolean {
+  if (result && typeof result === 'object') {
+    const r = result as { status?: string };
+    return r.status === 'waiting_for_approval' || r.status === 'waiting_for_input';
+  }
+  return false;
 }
 
 function resolveHomeDir(): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildConnectorScope, canonicalizeApprovalGrantScope } from '@ujima/shared';
+import { buildConnectorScope, canonicalizeApprovalGrantScope, stripApprovalScopeDisplayFields } from '@ujima/shared';
 import { ApprovalService } from './approval.js';
 
 describe('ApprovalService allow_once regression', () => {
@@ -58,7 +58,7 @@ describe('ApprovalService allow_once regression', () => {
     expect(result.status).toBe('approved');
     expect(emitted).toBe(1);
     expect(resumedAllowRun).toBe(true);
-    expect(resumedScope).toBe(canonicalizeApprovalGrantScope(displayScope));
+    expect(resumedScope).toBe(canonicalizeApprovalGrantScope(stripApprovalScopeDisplayFields(displayScope)));
     expect(resumedScope).not.toContain('startLine');
   });
 
@@ -121,7 +121,7 @@ describe('ApprovalService allow_once regression', () => {
       reason: 'Resolved from workspace (allow_once).',
     });
 
-    expect(resumedScope).toBe('mcp:mcp:code-review-graph:get_architecture_overview');
+    expect(resumedScope).toBe('connector:{"serverId":"code-review-graph","serverDisplayName":"code-review-graph","toolName":"get_architecture_overview","argsPreview":""}');
     expect(resolvedReason).toBe('Resolved from workspace (allow_once).');
   });
 });

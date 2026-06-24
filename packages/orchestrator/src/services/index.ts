@@ -60,6 +60,7 @@ import {
   type ToolService,
 } from './tool-service.js';
 import { ToolServiceImpl, type ApprovalRequester } from './tool-service-impl.js';
+import { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { modelContextWindowTokens } from '../utils/model-context-window.js';
 import type { AgentDelegateResult } from '../tools/types.js';
@@ -217,6 +218,7 @@ export {
   validateProviderKeys,
 } from './team.js';
 export type { TeamSummary } from './team.js';
+export { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 export { createPermissionGatedToolService } from './tool-service.js';
 export type {
   PermissionContextBuilder,
@@ -326,12 +328,11 @@ function delegateRunForMessage(
   repo: Pick<ApiRepository, 'listThreadRuns'>,
   organizationId: string,
   threadId: string,
-  agentId: string,
   messageId: string,
 ): ReturnType<ApiRepository['listThreadRuns']>['data'][number] | undefined {
   return repo
     .listThreadRuns(organizationId, threadId, undefined, 25)
-    .data.find((candidate) => candidate.agentId === agentId && candidate.sourceMessageId === messageId);
+    .data.find((candidate) => candidate.sourceMessageId === messageId);
 }
 
 function resolveDelegateMessage(
@@ -386,7 +387,7 @@ function runIsWaitingOnHuman(status: string | undefined): status is 'waiting_for
   return status === 'waiting_for_approval' || status === 'waiting_for_input';
 }
 
-type DelegateMetadata = {
+interface DelegateMetadata {
   id?: string;
   parentRunId?: string;
   kind?: DelegateKind;
@@ -402,7 +403,7 @@ type DelegateMetadata = {
     | 'waiting_for_approval'
     | 'waiting_for_input'
     | 'cancelled';
-};
+}
 
 function delegateIndex(message: { metadata?: Message['metadata'] } | null | undefined): number | undefined {
   return (message?.metadata?.delegate as DelegateMetadata | undefined)?.index;
@@ -611,7 +612,6 @@ async function waitForAgentDelegateReply(input: {
       input.repo,
       input.organizationId,
       input.threadId,
-      input.agentId,
       input.delegateMessage.id,
     );
     if (runIsWaitingOnHuman(delegateRun?.status)) {
@@ -793,6 +793,10 @@ export async function runAgentDelegateTurn(input: {
       delegate: {
         ...(delegateMessage.metadata?.delegate as DelegateMetadata | undefined),
         id: delegateMessage.id,
+        parentRunId: input.runId,
+        kind: delegateKind,
+        ...(input.index !== undefined ? { index: input.index } : {}),
+        status: 'queued',
       } as NonNullable<Message['metadata']>['delegate'],
     } as Message['metadata'],
   });
@@ -924,7 +928,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       context.repo,
       orgId,
       ctx.threadId,
-      ctx.recipientId,
       delegateId,
     );
     const reply = latestDelegateReply(
@@ -1159,6 +1162,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const attachmentStoreRoot = join(ujimaHome, 'attachments');
   const agentAttachmentRoot = join(attachmentStoreRoot, 'agent-generated');
 
+  const approvedRunScopes = new ApprovedRunScopeTracker();
+
   const innerTools = new ToolServiceImpl(
     context.teamStore,
     context.repo,
@@ -1167,6 +1172,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     goals,
     context.realtime,
     delegateHandlers,
+    approvedRunScopes,
     context.mcpPool,
     spiritModelResolver,
     undefined,
@@ -1178,6 +1184,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     innerTools,
     context.permissions,
     context.buildPermissionContext,
+    approvedRunScopes,
     approvalRequester.requestApproval,
     (invocation, approvalId) => {
       saveBlockedToolRunStep(

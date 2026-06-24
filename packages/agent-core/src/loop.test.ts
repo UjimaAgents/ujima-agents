@@ -43,24 +43,27 @@ describe('runAgentLoop interrupts', () => {
       prepareStep: (input: { stepNumber: number; messages: ModelMessage[] }) => Promise<{ messages: ModelMessage[] } | undefined>;
     }) => ({
       fullStream: {
-        async *[Symbol.asyncIterator]() {
-          const firstStep = { text: 'Done.' };
-          await options.onStepFinish(firstStep);
-          const shouldStop = await options.stopWhen({ steps: [firstStep] });
-          if (shouldStop) {
-            text.resolve('Done.');
-          } else {
-            const prepared = await options.prepareStep({
-              stepNumber: 1,
-              messages: [...options.messages, { role: 'assistant', content: 'Done.' }],
-            });
-            preparedMessages = prepared?.messages;
-            const secondStep = { text: 'Handled interrupt.' };
-            await options.onStepFinish(secondStep);
-            text.resolve('Handled interrupt.');
-          }
-          usage.resolve({ inputTokens: 1, outputTokens: 2, totalTokens: 3 });
-        },
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            const firstStep = { text: 'Done.' };
+            await options.onStepFinish(firstStep);
+            const shouldStop = await options.stopWhen({ steps: [firstStep] });
+            if (shouldStop) {
+              text.resolve('Done.');
+            } else {
+              const prepared = await options.prepareStep({
+                stepNumber: 1,
+                messages: [...options.messages, { role: 'assistant', content: 'Done.' }],
+              });
+              preparedMessages = prepared?.messages;
+              const secondStep = { text: 'Handled interrupt.' };
+              await options.onStepFinish(secondStep);
+              text.resolve('Handled interrupt.');
+            }
+            usage.resolve({ inputTokens: 1, outputTokens: 2, totalTokens: 3 });
+            return { done: true, value: undefined };
+          },
+        }),
       },
       text: text.promise,
       totalUsage: usage.promise,

@@ -4,6 +4,7 @@ import {
   SocketEventNames,
   approvalScopeMatches,
   approvalScopeMatchesPersisted,
+  buildConnectorScope,
   canonicalizeApprovalFamilyScope,
   canonicalizeApprovalGrantScope,
   formatPersistedApprovalGrantReason,
@@ -173,17 +174,7 @@ export class ApprovalService {
     const existing = requestedScope
       ? this.repo
           .listPendingApprovals(input.organizationId)
-          .find(
-            (approval) =>
-              approval.runId === input.runId &&
-              approval.requestedBy === input.requestedBy &&
-              approval.resourceType === input.resourceType &&
-              approval.action === input.action &&
-              approvalScopeMatches(
-                approvalOperationalScope(approval, decodeApprovalScope(approval.reason)) ?? '',
-                requestedScope,
-              ),
-          )
+          .find((approval) => matchingApprovalScope(approval, requestedScope))
       : undefined;
 
     if (existing) {
@@ -241,7 +232,7 @@ export class ApprovalService {
   async resolveApproval(input: ApprovalResolveInput): Promise<ApprovalRequest> {
     const existing = this.repo.getApproval(input.organizationId, input.approvalId);
     const rawScope = existing?.reason ? parseApprovalReasonValue(existing.reason, 'scope') ?? undefined : undefined;
-    const operationalScope = approvalOperationalScope(existing, rawScope);
+    const operationalScope = existing ? extractOperationalScope(existing) : undefined;
     const persistedScope =
       (input.resolution === 'allow_family'
         ? operationalScope
@@ -498,8 +489,7 @@ function pendingApprovalMatchesResolution(input: {
     return false;
   }
 
-  const approvalScope = decodeApprovalScope(approval.reason);
-  const operationalScope = approvalOperationalScope(approval, approvalScope);
+  const operationalScope = extractOperationalScope(approval);
   if (!operationalScope || !persistedScope) {
     return false;
   }
@@ -560,11 +550,39 @@ function fallbackApprovalScope(approval: ApprovalRequest | null | undefined): st
   );
 }
 
+/** Extract the operational scope from an approval row, stripping display-only fields. */
+function extractOperationalScope(approval: ApprovalRequest): string | undefined {
+  const rawScope = decodeApprovalScope(approval.reason);
+  const cleaned = rawScope ? stripApprovalScopeDisplayFields(rawScope) : undefined;
+  return approvalOperationalScope(approval, cleaned);
+}
+
+function matchingApprovalScope(
+  approval: ApprovalRequest,
+  requestedScope: string,
+): boolean {
+  const operationalScope = extractOperationalScope(approval);
+  return operationalScope
+    ? approvalScopeMatches(operationalScope, requestedScope)
+    : false;
+}
+
 function approvalOperationalScope(
   approval: ApprovalRequest | null | undefined,
   rawScope: string | undefined,
 ): string | undefined {
-  if (rawScope && !parseConnectorScope(rawScope)) {
+  // For connector scopes, preserve the tool identity but drop
+  // argsPreview so allow_family matches any args on the same tool.
+  if (rawScope) {
+    const connector = parseConnectorScope(rawScope);
+    if (connector) {
+      return buildConnectorScope({
+        serverId: connector.serverId,
+        serverDisplayName: connector.serverDisplayName,
+        toolName: connector.toolName,
+        argsPreview: '',
+      });
+    }
     return rawScope;
   }
   return fallbackApprovalScope(approval);

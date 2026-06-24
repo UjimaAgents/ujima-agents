@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * End-to-end test: pack tarball, install to temp prefix, run `ujima start`, probe API + web.
+ * End-to-end test: pack tarball, install locally in a temp dir, run `ujima start`, probe API + web.
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { $ } from 'bun';
 import {
@@ -35,37 +35,44 @@ async function main(): Promise<void> {
   const workDir = mkdtempSync(join(tmpdir(), 'ujima-e2e-'));
   console.log(`[release:e2e] Work dir: ${workDir}`);
 
-  const packResult = await $`npm pack --pack-destination ${workDir}`.cwd(DIST_PKG_DIR).nothrow();
+  const packResult = await $`bun pm pack --destination ${workDir} --quiet`
+    .cwd(DIST_PKG_DIR)
+    .nothrow();
   if (packResult.exitCode !== 0) {
     console.error(packResult.stderr.toString());
     process.exit(packResult.exitCode ?? 1);
   }
 
-  const packOutput = packResult.stdout.toString();
-  const tarballName =
-    packOutput.match(new RegExp(`${expectedTarball.replace('.', '\\.')}`))?.[0] ??
-    packOutput.match(/[^\s"]+\.tgz/)?.[0]?.replace(/^npm notice\s+/, '').trim();
-
-  if (!tarballName) {
+  const packedTarball = packResult.stdout.toString().trim();
+  if (!packedTarball) {
     console.error(`[release:e2e] Could not find tarball (expected ${expectedTarball})`);
     process.exit(1);
   }
 
-  const tarballPath = join(workDir, tarballName);
+  const tarballPath = packedTarball.startsWith('/') ? packedTarball : join(workDir, packedTarball);
+  const tarballName = basename(tarballPath);
   const installRoot = join(workDir, 'install');
-  await $`mkdir -p ${installRoot}`.quiet();
-  console.log(`[release:e2e] Installing ${tarballName}…`);
-  const install = await $`npm install -g ${tarballPath} --prefix ${installRoot}`.nothrow();
+  const cacheDir = join(workDir, 'bun-cache');
+  const tmpDir = join(workDir, 'bun-tmp');
+  await $`mkdir -p ${installRoot} ${cacheDir} ${tmpDir}`.quiet();
+  writeFileSync(
+    join(installRoot, 'package.json'),
+    `${JSON.stringify({ name: 'ujima-e2e-install', private: true }, null, 2)}\n`,
+  );
+  console.log(`[release:e2e] Installing ${tarballName} with bun…`);
+  const install = await $`bun add --cache-dir ${cacheDir} --cwd ${installRoot} ${tarballPath}`
+    .env({ ...process.env, TMPDIR: tmpDir })
+    .nothrow();
   if (install.exitCode !== 0) {
     console.error(install.stderr.toString());
     process.exit(install.exitCode ?? 1);
   }
 
-  const ujimaBin = join(installRoot, 'bin', 'ujima');
+  const ujimaBin = join(installRoot, 'node_modules', '.bin', 'ujima');
   const homeDir = join(workDir, 'ujima-home');
   await $`mkdir -p ${homeDir}`.quiet();
 
-  const pkgRoot = (await $`npm root -g --prefix ${installRoot}`.quiet()).stdout.toString().trim();
+  const pkgRoot = join(installRoot, 'node_modules');
   const packageDir = installedPackagePath(pkgRoot, distribution.name);
   const webRuntimeDir = join(packageDir, 'dist', 'runtime', 'web');
   const nextPkg = join(webRuntimeDir, 'node_modules', 'next', 'package.json');

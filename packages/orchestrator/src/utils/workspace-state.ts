@@ -15,6 +15,7 @@ import type { ApiRepository } from '../services/repository-reader.js';
 
 const MAX_RECENT_ARTIFACTS = 6;
 const MAX_RECENT_DECISIONS = 5;
+const MAX_RECENT_MEMORIES = 5;
 const ARTIFACT_LOOKBACK_HOURS = 24;
 
 export interface BuildWorkspaceStateInput {
@@ -82,8 +83,43 @@ export async function buildWorkspaceStateBlock(input: BuildWorkspaceStateInput):
     }
   }
 
+  if (input.repo.recallMemoryEntries) {
+    try {
+      const memories = await input.repo.recallMemoryEntries({
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        limit: MAX_RECENT_MEMORIES * 2,
+      });
+      const recent = memories
+        .slice()
+        .sort((a, b) => {
+          const aThread = memoryThreadId(a) === input.threadId ? 1 : 0;
+          const bThread = memoryThreadId(b) === input.threadId ? 1 : 0;
+          if (aThread !== bThread) return bThread - aThread;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        })
+        .slice(0, MAX_RECENT_MEMORIES);
+      if (recent.length > 0) {
+        const lines = recent.map(
+          (entry) =>
+            `  <memory kind="${entry.kind}" key="${escapeXml(entry.key)}"${memoryThreadId(entry) ? ` thread_id="${escapeXml(memoryThreadId(entry) ?? '')}"` : ''}>${escapeXml(entry.content)}</memory>`,
+        );
+        sections.push(`<recent-memories>\n${lines.join('\n')}\n</recent-memories>`);
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
   if (sections.length === 0) return null;
   return `<workspace-state>\n${sections.join('\n')}\n</workspace-state>`;
+}
+
+function memoryThreadId(entry: { metadata?: Record<string, unknown> | null }): string | undefined {
+  const metadata = entry.metadata;
+  if (!metadata) return undefined;
+  const threadId = metadata.threadId ?? metadata.thread_id;
+  return typeof threadId === 'string' && threadId.length > 0 ? threadId : undefined;
 }
 
 function escapeXml(text: string): string {

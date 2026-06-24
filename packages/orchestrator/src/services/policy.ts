@@ -19,6 +19,14 @@ export interface PolicyResult {
   reason?: string;
 }
 
+export function policyResult(
+  allowed: boolean,
+  requiresApproval: boolean,
+  options?: { reason?: string; shellAutoReview?: boolean },
+): PolicyResult & { shellAutoReview: boolean } {
+  return { allowed, requiresApproval, shellAutoReview: options?.shellAutoReview ?? false, reason: options?.reason };
+}
+
 export function resolveShellExecutePolicy(
   mode: ShellApprovalMode | undefined,
 ): Pick<PolicyResult, 'requiresApproval' | 'shellAutoReview'> | null {

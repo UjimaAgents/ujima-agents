@@ -43,6 +43,7 @@ export class AgentLoopLogger {
   private currentStepReasoning = '';
   private currentStepText = '';
   private workspaceRoot?: string;
+  private readonly enabled = process.env.UJIMA_AGENT_LOOP_LOGS === '1';
 
   constructor() {
     this.log = {
@@ -68,6 +69,7 @@ export class AgentLoopLogger {
     messages?: ModelMessage[];
     tools?: ToolSet;
   }) {
+    if (!this.enabled) return;
     this.log.agentId = info.agentId;
     this.log.threadId = info.threadId;
     this.log.channelId = info.channelId;
@@ -90,6 +92,7 @@ export class AgentLoopLogger {
   }
 
   handleChunk(chunk: AgentLoopChunk) {
+    if (!this.enabled) return;
     if (chunk.kind === 'reasoning') {
       this.currentStepReasoning += chunk.delta;
     }
@@ -99,6 +102,7 @@ export class AgentLoopLogger {
   }
 
   handleStepFinish(step: AgentLoopStep) {
+    if (!this.enabled) return;
     this.log.steps.push({
       text: this.currentStepText || step.text,
       reasoning: this.currentStepReasoning || undefined,
@@ -124,14 +128,17 @@ export class AgentLoopLogger {
   }
 
   setTokenUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }) {
+    if (!this.enabled) return;
     this.log.tokenUsage = usage;
   }
 
   setError(error: string) {
+    if (!this.enabled) return;
     this.log.error = error;
   }
 
   async flush() {
+    if (!this.enabled) return;
     this.log.timestamps.finishedAt = new Date().toISOString();
     const dir = join(this.workspaceRoot ?? process.cwd(), AGENT_LOOP_DIR);
     await mkdir(dir, { recursive: true });
@@ -142,6 +149,7 @@ export class AgentLoopLogger {
   }
 
   setWorkspaceRoot(root: string) {
+    if (!this.enabled) return;
     this.workspaceRoot = root;
   }
 }

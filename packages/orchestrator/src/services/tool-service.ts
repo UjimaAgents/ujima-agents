@@ -246,11 +246,12 @@ export function createPermissionGatedToolService(
   inner: ToolService,
   permissions: PermissionMiddleware,
   buildContext: PermissionContextBuilder,
+  approvedRunScopes?: ApprovedRunScopeTracker,
   requestApproval?: ApprovalRequester['requestApproval'],
   recordApprovalWait?: ApprovalWaitRecorder,
   recordPermissionDenial?: RecordPermissionDenial,
 ): ToolService {
-  const approvedRunScopes = new ApprovedRunScopeTracker();
+  const scopes = approvedRunScopes ?? new ApprovedRunScopeTracker();
 
   return {
     async invoke(input) {
@@ -260,7 +261,11 @@ export function createPermissionGatedToolService(
       const context = await buildContext(input);
       const approvalScope = buildToolApprovalScope(input);
 
-      if (approvedRunScopes.consumeApprovedRun(input.organizationId, input.runId, approvalScope)) {
+      // Non-destructive check — the inner gate is the sole consumer.
+      // This avoids a dual-tracker desync where the replay path
+      // (bypassPermission) skips the outer gate, leaving a stale
+      // scope only the inner tracker consumed.
+      if (scopes.hasApprovedRun(input.organizationId, input.runId, approvalScope)) {
         return inner.invoke(input);
       }
       const decision = await permissions.check(context);
@@ -305,7 +310,7 @@ export function createPermissionGatedToolService(
       return result;
     },
     allowRun(organizationId, runId, approvalScope) {
-      approvedRunScopes.allowRun(organizationId, runId, approvalScope);
+      scopes.allowRun(organizationId, runId, approvalScope);
       inner.allowRun(organizationId, runId, approvalScope);
     },
   };

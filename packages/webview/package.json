@@ -1,6 +1,6 @@
 {
   "name": "@ujima/webview",
-  "version": "0.0.47",
+  "version": "0.0.50",
   "private": true,
   "type": "module",
   "scripts": {

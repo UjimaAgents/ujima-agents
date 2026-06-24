@@ -15,13 +15,13 @@ export function readDistributionPackage(): DistributionPackage {
   return { name: pkg.name, version: pkg.version };
 }
 
-/** npm pack filename for a workspace package (e.g. @ujima/agents → ujima-agents-1.0.0.tgz). */
+/** Pack filename for a package (e.g. @ujima/agents → ujima-agents-1.0.0.tgz). */
 export function packTarballFileName(name: string, version: string): string {
   const base = name.replace(/^@/, '').replace(/\//g, '-');
   return `${base}-${version}.tgz`;
 }
 
-/** Global/prefix install path under node_modules for the given package name. */
+/** Install path under node_modules for the given package name. */
 export function installedPackagePath(nodeModulesRoot: string, packageName: string): string {
   if (packageName.startsWith('@')) {
     const slash = packageName.indexOf('/');

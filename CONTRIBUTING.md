@@ -94,7 +94,7 @@ npm publish does **not** use `--provenance` while this repository is private (np
 ```bash
 bun run release:check          # tag ↔ package.json (set TAG=v0.2.0 if not on a tag)
 bun run release:dist             # assemble dist/
-bun run release:smoke            # npm pack + install + ujima --help (+ API /health)
+bun run release:smoke            # bun pm pack + bun add + ujima --help (+ API /health)
 bun run release:smoke --skip-start   # skip API health probe
 ```
 

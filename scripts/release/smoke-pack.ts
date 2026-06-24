@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Smoke-test the distribution tarball: pack, install globally in a temp dir, sanity-check CLI + API health.
+ * Smoke-test the distribution tarball: pack, install locally in a temp dir, sanity-check CLI + API health.
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { $ } from 'bun';
@@ -34,7 +34,9 @@ async function main(): Promise<void> {
   }
 
   const workDir = mkdtempSync(join(tmpdir(), 'ujima-smoke-'));
-  const packResult = await $`npm pack --pack-destination ${workDir}`.cwd(DIST_PKG_DIR).nothrow();
+  const packResult = await $`bun pm pack --destination ${workDir}`
+    .cwd(DIST_PKG_DIR)
+    .nothrow();
   if (packResult.exitCode !== 0) {
     console.error(packResult.stderr.toString());
     process.exit(packResult.exitCode ?? 1);
@@ -64,10 +66,18 @@ async function main(): Promise<void> {
   }
 
   const installRoot = join(workDir, 'install');
-  await $`mkdir -p ${installRoot}`.quiet();
-  await $`npm install -g ${tarballPath} --prefix ${installRoot}`.quiet();
+  const cacheDir = join(workDir, 'bun-cache');
+  const tmpDir = join(workDir, 'bun-tmp');
+  await $`mkdir -p ${installRoot} ${cacheDir} ${tmpDir}`.quiet();
+  writeFileSync(
+    join(installRoot, 'package.json'),
+    `${JSON.stringify({ name: 'ujima-smoke-install', private: true }, null, 2)}\n`,
+  );
+  await $`bun add --cache-dir ${cacheDir} --cwd ${installRoot} ${tarballPath}`
+    .env({ ...process.env, TMPDIR: tmpDir })
+    .quiet();
 
-  const ujimaBin = join(installRoot, 'bin', 'ujima');
+  const ujimaBin = join(installRoot, 'node_modules', '.bin', 'ujima');
   const help = await $`${ujimaBin} --help`.nothrow();
   if (help.exitCode !== 0) {
     console.error('ujima --help failed');
@@ -85,7 +95,7 @@ async function main(): Promise<void> {
   const homeDir = join(workDir, 'ujima-home');
   await $`mkdir -p ${homeDir}`.quiet();
 
-  const pkgRoot = (await $`npm root -g --prefix ${installRoot}`.quiet()).stdout.toString().trim();
+  const pkgRoot = join(installRoot, 'node_modules');
   const packageDir = installedPackagePath(pkgRoot, distribution.name);
   const apiEntry = join(packageDir, 'dist', 'runtime', 'api', 'main.js');
   if (!existsSync(apiEntry)) {
