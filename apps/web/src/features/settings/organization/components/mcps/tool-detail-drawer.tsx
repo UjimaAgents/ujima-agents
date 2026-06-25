@@ -170,7 +170,7 @@ export function ToolDetailDrawer({
                 }
               />
             </div>
-            {isPlatformRuleSource(tool.effective.source) ? (
+            {isPlatformRuleSource(tool.effective.source) && tool.effective.exactRule ? (
               <button
                 type="button"
                 onClick={() => void handleReset()}
@@ -181,8 +181,10 @@ export function ToolDetailDrawer({
               </button>
             ) : null}
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              {tool.effective.reason ??
-                "Pick a decision for this tool, or leave it to follow the org-wide risk defaults."}
+              {isPlatformRuleSource(tool.effective.source) && !tool.effective.exactRule
+                ? "Governed by an org-wide wildcard rule. Pick a decision above to pin this tool explicitly (it overrides the wildcard), or edit the wildcard in the platform governance panel."
+                : (tool.effective.reason ??
+                  "Pick a decision for this tool, or leave it to follow the org-wide risk defaults.")}
             </p>
           </section>
 

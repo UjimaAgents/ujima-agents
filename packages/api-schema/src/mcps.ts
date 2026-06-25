@@ -217,6 +217,10 @@ export const McpCatalogToolSchema = z.object({
     state: ToolPolicyState,
     source: EvaluationSourceEnum,
     reason: z.string().optional(),
+    // True when the decision comes from a rule targeting THIS exact (mcp, tool)
+    // — not a wildcard/family rule, not an inherited default. Defaults false for
+    // back-compat with older daemons that don't emit it.
+    exactRule: z.boolean().default(false),
   }),
   grantedAgents: z.array(z.string()),
   attachedAgents: z.array(z.string()),

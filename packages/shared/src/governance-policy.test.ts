@@ -236,6 +236,18 @@ describe('evaluatePolicy: platform.always_allow', () => {
     expect(r.source).toBe('platform_allow');
   });
 
+  it('returns the matched rule so callers can tell an exact pin from a wildcard', () => {
+    let p = emptyGovernancePolicy();
+    p = setPlatformRule(p, 'always_allow', { mcp_id: 'd542', tool_name: 'browser_*', state: 'allow' });
+    // Wildcard match: returned rule.tool_name is the family pattern, not the tool.
+    const wild = evaluatePolicy(p, { agentId: 'a', mcpId: 'd542', toolName: 'browser_click' });
+    expect(wild.rule?.tool_name).toBe('browser_*');
+    // Exact match: returned rule.tool_name equals the tool.
+    p = setPlatformRule(p, 'always_allow', { mcp_id: 'd542', tool_name: 'browser_click', state: 'allow' });
+    const exact = evaluatePolicy(p, { agentId: 'a', mcpId: 'd542', toolName: 'browser_click' });
+    expect(exact.rule?.tool_name).toBe('browser_click');
+  });
+
   it('equal-specificity overlap resolves to require_approval (safer wins)', () => {
     let p = emptyGovernancePolicy();
     p = setPlatformRule(p, 'always_allow', { mcp_id: 'd542', tool_name: 'browser_*', state: 'allow' });

@@ -63,12 +63,14 @@ function activeFromEffective(effective: Effective): ToolRuleState {
 
 /**
  * 3-state per-tool decision control. Clicking a segment writes an explicit
- * exact-tool rule for that state. Clicking the already-active segment is a
- * no-op — resetting to the org default is a separate, explicit action
- * (`onReset`, surfaced in the drawer) because the active segment may reflect
- * an inherited or wildcard decision this exact-tool control cannot clear by
- * re-asserting it. The effective-source chip beside the toggle tells the
- * operator where the current decision actually comes from.
+ * exact-tool rule for that state — including the segment that's already
+ * highlighted, when that highlight is inherited (risk default) or comes from a
+ * wildcard/family rule: clicking it then PINS an exact rule for this tool
+ * (e.g. an explicit allow over a `browser_*` allowlist, or an explicit
+ * require_approval to opt this one tool out of a wildcard allow). The click is
+ * a no-op only when an exact rule already pins that exact state
+ * (`effective.exactRule`). Resetting an exact rule back to the org default is a
+ * separate explicit action surfaced in the drawer.
  */
 export function ToolPolicyToggle({
   effective,
@@ -83,7 +85,11 @@ export function ToolPolicyToggle({
   const active = activeFromEffective(effective);
 
   const handle = async (next: ToolRuleState) => {
-    if (pending || disabled || next === active) return;
+    if (pending || disabled) return;
+    // Re-clicking the active segment is only redundant when an exact rule for
+    // THIS tool already holds that state. If the active state is inherited or
+    // wildcard-derived, the click pins a new explicit exact rule.
+    if (next === active && effective.exactRule) return;
     setPending(next);
     try {
       await onChange(next);
