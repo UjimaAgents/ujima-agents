@@ -146,21 +146,35 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     };
   }, [orgId, refresh]);
 
-  const saveRiskDefaults = useCallback(
-    async (patch: Partial<RiskDefaults>) => {
+  // Shared tail for the governance-policy PATCH routes (risk-defaults +
+  // per-tool rule): same response shape, same local-state resync. Keeping it
+  // in one place stops the two mutations from drifting in how they update
+  // riskDefaults / which refresh args they pass.
+  const patchGovernancePolicy = useCallback(
+    async (path: string, body: Record<string, unknown>, errorMessage: string) => {
       const data = await settingsFetch<GovernancePolicyResponse>(
-        `/api/settings/governance/policy/risk-defaults`,
+        path,
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ organizationId: orgId, riskDefaults: patch }),
+          body: JSON.stringify({ organizationId: orgId, ...body }),
         },
-        "Failed to save risk defaults.",
+        errorMessage,
       );
       setRiskDefaults(data.policy.risk_defaults);
       await refresh(viewIdRef.current, viewRoleRef.current);
     },
     [orgId, refresh],
+  );
+
+  const saveRiskDefaults = useCallback(
+    (patch: Partial<RiskDefaults>) =>
+      patchGovernancePolicy(
+        `/api/settings/governance/policy/risk-defaults`,
+        { riskDefaults: patch },
+        "Failed to save risk defaults.",
+      ),
+    [patchGovernancePolicy],
   );
 
   const setToolClassification = useCallback(
@@ -185,25 +199,17 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
   );
 
   const setToolRule = useCallback(
-    async (
+    (
       serverId: string,
       toolName: string,
       state: "allow" | "require_approval" | "deny" | "inherit",
-    ) => {
-      const data = await settingsFetch<GovernancePolicyResponse>(
+    ) =>
+      patchGovernancePolicy(
         `/api/settings/governance/policy/tool-rule`,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ organizationId: orgId, mcpId: serverId, toolName, state }),
-        },
+        { mcpId: serverId, toolName, state },
         "Failed to update tool rule.",
-      );
-      setRiskDefaults(data.policy.risk_defaults);
-      // Effective per-tool/per-agent decisions shift with the new rule.
-      await refresh(viewIdRef.current, viewRoleRef.current);
-    },
-    [orgId, refresh],
+      ),
+    [patchGovernancePolicy],
   );
 
   const grantToolToAgent = useCallback(

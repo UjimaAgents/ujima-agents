@@ -171,6 +171,41 @@ describe('approvalPersistedGrantMatches', () => {
     expect(approvalPersistedGrantMatches(grantReason, stored, laterCall)).toBe(true);
   });
 
+  it('connector family canonicalization is idempotent (round-trips through parseConnectorScope)', () => {
+    const once = canonicalizeApprovalFamilyScope(
+      buildConnectorScope({
+        serverId: 'd542a392',
+        serverDisplayName: 'playwright-codegen-pro',
+        toolName: 'browser_snapshot',
+        argsPreview: 'selector: "#x"',
+      }),
+    );
+    const twice = canonicalizeApprovalFamilyScope(once);
+    // Re-canonicalizing the already-canonical (empty serverDisplayName) form
+    // must stay in the connector branch, not fall through to the generic
+    // path-mangling branch — otherwise persisted grants never re-match.
+    expect(twice).toBe(once);
+    // And the canonical form must still parse back into a connector scope.
+    const parsed = parseConnectorScope(once);
+    expect(parsed?.serverId).toBe('d542a392');
+    expect(parsed?.toolName).toBe('browser_snapshot');
+  });
+
+  it('parseConnectorScope accepts an empty serverDisplayName', () => {
+    const scope = buildConnectorScope({
+      serverId: 'srv',
+      serverDisplayName: '',
+      toolName: 'do_thing',
+      argsPreview: '',
+    });
+    expect(parseConnectorScope(scope)).toEqual({
+      serverId: 'srv',
+      serverDisplayName: '',
+      toolName: 'do_thing',
+      argsPreview: '',
+    });
+  });
+
   it('does not let a connector grant cover a different tool on the same server', () => {
     const stored = canonicalizeApprovalFamilyScope(
       buildConnectorScope({

@@ -42,7 +42,12 @@ const OPTIONS: readonly {
   },
 ];
 
-/** Maps an effective decision to the toggle's visually-active segment. */
+/**
+ * Maps an effective decision to the toggle's visually-active segment. This is
+ * the single source of truth for `state → segment` — the chip in
+ * mcp-effective-chip owns the textual label + source, so the two never need
+ * the same encoding.
+ */
 function activeFromEffective(effective: Effective): ToolRuleState {
   switch (effective.state) {
     case "allow":
@@ -56,36 +61,32 @@ function activeFromEffective(effective: Effective): ToolRuleState {
   }
 }
 
-/** True when the active state comes from an explicit per-tool rule (not inherited). */
-function isExplicit(effective: Effective): boolean {
-  return (
-    effective.source === "platform_allow" ||
-    effective.source === "platform_deny" ||
-    effective.source === "platform_require_approval"
-  );
-}
-
+/**
+ * 3-state per-tool decision control. Clicking a segment writes an explicit
+ * exact-tool rule for that state. Clicking the already-active segment is a
+ * no-op — resetting to the org default is a separate, explicit action
+ * (`onReset`, surfaced in the drawer) because the active segment may reflect
+ * an inherited or wildcard decision this exact-tool control cannot clear by
+ * re-asserting it. The effective-source chip beside the toggle tells the
+ * operator where the current decision actually comes from.
+ */
 export function ToolPolicyToggle({
   effective,
   onChange,
   disabled,
 }: {
   effective: Effective;
-  onChange: (state: ToolRuleState | "inherit") => Promise<void> | void;
+  onChange: (state: ToolRuleState) => Promise<void> | void;
   disabled?: boolean;
 }) {
   const [pending, setPending] = useState<ToolRuleState | null>(null);
   const active = activeFromEffective(effective);
-  const explicit = isExplicit(effective);
 
   const handle = async (next: ToolRuleState) => {
-    if (pending || disabled) return;
-    // Clicking the active explicit segment clears the rule back to the
-    // org default (inherit); otherwise set the chosen state.
-    const target = explicit && next === active ? "inherit" : next;
+    if (pending || disabled || next === active) return;
     setPending(next);
     try {
-      await onChange(target);
+      await onChange(next);
     } finally {
       setPending(null);
     }
@@ -108,12 +109,12 @@ export function ToolPolicyToggle({
             role="radio"
             aria-checked={selected}
             aria-label={label}
-            title={`${label} — ${hint}${selected && explicit ? " (click to reset to default)" : ""}`}
+            title={`${label} — ${hint}`}
             disabled={disabled || pending !== null}
             onClick={() => void handle(value)}
             className={`flex h-6 w-6 items-center justify-center rounded-full transition ${
               selected
-                ? `${activeClass} ${explicit ? "" : "opacity-60 ring-1 ring-inset ring-current"}`
+                ? activeClass
                 : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-zinc-300"
             } ${isPending ? "animate-pulse" : ""}`}
           >

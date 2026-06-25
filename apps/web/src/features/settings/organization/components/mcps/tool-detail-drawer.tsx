@@ -9,6 +9,18 @@ import { McpRiskControl } from "./mcp-risk-control";
 import { ToolPolicyToggle } from "./tool-policy-toggle";
 import type { UseMcpCatalog } from "./use-mcp-catalog";
 
+type EffectiveSource = McpCatalogTool["effective"]["source"];
+
+/** True when the effective decision comes from a per-tool platform rule that
+ * a "Reset to org default" (inherit) action can actually clear. */
+function isPlatformRuleSource(source: EffectiveSource): boolean {
+  return (
+    source === "platform_allow" ||
+    source === "platform_deny" ||
+    source === "platform_require_approval"
+  );
+}
+
 interface Props {
   tool: McpCatalogTool;
   serverId: string;
@@ -36,6 +48,19 @@ export function ToolDetailDrawer({
   const allowlistSet = new Set(allowlistAgents);
   const [busyAgent, setBusyAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+
+  const handleReset = async () => {
+    setError(null);
+    setResetting(true);
+    try {
+      await catalog.setToolRule(serverId, tool.name, "inherit");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const handleGrant = async (agentId: string) => {
     setError(null);
@@ -145,10 +170,19 @@ export function ToolDetailDrawer({
                 }
               />
             </div>
+            {isPlatformRuleSource(tool.effective.source) ? (
+              <button
+                type="button"
+                onClick={() => void handleReset()}
+                disabled={resetting}
+                className="text-[11px] text-zinc-500 underline-offset-2 hover:underline disabled:opacity-60 dark:text-zinc-400"
+              >
+                {resetting ? "Resetting…" : "Reset to org default"}
+              </button>
+            ) : null}
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              {tool.effective.reason
-                ? tool.effective.reason
-                : "Set an explicit decision, or leave it to follow the org-wide risk defaults. Click the active state again to reset to default."}
+              {tool.effective.reason ??
+                "Pick a decision for this tool, or leave it to follow the org-wide risk defaults."}
             </p>
           </section>
 

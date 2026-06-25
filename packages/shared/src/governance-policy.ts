@@ -123,7 +123,10 @@ export interface PolicyEvaluation {
  * Resolve a final state for (agent, mcp, tool). Precedence:
  *   1. platform.always_deny — hard kill-switch.
  *   2. agent rule (exact > prefix > '*').
- *   3. platform.default_require_approval.
+ *   3. platform.always_allow vs platform.default_require_approval — the MORE
+ *      SPECIFIC rule wins; on a specificity tie the safer require_approval
+ *      wins, so a broad allowlist (e.g. `browser_*`) cannot silently override
+ *      a narrowly-scoped approval gate (e.g. exact `browser_run_code`).
  *   4. risk_defaults[classification ?? 'unknown'].
  *   5. 'inherit' (caller falls back to legacy allowed_tools/blocked_tools).
  */
@@ -161,28 +164,37 @@ export function evaluatePolicy(
     };
   }
 
+  // always_allow and default_require_approval both live at platform scope and
+  // can both match (e.g. a `browser_*` allowlist plus an exact
+  // `browser_run_code` approval gate). Resolve by specificity rather than
+  // bucket order: the more specific rule wins, and a tie resolves to
+  // require_approval so a coarse allow never defeats a deliberate fine-grained
+  // gate. always_deny (above) remains an absolute kill-switch.
   const platformAllow = bestMatch(policy.platform.always_allow, mcpId, toolName);
-  if (platformAllow) {
-    return {
-      state: 'allow',
-      source: 'platform_allow',
-      rule: platformAllow,
-      reason: platformAllow.reason ?? 'Allowed by org-wide allowlist',
-      classification,
-    };
-  }
-
   const platformApproval = bestMatch(
     policy.platform.default_require_approval,
     mcpId,
     toolName,
   );
-  if (platformApproval) {
+  if (platformAllow || platformApproval) {
+    const allowScore = platformAllow ? specificity(platformAllow) : -1;
+    const approvalScore = platformApproval ? specificity(platformApproval) : -1;
+    if (platformApproval && approvalScore >= allowScore) {
+      return {
+        state: 'require_approval',
+        source: 'platform_require_approval',
+        rule: platformApproval,
+        reason: platformApproval.reason ?? 'Platform default requires approval',
+        classification,
+      };
+    }
+    // platformAllow is defined here: either platformApproval is undefined, or
+    // allowScore > approvalScore (so platformAllow matched and is more specific).
     return {
-      state: 'require_approval',
-      source: 'platform_require_approval',
-      rule: platformApproval,
-      reason: platformApproval.reason ?? 'Platform default requires approval',
+      state: 'allow',
+      source: 'platform_allow',
+      rule: platformAllow as ToolPolicyRule,
+      reason: (platformAllow as ToolPolicyRule).reason ?? 'Allowed by org-wide allowlist',
       classification,
     };
   }

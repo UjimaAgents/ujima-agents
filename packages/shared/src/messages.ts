@@ -11,7 +11,7 @@ const ToolCatalogEntryShape = z.object({
   agents: z.array(z.string()),
 });
 
-const PlatformBucket = z.enum(['always_deny', 'default_require_approval']);
+const PlatformBucket = z.enum(['always_deny', 'always_allow', 'default_require_approval']);
 
 const AuditRecordShape = AuditRecord;
 
