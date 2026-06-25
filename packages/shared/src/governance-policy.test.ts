@@ -178,6 +178,56 @@ describe('evaluatePolicy: risk_defaults', () => {
   // even though those built-ins have their own enforcement path.
 });
 
+describe('evaluatePolicy: platform.always_allow', () => {
+  it('auto-allows matched tools over default_require_approval and risk_defaults', () => {
+    let p = emptyGovernancePolicy();
+    p = setRiskDefaults(p, { write: 'require_approval' });
+    p = setPlatformRule(p, 'always_allow', {
+      mcp_id: 'd542',
+      tool_name: 'browser_*',
+      state: 'allow',
+    });
+    const r = evaluatePolicy(p, {
+      agentId: 'a',
+      mcpId: 'd542',
+      toolName: 'browser_click',
+      classification: 'write',
+    });
+    expect(r.state).toBe('allow');
+    expect(r.source).toBe('platform_allow');
+  });
+
+  it('always_deny still beats always_allow (kill-switch wins)', () => {
+    let p = emptyGovernancePolicy();
+    p = setPlatformRule(p, 'always_allow', { mcp_id: '*', tool_name: 'browser_*', state: 'allow' });
+    p = setPlatformRule(p, 'always_deny', { mcp_id: 'd542', tool_name: 'browser_run_code', state: 'deny' });
+    const r = evaluatePolicy(p, {
+      agentId: 'a',
+      mcpId: 'd542',
+      toolName: 'browser_run_code',
+    });
+    expect(r.state).toBe('deny');
+    expect(r.source).toBe('platform_deny');
+  });
+
+  it('an explicit agent rule overrides an org-wide always_allow', () => {
+    let p = emptyGovernancePolicy();
+    p = setPlatformRule(p, 'always_allow', { mcp_id: '*', tool_name: 'browser_*', state: 'allow' });
+    p = setAgentRule(p, 'restricted', {
+      mcp_id: 'd542',
+      tool_name: 'browser_navigate',
+      state: 'require_approval',
+    });
+    const r = evaluatePolicy(p, {
+      agentId: 'restricted',
+      mcpId: 'd542',
+      toolName: 'browser_navigate',
+    });
+    expect(r.state).toBe('require_approval');
+    expect(r.source).toBe('agent_rule');
+  });
+});
+
 describe('setRiskDefaults', () => {
   it('merges partial updates', () => {
     let p = emptyGovernancePolicy();

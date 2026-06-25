@@ -60,16 +60,22 @@ export const GovernancePolicy = z
     platform: z
       .object({
         always_deny: z.array(ToolPolicyRule).default([]),
+        // Org-wide allowlist. Tools matched here auto-run with no
+        // approval prompt, overriding default_require_approval and
+        // risk_defaults (but not always_deny or an explicit agent rule).
+        // tool_name supports trailing-`*` wildcards via matchRule, so
+        // one entry can cover e.g. `browser_*`.
+        always_allow: z.array(ToolPolicyRule).default([]),
         default_require_approval: z.array(ToolPolicyRule).default([]),
       })
-      .default({ always_deny: [], default_require_approval: [] }),
+      .default({ always_deny: [], always_allow: [], default_require_approval: [] }),
     agents: z.record(z.string(), z.array(ToolPolicyRule)).default({}),
     risk_defaults: RiskDefaultsSchema,
     updated_at: z.string().optional(),
   })
   .default({
     version: 1,
-    platform: { always_deny: [], default_require_approval: [] },
+    platform: { always_deny: [], always_allow: [], default_require_approval: [] },
     agents: {},
     risk_defaults: emptyRiskDefaults(),
   });
@@ -78,7 +84,7 @@ export type GovernancePolicy = z.infer<typeof GovernancePolicy>;
 export function emptyGovernancePolicy(): GovernancePolicy {
   return {
     version: 1,
-    platform: { always_deny: [], default_require_approval: [] },
+    platform: { always_deny: [], always_allow: [], default_require_approval: [] },
     agents: {},
     risk_defaults: emptyRiskDefaults(),
   };
@@ -103,6 +109,7 @@ export interface PolicyEvaluation {
   source:
     | 'platform_deny'
     | 'agent_rule'
+    | 'platform_allow'
     | 'platform_require_approval'
     | 'risk_default'
     | 'default';
@@ -150,6 +157,17 @@ export function evaluatePolicy(
       source: 'agent_rule',
       rule: agentRule,
       reason: agentRule.reason,
+      classification,
+    };
+  }
+
+  const platformAllow = bestMatch(policy.platform.always_allow, mcpId, toolName);
+  if (platformAllow) {
+    return {
+      state: 'allow',
+      source: 'platform_allow',
+      rule: platformAllow,
+      reason: platformAllow.reason ?? 'Allowed by org-wide allowlist',
       classification,
     };
   }
@@ -248,7 +266,7 @@ function omitKey<T>(obj: Record<string, T>, key: string): Record<string, T> {
 
 export function setPlatformRule(
   policy: GovernancePolicy,
-  bucket: 'always_deny' | 'default_require_approval',
+  bucket: 'always_deny' | 'always_allow' | 'default_require_approval',
   rule: ToolPolicyRule,
 ): GovernancePolicy {
   const existing = policy.platform[bucket];
@@ -281,7 +299,7 @@ export function setRiskDefaults(
 
 export function removePlatformRule(
   policy: GovernancePolicy,
-  bucket: 'always_deny' | 'default_require_approval',
+  bucket: 'always_deny' | 'always_allow' | 'default_require_approval',
   mcpId: string,
   toolName: string,
 ): GovernancePolicy {

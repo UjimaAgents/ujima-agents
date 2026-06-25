@@ -36,6 +36,16 @@ export interface UseMcpCatalog {
     toolName: string,
     risk: ToolRiskClass,
   ) => Promise<void>;
+  /**
+   * Set the org-wide decision for a single (server, tool). Writes a
+   * platform rule into the governance policy the gate evaluates.
+   * `inherit` clears the rule so the tool falls back to risk defaults.
+   */
+  setToolRule: (
+    serverId: string,
+    toolName: string,
+    state: "allow" | "require_approval" | "deny" | "inherit",
+  ) => Promise<void>;
   grantToolToAgent: (
     agentId: string,
     serverId: string,
@@ -174,6 +184,28 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     [orgId, refresh],
   );
 
+  const setToolRule = useCallback(
+    async (
+      serverId: string,
+      toolName: string,
+      state: "allow" | "require_approval" | "deny" | "inherit",
+    ) => {
+      const data = await settingsFetch<GovernancePolicyResponse>(
+        `/api/settings/governance/policy/tool-rule`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ organizationId: orgId, mcpId: serverId, toolName, state }),
+        },
+        "Failed to update tool rule.",
+      );
+      setRiskDefaults(data.policy.risk_defaults);
+      // Effective per-tool/per-agent decisions shift with the new rule.
+      await refresh(viewIdRef.current, viewRoleRef.current);
+    },
+    [orgId, refresh],
+  );
+
   const grantToolToAgent = useCallback(
     async (
       agentId: string,
@@ -236,6 +268,7 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     refresh,
     saveRiskDefaults,
     setToolClassification,
+    setToolRule,
     grantToolToAgent,
     revokeToolFromAgent,
     updateAttachmentTier,

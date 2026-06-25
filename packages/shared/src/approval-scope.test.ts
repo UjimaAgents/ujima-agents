@@ -148,6 +148,48 @@ describe('approvalPersistedGrantMatches', () => {
     expect(approvalPersistedGrantMatches(grantReason, exactScope, log)).toBe(false);
   });
 
+  // Regression: "always allow" on a connector/MCP tool used to re-prompt
+  // forever because the stored grant kept argsPreview + serverDisplayName
+  // while later invocations carried different args (and the gate built a
+  // different shape). Family canonicalization now keys on serverId+toolName.
+  it('matches later connector invocations of the same tool under allow_family', () => {
+    const stored = canonicalizeApprovalFamilyScope(
+      buildConnectorScope({
+        serverId: 'd542a392',
+        serverDisplayName: 'playwright-codegen-pro',
+        toolName: 'browser_snapshot',
+        argsPreview: '',
+      }),
+    );
+    const grantReason = formatPersistedApprovalGrantReason('family', stored, 'browser snapshots');
+    const laterCall = buildConnectorScope({
+      serverId: 'd542a392',
+      serverDisplayName: 'playwright-codegen-pro',
+      toolName: 'browser_snapshot',
+      argsPreview: 'selector: "#submit"',
+    });
+    expect(approvalPersistedGrantMatches(grantReason, stored, laterCall)).toBe(true);
+  });
+
+  it('does not let a connector grant cover a different tool on the same server', () => {
+    const stored = canonicalizeApprovalFamilyScope(
+      buildConnectorScope({
+        serverId: 'd542a392',
+        serverDisplayName: 'playwright-codegen-pro',
+        toolName: 'browser_snapshot',
+        argsPreview: '',
+      }),
+    );
+    const grantReason = formatPersistedApprovalGrantReason('family', stored, 'browser snapshots');
+    const otherTool = buildConnectorScope({
+      serverId: 'd542a392',
+      serverDisplayName: 'playwright-codegen-pro',
+      toolName: 'browser_click',
+      argsPreview: '',
+    });
+    expect(approvalPersistedGrantMatches(grantReason, stored, otherTool)).toBe(false);
+  });
+
 });
 
 describe('approvalScopeMatches', () => {

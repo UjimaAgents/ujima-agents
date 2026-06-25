@@ -201,6 +201,7 @@ export const McpScopedQuerySchema = z.object({
 const EvaluationSourceEnum = z.enum([
   'platform_deny',
   'agent_rule',
+  'platform_allow',
   'platform_require_approval',
   'risk_default',
   'default',
@@ -338,6 +339,16 @@ export const UpdateRiskDefaultsRequestSchema = z.object({
     }),
 });
 export type UpdateRiskDefaultsRequest = z.infer<typeof UpdateRiskDefaultsRequestSchema>;
+
+export const SetToolRuleRequestSchema = z.object({
+  organizationId: IdSchema,
+  mcpId: z.string().min(1),
+  // Trailing `*` allowed to cover a family (e.g. `browser_*`).
+  toolName: z.string().min(1),
+  state: z.enum(['allow', 'require_approval', 'deny', 'inherit']),
+  reason: z.string().optional(),
+});
+export type SetToolRuleRequest = z.infer<typeof SetToolRuleRequestSchema>;
 
 export type CreateMcpServerRequest = z.infer<typeof CreateMcpServerRequestSchema>;
 export type UpdateMcpServerRequest = z.infer<typeof UpdateMcpServerRequestSchema>;

@@ -6,6 +6,7 @@ import type { McpCatalogTool } from "@ujima/api-schema";
 import type { Member, ToolRiskClass } from "@ujima/shared";
 import { McpEffectiveChip } from "./mcp-effective-chip";
 import { McpRiskControl } from "./mcp-risk-control";
+import { ToolPolicyToggle } from "./tool-policy-toggle";
 import type { UseMcpCatalog } from "./use-mcp-catalog";
 
 interface Props {
@@ -133,14 +134,22 @@ export function ToolDetailDrawer({
 
           <section className="space-y-2 border-t border-zinc-100 pt-3 dark:border-zinc-900">
             <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Org default decision
+              Org decision
             </h4>
-            <McpEffectiveChip effective={tool.effective} />
-            {tool.effective.reason ? (
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                {tool.effective.reason}
-              </p>
-            ) : null}
+            <div className="flex items-center justify-between gap-3">
+              <McpEffectiveChip effective={tool.effective} />
+              <ToolPolicyToggle
+                effective={tool.effective}
+                onChange={(state) =>
+                  catalog.setToolRule(serverId, tool.name, state)
+                }
+              />
+            </div>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              {tool.effective.reason
+                ? tool.effective.reason
+                : "Set an explicit decision, or leave it to follow the org-wide risk defaults. Click the active state again to reset to default."}
+            </p>
           </section>
 
           <section className="space-y-2 border-t border-zinc-100 pt-3 dark:border-zinc-900">
