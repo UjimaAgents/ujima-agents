@@ -26,6 +26,7 @@ const TONE: Record<Effective["state"], string> = {
 const SOURCE_NOTE: Record<Effective["source"], string> = {
   platform_deny: "platform kill-switch",
   agent_rule: "agent rule",
+  platform_allow: "org allowlist",
   platform_require_approval: "platform default",
   risk_default: "org class default",
   default: "no rule",

@@ -4,6 +4,7 @@ import {
   ApiErrorSchema,
   GovernancePolicyResponseSchema,
   McpScopedQuerySchema,
+  SetToolRuleRequestSchema,
   UpdateRiskDefaultsRequestSchema,
 } from '@ujima/api-schema';
 import type { AuthService, GovernanceService } from '@ujima/orchestrator';
@@ -67,6 +68,33 @@ export function registerGovernanceRoutes(
         const body = req.body as z.infer<typeof UpdateRiskDefaultsRequestSchema>;
         return {
           policy: governance.updateRiskDefaults(organizationId, body.riskDefaults),
+        };
+      },
+    },
+  );
+
+  registerOrgSettingsRoute(
+    app,
+    'patch',
+    '/settings/governance/policy/tool-rule',
+    auth,
+    {
+      tags: ['Governance'],
+      description:
+        'Set the org-wide decision (allow / require_approval / deny / inherit) for a single (mcp, tool). `inherit` clears any rule. `toolName` may end with `*` to cover a family.',
+      body: SetToolRuleRequestSchema,
+      response: { 200: GovernancePolicyResponseSchema, ...writeErrors },
+      organizationId: (req) => (req.body as { organizationId: string }).organizationId,
+      onError: handle,
+      handler: async (req, organizationId) => {
+        const body = req.body as z.infer<typeof SetToolRuleRequestSchema>;
+        return {
+          policy: governance.setToolRule(organizationId, {
+            mcpId: body.mcpId,
+            toolName: body.toolName,
+            state: body.state,
+            reason: body.reason,
+          }),
         };
       },
     },

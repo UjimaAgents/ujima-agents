@@ -307,10 +307,17 @@ export function parseConnectorScope(scope: string): ParsedConnectorScope | null 
   const serverDisplayName = stringField(record, 'serverDisplayName', 'server_display_name', 'server');
   const toolName = stringField(record, 'toolName', 'tool_name', 'tool');
   const argsPreview = stringField(record, 'argsPreview', 'args_preview', 'args');
-  if (!serverId || !serverDisplayName || !toolName) return null;
+  // serverDisplayName is display-only and is intentionally neutralized to ''
+  // by canonicalizeApprovalScope (grants key on serverId+toolName). Requiring
+  // it here would make the canonical form unparseable — re-canonicalizing
+  // would fall through to the generic path-mangling branch (breaking grant
+  // matching) and persisted grant scopes couldn't round-trip back into the
+  // connector renderer/audit path. Require only the matching identity
+  // (serverId + toolName); callers substitute serverId when the label is blank.
+  if (!serverId || !toolName) return null;
   return {
     serverId,
-    serverDisplayName,
+    serverDisplayName: serverDisplayName ?? '',
     toolName,
     argsPreview: argsPreview ?? '',
   };
@@ -541,6 +548,22 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
     })}`;
   }
 
+  // Connector grants key on (serverId, toolName) only. argsPreview and
+  // serverDisplayName are display-only and vary per call (different args,
+  // late-resolved server label), so neutralizing them here — for BOTH
+  // grant and family mode — is what lets a stored "always allow" actually
+  // match the next invocation of the same tool. Without this the grant is
+  // stored in connector shape but never re-matches and re-prompts forever.
+  const connector = parseConnectorScope(scope);
+  if (connector) {
+    return buildConnectorScope({
+      serverId: connector.serverId,
+      serverDisplayName: '',
+      toolName: connector.toolName,
+      argsPreview: '',
+    });
+  }
+
   if (scope.startsWith('download:')) {
     const payload = scope.slice('download:'.length);
     if (payload.startsWith('{')) {
@@ -674,7 +697,7 @@ export function formatApprovalRelayMarkdown(approval: {
 function relayConnectorPlain(connector: ParsedConnectorScope): string {
   const lines = [
     `[Approval needed] Connector action`,
-    `Server: ${connector.serverDisplayName}`,
+    `Server: ${connector.serverDisplayName || connector.serverId}`,
     `Tool: ${connector.toolName}`,
   ];
   if (connector.argsPreview.length > 0) {

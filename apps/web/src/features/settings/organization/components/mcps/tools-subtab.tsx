@@ -7,6 +7,7 @@ import type { Member, ToolRiskClass } from "@ujima/shared";
 import { Select } from "@/components/ui/select";
 import { McpEffectiveChip } from "./mcp-effective-chip";
 import { ToolDetailDrawer } from "./tool-detail-drawer";
+import { ToolPolicyToggle } from "./tool-policy-toggle";
 import type { UseMcpCatalog } from "./use-mcp-catalog";
 
 interface Props {
@@ -269,7 +270,15 @@ export function ToolsSubtab({ agents, catalog }: Props) {
                     {serverName}
                   </td>
                   <td className="px-3 py-2 align-top">
-                    <McpEffectiveChip effective={tool.effective} />
+                    <div className="flex flex-col items-start gap-1.5">
+                      <ToolPolicyToggle
+                        effective={tool.effective}
+                        onChange={(state) =>
+                          catalog.setToolRule(serverId, tool.name, state)
+                        }
+                      />
+                      <McpEffectiveChip effective={tool.effective} />
+                    </div>
                   </td>
                   <td className="px-3 py-2 align-top text-[11px] text-zinc-600 dark:text-zinc-300">
                     {totalConsumers === 0 ? (

@@ -121,6 +121,20 @@ export type ApprovalWaitRecorder = (
 ) => void;
 
 export function buildToolApprovalScope(input: ToolInvocationInput): string {
+  // MCP tools must use the same connector:{json} scope shape that the
+  // approval row + persisted grant are stored in (buildConnectorActionScope).
+  // The matching/gate path used to fall through to the generic
+  // `mcp:mcp:server:tool` shape here, so a stored "always allow" grant
+  // (connector shape) never matched the gate check (generic shape) and
+  // re-prompted forever. Routing MCP through the connector scope unifies
+  // store-time and check-time so grants actually stick.
+  if (input.toolId === 'mcp') {
+    return buildConnectorActionScope(input);
+  }
+  return buildGenericToolApprovalScope(input);
+}
+
+function buildGenericToolApprovalScope(input: ToolInvocationInput): string {
   if (input.toolId === 'shell') {
     return buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath });
   }
@@ -193,7 +207,9 @@ export function buildConnectorActionScope(input: ToolInvocationInput): string {
   const serverName =
     typeof data.mcpServerName === 'string' ? data.mcpServerName : serverId;
   if (!serverId || !toolName || !serverName) {
-    return buildToolApprovalScope(input);
+    // Fall back to the generic builder (not buildToolApprovalScope) — the
+    // latter routes MCP tools back here, which would recurse.
+    return buildGenericToolApprovalScope(input);
   }
   const redacted = redactArgs(data.args);
   let argsPreview = '';
