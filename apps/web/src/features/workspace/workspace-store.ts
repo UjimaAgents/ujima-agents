@@ -14,6 +14,7 @@ import {
 import type { SelectedConversation } from "./types";
 import { resolveDefaultConversation } from "./workspace-channels";
 import { isLiveRun } from "./feed-selectors";
+import { liveActivityTextForRuns } from "./live-activity-text";
 import { mergeRunChunkActivity, runChunkActivityKey } from "./run-chunk-activity";
 import type { ChatMessageData, ApprovalCardData } from "./components/chat";
 import type { ActivityState } from "./activity-state";
@@ -45,6 +46,7 @@ export interface ActiveAgentChat {
   name: string;
   agents: string[];
   pendingApprovals: number;
+  activityText?: string;
 }
 
 export interface WorkspaceState {
@@ -267,11 +269,11 @@ let _activityForIds: ActivityEvent[] | null = null;
 
 function getActivityEventIds(activity: ActivityEvent[]): Set<string> {
   // If the activity array reference changed (e.g. conversation reset), rebuild.
-  if (_activityForIds !== activity) {
+  if (_activityForIds !== activity || !_activityEventIds) {
     _activityEventIds = new Set(activity.map((event) => event.event_id));
     _activityForIds = activity;
   }
-  return _activityEventIds!;
+  return _activityEventIds;
 }
 
 function appendSequencedEvents(
@@ -493,7 +495,7 @@ export function agentOnlyThreadName(
 }
 
 export function selectActiveAgentChats(
-  state: Pick<WorkspaceState, "channels" | "members" | "globalActiveRuns" | "approvals">,
+  state: Pick<WorkspaceState, "channels" | "members" | "globalActiveRuns" | "approvals" | "activity">,
   currentThreadId?: string,
 ): ActiveAgentChat[] {
   const grouped = new Map<string, RunState[]>();
@@ -515,12 +517,15 @@ export function selectActiveAgentChats(
   }
 
   return [...grouped.keys()].map((threadId) => {
+    const runs = grouped.get(threadId) ?? [];
     const agents = agentThreadMembers(threadId, state).map((agent) => agent.name);
+    const pendingApprovals = approvalsByThread.get(threadId) ?? 0;
     return {
       threadId,
       name: agentOnlyThreadName(threadId, state) ?? agents.join(" & "),
       agents,
-      pendingApprovals: approvalsByThread.get(threadId) ?? 0,
+      pendingApprovals,
+      activityText: pendingApprovals > 0 ? "Approval required" : liveActivityTextForRuns(runs, state.activity),
     };
   });
 }

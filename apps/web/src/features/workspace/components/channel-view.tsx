@@ -377,9 +377,10 @@ export function ChannelView({
 
   const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
   const globalApprovals = useWorkspaceStore((state) => state.approvals);
+  const globalActivity = useWorkspaceStore((state) => state.activity);
   const activeAgentChats = useMemo(
-    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns, approvals: globalApprovals }, currentThreadId),
-    [bootstrap.channels, currentThreadId, globalActiveRuns, globalApprovals, members],
+    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns, approvals: globalApprovals, activity: globalActivity }, currentThreadId),
+    [bootstrap.channels, currentThreadId, globalActiveRuns, globalApprovals, globalActivity, members],
   );
   const activeTerminals = useWorkspaceStore(selectActiveTerminals);
   const composerReasoningEffort =
@@ -435,7 +436,6 @@ export function ChannelView({
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
   const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
   const conversationColorIndex = Math.max(memberIndexById.get(conversation.id) ?? 0, 0);
-  // eslint-disable-next-line react-hooks/incompatible-library
   const messageVirtualizer = useVirtualizer({
     count: feed.messages.length,
     getScrollElement: () => listRef.current,
@@ -670,8 +670,7 @@ export function ChannelView({
       }
       setResolvingApprovals((state) => ({ ...state, [approvalId]: true }));
       setApprovalErrors((state) => {
-        const next = { ...state };
-        delete next[approvalId];
+        const { [approvalId]: _removed, ...next } = state;
         return next;
       });
       try {
@@ -700,8 +699,7 @@ export function ChannelView({
         }
       } finally {
         setResolvingApprovals((state) => {
-          const next = { ...state };
-          delete next[approvalId];
+          const { [approvalId]: _removed, ...next } = state;
           return next;
         });
       }
@@ -753,8 +751,7 @@ export function ChannelView({
     async (questionId: string, selectedOption: string) => {
       setResolvingQuestions((state) => ({ ...state, [questionId]: true }));
       setQuestionErrors((state) => {
-        const next = { ...state };
-        delete next[questionId];
+        const { [questionId]: _removed, ...next } = state;
         return next;
       });
       try {
@@ -779,8 +776,7 @@ export function ChannelView({
         });
       } finally {
         setResolvingQuestions((state) => {
-          const next = { ...state };
-          delete next[questionId];
+          const { [questionId]: _removed, ...next } = state;
           return next;
         });
       }
@@ -980,7 +976,7 @@ export function ChannelView({
                 chatFontSize={chatFontSize}
                 onChatFontSizeChange={setChatFontSize}
                 channelValue={"never" as ShellApprovalMode}
-                onChannelChange={async () => {}}
+                onChannelChange={async () => undefined}
               />
             )
           }
@@ -1097,7 +1093,7 @@ export function ChannelView({
             <TabEmpty context="tasks" label="No organization context available." />
           )
         ) : activeTab === "culture" ? (
-          (conversation.type === "channel" || conversation.type === "dm") && organizationId ? (
+          (conversation.type === "channel" || conversation.type === "agent") && organizationId ? (
             <TabPanel>
               <CultureTab organizationId={organizationId} channelId={conversation.id} members={traceMembers} />
             </TabPanel>
@@ -1168,14 +1164,21 @@ export function ChannelView({
                     name: chat.name,
                   });
                 }}
-                className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-zinc-950/80 px-3.5 py-1.5 text-xs text-zinc-100 shadow-lg backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20"
+                className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-violet-500/30 bg-zinc-950/80 px-3.5 py-1.5 text-xs text-zinc-100 shadow-lg backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20"
               >
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                <span className="font-medium">
-                  {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">
+                    {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
+                  </span>
+                  {chat.activityText ? (
+                    <span className="live-activity-shimmer block truncate text-[10px] leading-tight">
+                      {chat.activityText}
+                    </span>
+                  ) : null}
                 </span>
                 {chat.pendingApprovals > 0 ? (
                   <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950">

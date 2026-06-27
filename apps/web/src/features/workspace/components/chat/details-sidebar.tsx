@@ -249,7 +249,7 @@ function AggregatedRunPanel({
           <span className="min-w-0 flex-1 whitespace-normal break-words leading-5">
             {summaryText || "Executed tool actions"}
           </span>
-          {counts.edit + counts.delete > 0 ? (
+          {counts.edit + counts.delete > 0 && !panelOpen ? (
             <span className="shrink-0">
               <DiffStat additions={diffTotals.additions} deletions={diffTotals.deletions} />
             </span>
@@ -276,7 +276,7 @@ function AggregatedRunPanel({
                       {verb} <span className="font-semibold text-foreground/90">{getBasename(op.file)}</span>
                     </span>
                   }
-                  trailing={<DiffStat additions={op.additions} deletions={op.deletions} />}
+                  trailing={!isExpanded ? <DiffStat additions={op.additions} deletions={op.deletions} /> : undefined}
                 >
                   <DiffBody op={op} />
                 </ExpandableRow>

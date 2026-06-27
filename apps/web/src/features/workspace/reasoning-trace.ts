@@ -684,6 +684,13 @@ function sentenceCase(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
+function getBasename(path?: string): string {
+  if (!path) return "";
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (index >= 0) return path.slice(index + 1);
+  return path;
+}
+
 function deriveToolLine(
   input: ReasoningTraceInput,
   event: ActivityEvent | undefined,
@@ -819,49 +826,49 @@ function deriveToolLine(
 
   if (parsed.action === "write" && parsed.resourceType === "file" && path) {
     return {
-      title: `${actorLabel} is writing to ${path}`,
+      title: `${actorLabel} is writing to ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "file" && path && isDeleteOp) {
     return {
-      title: `${actorLabel} deleted file ${path}`,
+      title: `${actorLabel} deleted file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "file" && path && isCreateOp) {
     return {
-      title: `${actorLabel} created file ${path}`,
+      title: `${actorLabel} created file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "file" && path && isReadOp) {
     return {
-      title: `${actorLabel} read file ${path}`,
+      title: `${actorLabel} read file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if ((parsed.action === "execute" || parsed.action === "write") && parsed.resourceType === "file" && path) {
     return {
-      title: `${actorLabel} updated file ${path}`,
+      title: `${actorLabel} updated file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "folder" && path && isDeleteOp) {
     return {
-      title: `${actorLabel} deleted folder ${path}`,
+      title: `${actorLabel} deleted folder ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "folder" && path && isCreateOp) {
     return {
-      title: `${actorLabel} created folder ${path}`,
+      title: `${actorLabel} created folder ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if ((parsed.action === "write" || parsed.action === "execute") && parsed.resourceType === "folder" && path && isUpdateOp) {
     return {
-      title: `${actorLabel} updated folder ${path}`,
+      title: `${actorLabel} updated folder ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }

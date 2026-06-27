@@ -9,7 +9,6 @@ import {
   MessageSquare,
   Pencil,
   PlayCircle,
-  Users,
 } from "lucide-react";
 import type {
   Goal,
@@ -22,6 +21,9 @@ import {Avatar} from "./chat/primitives";
 import {QuestionCard} from "./chat/question-card";
 import type {BootstrapResponse} from "@ujima/api-schema";
 import { Select } from "@/components/ui/select";
+import { isLiveRun } from "../feed-selectors";
+import { liveActivityTextForRun } from "../live-activity-text";
+import { useWorkspaceStore } from "../workspace-store";
 
 interface ChannelGoalsBoardProps {
   channelId?: string;
@@ -200,6 +202,7 @@ interface TaskCardProps {
   depTask: GoalTask | null | undefined;
   isBlocked: boolean;
   assigneeName: string;
+  activityText?: string;
   actionLoading: boolean;
   members: BootstrapResponse["members"];
   tasks: GoalTask[];
@@ -213,6 +216,7 @@ function TaskCard({
   depTask,
   isBlocked,
   assigneeName,
+  activityText,
   actionLoading,
   members,
   refresh,
@@ -308,6 +312,13 @@ function TaskCard({
             {task.title}
           </h4>
 
+          {activityText ? (
+            <div className="mb-2 flex min-w-0 items-center gap-1.5 text-[10px] font-medium">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="live-activity-shimmer truncate">{activityText}</span>
+            </div>
+          ) : null}
+
           {/* Blocked indicator */}
           {isBlocked && depTask && (
             <div
@@ -374,6 +385,19 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
     () => new Map(members.map((m) => [m.id, m])),
     [members]
   );
+  const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
+  const globalActivity = useWorkspaceStore((state) => state.activity);
+  const activityTextByAgent = useMemo(() => {
+    const latestByAgent = new Map<string, (typeof globalActiveRuns)[number]>();
+    for (const run of globalActiveRuns) {
+      if (!isLiveRun(run)) continue;
+      const previous = latestByAgent.get(run.agentId);
+      if (!previous || Date.parse(run.startedAt) > Date.parse(previous.startedAt)) {
+        latestByAgent.set(run.agentId, run);
+      }
+    }
+    return new Map([...latestByAgent].map(([agentId, run]) => [agentId, liveActivityTextForRun(run, globalActivity)]));
+  }, [globalActiveRuns, globalActivity]);
   const storageKey = `goalSwitcher:${channelId ?? "__workspace__"}`;
 
   const {goals, tasks, questions} = board;
@@ -817,6 +841,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
                         depTask={depTask}
                         isBlocked={isBlocked}
                         assigneeName={assigneeName}
+                        activityText={task.status === "in_progress" ? activityTextByAgent.get(task.assigneeId) : undefined}
                         actionLoading={actionLoading === task.id}
                         members={members}
                         tasks={tasks}

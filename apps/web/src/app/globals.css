@@ -159,6 +159,28 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+.live-activity-shimmer {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.55), rgba(255, 255, 255, 0.95), rgba(34, 211, 238, 0.65));
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: live-activity-shimmer 1.8s linear infinite;
+}
+
+.dark .live-activity-shimmer {
+  background-image: linear-gradient(90deg, rgba(52, 211, 153, 0.65), rgba(244, 244, 245, 0.95), rgba(125, 211, 252, 0.75));
+}
+
+@keyframes live-activity-shimmer {
+  from {
+    background-position: 110% 0;
+  }
+  to {
+    background-position: -110% 0;
+  }
+}
+
 body,
 section,
 article,

@@ -39,6 +39,7 @@ const CODEX_APP_SERVER_ARGS = [
 
 let spawnCodexAppServer: SpawnCodexAppServer = spawn;
 const sharedRpcs = new Map<string, Promise<CodexRpc>>();
+const sharedSessions = new Map<string, CodexThreadSession>();
 
 interface CodexChildProcess {
   stdin: Writable;
@@ -79,13 +80,17 @@ interface CodexTextItem {
   id: string;
   text: string;
 }
+interface CodexStartedItem {
+  id?: string;
+  type?: string;
+  command?: string | null;
+  cwd?: string | null;
+  changes?: unknown;
+}
 interface CodexThreadSession {
   threadId: string;
   baseInstructions: string;
   toolSignature: string;
-}
-interface CodexThreadSessionRef {
-  value?: CodexThreadSession;
 }
 
 const CODEX_DEVELOPER_INSTRUCTIONS = [
@@ -102,18 +107,18 @@ export function setCodexAppServerSpawn(spawnImpl: SpawnCodexAppServer | undefine
     void rpc.then((value) => value.close()).catch(() => undefined);
   }
   sharedRpcs.clear();
+  sharedSessions.clear();
   spawnCodexAppServer = spawnImpl ?? spawn;
 }
 
 export function createCodexAppServerModel(options: CodexAppServerModelOptions): LanguageModelV3 {
   const rpc = getCodexRpc(options);
-  const session: CodexThreadSessionRef = {};
   return {
     specificationVersion: 'v3',
     provider: 'openai-codex',
     modelId: options.modelId,
     supportedUrls: {},
-    doGenerate: (callOptions) => generateWithCodex(options, rpc, callOptions, undefined, session),
+    doGenerate: (callOptions) => generateWithCodex(options, rpc, callOptions),
     doStream: async (callOptions) => ({
       stream: new ReadableStream<LanguageModelV3StreamPart>({
         async start(controller) {
@@ -139,7 +144,7 @@ export function createCodexAppServerModel(options: CodexAppServerModelOptions): 
               onToolResult(result) {
                 controller.enqueue(result);
               },
-            }, session);
+            });
             if (textId) controller.enqueue({ type: 'text-end', id: textId, providerMetadata: codexTextMetadata(textId) });
             controller.enqueue({
               type: 'finish',
@@ -161,9 +166,9 @@ async function generateWithCodex(
   rpcPromise: Promise<CodexRpc>,
   callOptions: LanguageModelV3CallOptions,
   handlers?: CodexStreamHandlers,
-  sessionRef?: CodexThreadSessionRef,
 ): Promise<LanguageModelV3GenerateResult> {
   const rpc = await rpcPromise;
+  const cwd = options.cwd ?? process.cwd();
   const allTools = functionTools(callOptions.tools);
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
   const toolNames = new Map(allTools.map((tool) => [codexToolName(tool.name), tool.name]));
@@ -173,7 +178,8 @@ async function generateWithCodex(
     description: tool.description ?? '',
     inputSchema: tool.inputSchema,
   })));
-  const session = sessionRef?.value;
+  const sessionKey = codexSessionKey(cwd, options.modelId, prompt.baseInstructions, toolSignature);
+  const session = sharedSessions.get(sessionKey);
   const shouldReuseThread =
     !!session &&
     prompt.historyItems.length > 0 &&
@@ -183,7 +189,7 @@ async function generateWithCodex(
   if (!shouldReuseThread) {
     const thread = await rpc.request<{ thread: { id: string } }>('thread/start', {
       model: options.modelId,
-      cwd: options.cwd ?? process.cwd(),
+      cwd,
       ephemeral: true,
       serviceName: 'ujima',
       approvalPolicy: 'untrusted',
@@ -198,19 +204,17 @@ async function generateWithCodex(
       })),
     });
     threadId = thread.thread.id;
-    if (sessionRef) {
-      sessionRef.value = {
-        threadId,
-        baseInstructions: prompt.baseInstructions,
-        toolSignature,
-      };
-    }
+    sharedSessions.set(sessionKey, {
+      threadId,
+      baseInstructions: prompt.baseInstructions,
+      toolSignature,
+    });
     if (prompt.historyItems.length > 0) {
       await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
     }
   }
   const state = {
-    startedItems: new Map<string, any>(),
+    startedItems: new Map<string, CodexStartedItem>(),
     textItems: [] as CodexTextItem[],
     textItemsById: new Map<string, CodexTextItem>(),
     fallbackTextId: undefined as string | undefined,
@@ -436,7 +440,7 @@ async function generateWithCodex(
     const started = await rpc.request<{ turn: { id: string } }>('turn/start', {
       threadId,
       input: prompt.input,
-      cwd: options.cwd ?? process.cwd(),
+      cwd,
       effort: codexReasoningEffort(options.reasoningEffort),
     });
     state.responseId = started.turn.id;
@@ -492,17 +496,35 @@ function getCodexRpc(options: CodexAppServerModelOptions): Promise<CodexRpc> {
   if (existing) return existing;
   const created = createCodexRpc(options).catch((error) => {
     sharedRpcs.delete(key);
+    deleteCodexSessionsForCwd(key);
     throw error;
   });
   void created.then((rpc) => {
     rpc.onClose(() => {
       if (sharedRpcs.get(key) === created) {
         sharedRpcs.delete(key);
+        deleteCodexSessionsForCwd(key);
       }
     });
-  }).catch(() => {});
+  }).catch(() => undefined);
   sharedRpcs.set(key, created);
   return created;
+}
+
+function codexSessionKey(
+  cwd: string,
+  modelId: string,
+  baseInstructions: string,
+  toolSignature: string,
+): string {
+  return `${JSON.stringify(cwd)}\n${modelId}\n${baseInstructions}\n${toolSignature}`;
+}
+
+function deleteCodexSessionsForCwd(cwd: string): void {
+  const prefix = `${JSON.stringify(cwd)}\n`;
+  for (const key of sharedSessions.keys()) {
+    if (key.startsWith(prefix)) sharedSessions.delete(key);
+  }
 }
 
 function functionTools(tools: LanguageModelV3CallOptions['tools']): LanguageModelV3FunctionTool[] {
@@ -998,13 +1020,15 @@ function splitPrompt(prompt: LanguageModelV3Prompt): {
 } {
   const system = prompt.filter((message) => message.role === 'system');
   const messages = prompt.filter((message) => message.role !== 'system');
-  const current = messages.at(-1);
-  const history = current ? messages.slice(0, -1) : [];
+  const currentIndex = findCodexCurrentMessageIndex(messages);
+  const current = currentIndex >= 0 ? messages[currentIndex] : messages.at(-1);
+  const history = currentIndex >= 0 ? messages.slice(0, currentIndex) : current ? messages.slice(0, -1) : [];
+  const tailContext = currentIndex >= 0 ? messages.slice(currentIndex + 1) : [];
   const historyItems = promptToResponseItems(history);
-  let input = current ? messageToInput(current) : [];
+  let input = current ? messageToInput(current, tailContext) : tailContext.length ? textInput(messagesText(tailContext)) : [];
   if (current?.role === 'tool') {
     historyItems.push(...promptToResponseItems([current]));
-    input = textInput('Continue.');
+    input = textInput(compactText(['Continue.', messagesText(tailContext)].join('\n\n')));
   }
   return {
     baseInstructions: system.map((message) => message.content).join('\n\n') ||
@@ -1012,6 +1036,22 @@ function splitPrompt(prompt: LanguageModelV3Prompt): {
     historyItems,
     input: input.length > 0 ? input : textInput('Continue.'),
   };
+}
+
+function findCodexCurrentMessageIndex(messages: LanguageModelV3Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (!isCodexTailContextMessage(messages[index])) return index;
+  }
+  return -1;
+}
+
+function isCodexTailContextMessage(message: LanguageModelV3Message | undefined): boolean {
+  if (!message || message.role !== 'user') return false;
+  const text = contentText(message).trim();
+  return text.startsWith('<wake-context>') ||
+    text.startsWith('<thread-state>') ||
+    text.startsWith('<workspace-state>') ||
+    text.startsWith('<delegate_turn>');
 }
 
 function promptToResponseItems(prompt: LanguageModelV3Prompt): CodexResponseItem[] {
@@ -1048,13 +1088,21 @@ function textResponseItem(role: string, text: string): CodexResponseItem[] {
   return text ? [{ type: 'message', role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }] }] : [];
 }
 
-function messageToInput(message: LanguageModelV3Message): CodexUserInput[] {
-  const text = contentText(message);
+function messageToInput(message: LanguageModelV3Message, tailContext: LanguageModelV3Message[] = []): CodexUserInput[] {
+  const text = compactText([contentText(message), messagesText(tailContext)].join('\n\n'));
   return text ? textInput(text) : [];
 }
 
 function textInput(text: string): CodexUserInput[] {
   return [{ type: 'text', text, text_elements: [] }];
+}
+
+function messagesText(messages: LanguageModelV3Message[]): string {
+  return compactText(messages.map((message) => contentText(message)).join('\n\n'));
+}
+
+function compactText(text: string): string {
+  return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function contentText(message: LanguageModelV3Message, allowed = ['text']): string {

@@ -25,6 +25,7 @@ function buildTeam(input: {
   };
   return {
     kind: 'ujima.agent-team' as const,
+    workspace: { root: '/workspace' },
     providers: input.providers,
     getAgent: (name: string) => (name === input.agentName ? agent : undefined),
     getRole: (name: string) => (name === input.roleName ? role : undefined),
