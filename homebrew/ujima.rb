@@ -15,7 +15,7 @@ class Ujima < Formula
   homepage "https://github.com/UjimaAgents/ujima-agents"
   license "MIT"
 
-  version "0.0.50"
+  version "0.0.51"
 
   on_macos do
     on_arm do

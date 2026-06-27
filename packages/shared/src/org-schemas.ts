@@ -372,6 +372,7 @@ export const MessageMetadataSchema = z
     /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
     runId: IdSchema.optional(),
     runProgress: z.boolean().optional(),
+    wakeContext: z.boolean().optional(),
     failedTrace: z.boolean().optional(),
     stoppedTrace: z.boolean().optional(),
     traceOnly: z.boolean().optional(),

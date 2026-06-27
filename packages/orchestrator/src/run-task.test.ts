@@ -404,8 +404,10 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
       id: 'mock',
       async *stream({ messages }) {
         jrStartedAt.push(Date.now());
-        const userMsg = messages.find((m) => m.role === 'user');
-        if (userMsg && typeof userMsg.content === 'string') jrReceivedPrompt = userMsg.content;
+        jrReceivedPrompt = messages
+          .filter((m) => m.role === 'user' && typeof m.content === 'string')
+          .map((m) => m.content)
+          .join('\n\n');
         yield { type: 'text', text: 'Looks good!' };
         yield { type: 'finish', reason: 'end_turn' };
       },
@@ -546,10 +548,10 @@ describe('orchestrator runTask — manual mode + concurrent execution', () => {
         {
           id: 'mock',
           async *stream({ messages }) {
-            const userMsg = messages.find((message) => message.role === 'user');
-            if (userMsg && typeof userMsg.content === 'string') {
-              jrResumePrompt = userMsg.content;
-            }
+            jrResumePrompt = messages
+              .filter((message) => message.role === 'user' && typeof message.content === 'string')
+              .map((message) => message.content)
+              .join('\n\n');
             yield { type: 'text', text: 'Reviewed the card.' };
             yield { type: 'finish', reason: 'end_turn' };
           },

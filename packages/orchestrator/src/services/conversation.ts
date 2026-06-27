@@ -13,7 +13,6 @@ import {
   type ChannelPassReason,
   type Message,
   type MessageMention,
-  type ReasoningEffort,
   buildMentionHandleRegistry,
   getDirectMessageThreadId,
   scanMentionsInContent,
@@ -47,7 +46,6 @@ import {
   PairMentionTracker,
 } from './conversation-quota.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
-import type { DelegateKind } from '../utils/delegate-turn.js';
 
 /**
  * Strip a trailing parenthetical role/disambiguation suffix from a
@@ -124,41 +122,7 @@ const WAKEABLE_AGENT_DM_TERMINATORS = new Set([
   'channel.handoff',
 ]);
 
-interface ConversationMessageMetadata {
-  runId?: string;
-  runProgress?: boolean;
-  goalMode?: boolean;
-  scheduleMode?: boolean;
-  reasoningEffort?: ReasoningEffort;
-  delegate?: {
-    id?: string;
-    parentRunId?: string;
-    /** Channel a channel-scoped delegation was initiated from (Slack-style). */
-    parentChannelId?: string;
-    /** Guards the in-channel completion marker so it fires exactly once. */
-    markerPosted?: boolean;
-    kind?: DelegateKind;
-    index?: number;
-    status?:
-      | 'queued'
-      | 'running'
-      | 'dispatched'
-      | 'completed'
-      | 'no_reply'
-      | 'timed_out'
-      | 'delegate_failed'
-      | 'waiting_for_approval'
-      | 'waiting_for_input'
-      | 'cancelled';
-  };
-  /** Clickable pointer posted into the parent channel for a channel-scoped delegation. */
-  delegateMarker?: {
-    kind: 'start' | 'done';
-    delegationThreadId: string;
-    to?: string;
-    agentName?: string;
-  };
-}
+type ConversationMessageMetadata = NonNullable<Message['metadata']>;
 
 export type WakePolicy = 'default' | 'never';
 

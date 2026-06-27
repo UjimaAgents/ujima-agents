@@ -48,7 +48,6 @@ export class RunTurnPublisher {
     usage: NormalizedTokenUsage;
   }): void {
     if (!this.lastMessage || !hasTokenUsage(input.usage)) return;
-    if (input.finalText && input.finalText !== input.lastText && !input.terminatingTool) return;
     if ((this.lastMessage.inputTokens ?? 0) > 0 || (this.lastMessage.outputTokens ?? 0) > 0) return;
     const updated: Message = {
       ...this.lastMessage,

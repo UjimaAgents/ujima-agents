@@ -11,7 +11,7 @@ import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { TokenCount } from "./chat-token-count";
 import { Modal } from "@/components/ui/modal";
 import { UnifiedDiffView } from "./unified-diff-view";
-import { MessageCardsView } from "./goal-task-cards";
+import { MessageCardsView, TaskNudgeCardView, type TaskNudgeData } from "./goal-task-cards";
 import {
   getArtifactFileCard,
   getMessageCards,

@@ -201,6 +201,52 @@ function createFakeAppServer(): {
           stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
           continue;
         }
+        if (text === 'collab tool call') {
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'collabToolCall', id: 'collab_1', tool: 'my_collab', status: 'completed', receiverThreadId: 'thr_2', agentStatus: 'idle' } } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
+        if (text === 'legacy command approval') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 150,
+            method: 'execCommandApproval',
+            params: {
+              conversationId: 'thr_1',
+              callId: 'cmd_legacy_1',
+              command: ['npm', 'test'],
+              cwd: '/repo',
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'legacy patch approval') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 151,
+            method: 'applyPatchApproval',
+            params: {
+              conversationId: 'thr_1',
+              callId: 'patch_legacy_1',
+              fileChanges: { 'src/a.ts': { type: 'add', content: 'new content' } },
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'started item caching approval') {
+          stdout.write(`${JSON.stringify({ method: 'item/started', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'fileChange', id: 'fc_cached_1', changes: [{ path: 'src/a.ts', kind: 'add', diff: 'cached new file' }], status: 'inProgress' } } })}\n`);
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 152,
+            method: 'item/fileChange/requestApproval',
+            params: {
+              threadId: 'thr_1',
+              turnId: 'turn_1',
+              itemId: 'fc_cached_1',
+            },
+          })}\n`);
+          continue;
+        }
         stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hello from app-server' } })}\n`);
         stdout.write(`${JSON.stringify({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg_1', text: 'hello from app-server' } } })}\n`);
         stdout.write(`${JSON.stringify({
@@ -357,7 +403,7 @@ describe('selectLanguageModel', () => {
     const response = child.requests.find((req) => (req as { id?: number; method?: string }).id === 99 && !(req as { method?: string }).method) as {
       result?: { contentItems?: { type?: string; text?: string }[] };
     };
-    expect(response.result?.contentItems?.[0]?.type).toBe('input_text');
+    expect(response.result?.contentItems?.[0]?.type).toBe('inputText');
     expect(response.result?.contentItems?.[0]?.text).toBe('');
     expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/interrupt')).toHaveLength(1);
   });
@@ -662,5 +708,126 @@ describe('selectLanguageModel', () => {
       { type: 'text', text: 'first saved message' },
       { type: 'text', text: 'second saved message' },
     ]);
+  });
+
+  it('correctly maps collabToolCall items', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'collab tool call' }] }],
+      tools: [{ type: 'function', name: 'agent.delegate', description: 'delegate', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'collab_1',
+        toolName: 'agent.delegate',
+        providerExecuted: true,
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'collab_1',
+        toolName: 'agent.delegate',
+        result: {
+          status: 'completed',
+          receiverThreadId: 'thr_2',
+          agentStatus: 'idle',
+        },
+      },
+    ]);
+  });
+
+  it('correctly handles legacy execCommandApproval and declines with decline', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'legacy command approval' }] }],
+      tools: [{ type: 'function', name: 'shell', description: 'shell', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'cmd_legacy_1',
+        toolName: 'shell',
+        input: '{"command":"npm","args":["test"],"cwd":"/repo"}',
+      },
+    ]);
+
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 150 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
+  });
+
+  it('correctly handles legacy applyPatchApproval and declines with decline', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'legacy patch approval' }] }],
+      tools: [{ type: 'function', name: 'shell', description: 'shell', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'patch_legacy_1',
+        toolName: 'shell',
+      },
+    ]);
+    expect((result.content[0] as { input?: string }).input).toContain('apply_patch');
+
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 151 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
+  });
+
+  it('caches proposed changes from item/started for file change approval request', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'started item caching approval' }] }],
+      tools: [{ type: 'function', name: 'write', description: 'write', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'fc_cached_1',
+        toolName: 'write',
+        input: '{"file_path":"src/a.ts","content":"cached new file"}',
+      },
+    ]);
+
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 152 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
   });
 });

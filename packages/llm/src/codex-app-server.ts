@@ -179,6 +179,7 @@ async function generateWithCodex(
     await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
   }
   const state = {
+    startedItems: new Map<string, any>(),
     textItems: [] as CodexTextItem[],
     textItemsById: new Map<string, CodexTextItem>(),
     fallbackTextId: undefined as string | undefined,
@@ -228,12 +229,12 @@ async function generateWithCodex(
         availableToolNames,
       });
       if (!translated) {
-        rpc.respond(msg.id, { contentItems: [{ type: 'input_text', text: 'Invalid tool call' }], success: false });
+        rpc.respond(msg.id, { contentItems: [{ type: 'inputText', text: 'Invalid tool call' }], success: false });
         return;
       }
       queueToolCall(translated, params.turnId);
       rpc.respond(msg.id, {
-        contentItems: [{ type: 'input_text', text: '' }],
+        contentItems: [{ type: 'inputText', text: '' }],
         success: true,
       });
       return;
@@ -247,12 +248,21 @@ async function generateWithCodex(
         cwd?: string | null;
       };
       if (params.threadId !== threadId) return;
-      if (params.itemId && params.command && availableToolNames.has('shell')) {
+      let command = params.command;
+      let cwd = params.cwd;
+      if (params.itemId) {
+        const startedItem = state.startedItems.get(params.itemId);
+        if (startedItem) {
+          command = command ?? startedItem.command;
+          cwd = cwd ?? startedItem.cwd;
+        }
+      }
+      if (params.itemId && command && availableToolNames.has('shell')) {
         queueToolCall({
           type: 'tool-call',
           toolCallId: params.itemId,
           toolName: 'shell',
-          input: JSON.stringify({ command: params.command, cwd: params.cwd ?? undefined }),
+          input: JSON.stringify({ command, cwd: cwd ?? undefined }),
         }, params.turnId);
       }
       rpc.respond(msg.id, { decision: 'decline' });
@@ -278,7 +288,7 @@ async function generateWithCodex(
           }),
         });
       }
-      rpc.respond(msg.id, { decision: 'denied' });
+      rpc.respond(msg.id, { decision: 'decline' });
       return;
     }
     if (msg.method === 'item/fileChange/requestApproval') {
@@ -293,10 +303,15 @@ async function generateWithCodex(
       };
       if (params.threadId !== threadId) return;
       const callId = params.itemId ?? params.callId ?? params.item?.id;
+      let changes = params.changes ?? params.fileChanges ?? params.item?.changes;
+      if (!changes && callId) {
+        const startedItem = state.startedItems.get(callId);
+        changes = startedItem?.changes;
+      }
       const call = callId
         ? fileChangeApprovalToolCall(
           callId,
-          params.changes ?? params.fileChanges ?? params.item?.changes,
+          changes,
           availableToolNames,
         )
         : null;
@@ -320,12 +335,25 @@ async function generateWithCodex(
           input: JSON.stringify({ command: applyPatchCommandFromLegacyChanges(params.fileChanges) }),
         });
       }
-      rpc.respond(msg.id, { decision: 'denied' });
+      rpc.respond(msg.id, { decision: 'decline' });
+      return;
     }
   });
   const offNotification = rpc.onNotification((msg) => {
     const params = msg.params as { threadId?: string } | undefined;
     if (params?.threadId && params.threadId !== threadId) return;
+    if (msg.method === 'item/started') {
+      const item = (msg.params as { item?: { id?: string; type?: string } } | undefined)?.item;
+      if (item?.id) {
+        state.startedItems.set(item.id, item);
+      }
+    }
+    if (msg.method === 'turn/started') {
+      const turn = (msg.params as { turn?: { id?: string } } | undefined)?.turn;
+      if (turn?.id) {
+        state.responseId = turn.id;
+      }
+    }
     if (msg.method === 'item/agentMessage/delta') {
       const deltaParams = msg.params as { itemId?: unknown; delta?: unknown } | undefined;
       const delta = typeof deltaParams?.delta === 'string' ? deltaParams.delta : '';
@@ -435,6 +463,13 @@ function getCodexRpc(options: CodexAppServerModelOptions): Promise<CodexRpc> {
     sharedRpcs.delete(key);
     throw error;
   });
+  void created.then((rpc) => {
+    rpc.onClose(() => {
+      if (sharedRpcs.get(key) === created) {
+        sharedRpcs.delete(key);
+      }
+    });
+  }).catch(() => {});
   sharedRpcs.set(key, created);
   return created;
 }
@@ -615,16 +650,18 @@ function translateCodexThreadItem(
     }, record.status === 'failed');
   }
 
-  if (type === 'collabAgentToolCall') {
+  if (type === 'collabToolCall' || type === 'collabAgentToolCall') {
+    const receiverId = stringArg(record, 'receiverThreadId') ?? (Array.isArray(record.receiverThreadIds) ? record.receiverThreadIds[0] : undefined);
+    const agentStatusValue = record.agentStatus ?? record.agentsStates;
     return providerToolPair(id, 'agent.delegate', {
       tool: stringArg(record, 'tool') ?? '',
       prompt: stringArg(record, 'prompt') ?? '',
       model: stringArg(record, 'model'),
     }, {
       status: stringArg(record, 'status') ?? '',
-      receiverThreadIds: Array.isArray(record.receiverThreadIds) ? record.receiverThreadIds : [],
-      agentsStates: record.agentsStates ?? {},
-    }, record.status === 'failed');
+      receiverThreadId: receiverId ?? null,
+      agentStatus: agentStatusValue ?? null,
+    }, record.status === 'failed' || record.status === 'declined');
   }
 
   return null;
@@ -658,6 +695,9 @@ function providerToolPair(
 }
 
 function fileChangeToolName(change: Record<string, unknown> | undefined): string {
+  if (typeof change?.kind === 'string') {
+    return change.kind === 'add' ? 'write' : 'edit';
+  }
   const kind = objectArgs(change?.kind);
   return kind.type === 'add' ? 'write' : 'edit';
 }
@@ -744,6 +784,9 @@ function normalizeFileChanges(rawChanges: unknown): Record<string, unknown>[] {
 }
 
 function changeKind(change: Record<string, unknown>): string {
+  if (typeof change.kind === 'string') {
+    return change.kind;
+  }
   const kind = objectArgs(change.kind);
   return stringArg(kind, 'type') ?? stringArg(change, 'type') ?? 'update';
 }
@@ -764,7 +807,9 @@ function changeNewString(change: Record<string, unknown>): string | undefined {
     stringArg(change, 'newString') ??
     stringArg(change, 'newText') ??
     stringArg(change, 'after') ??
-    stringArg(change, 'content');
+    stringArg(change, 'content') ??
+    stringArg(change, 'diff') ??
+    stringArg(change, 'patch');
 }
 
 function applyPatchCommandFromFileChanges(changes: Record<string, unknown>[]): string {
@@ -1063,6 +1108,7 @@ function connectCodexAppServer(child: CodexChildProcess) {
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let closed = false;
   const rl = createInterface({ input: child.stdout });
+  const closeListeners = new Set<() => void>();
 
   const notify = (message: JsonRpcMessage) => {
     for (const listener of listeners) listener(message);
@@ -1078,10 +1124,10 @@ function connectCodexAppServer(child: CodexChildProcess) {
     }
     if (message.method && message.id !== undefined) {
       for (const listener of requestListeners) void listener(message);
-    } else if (typeof message.id === 'number') {
-      const waiter = pending.get(message.id);
+    } else if (message.id !== undefined) {
+      const waiter = pending.get(Number(message.id));
       if (waiter) {
-        pending.delete(message.id);
+        pending.delete(Number(message.id));
         if ('error' in message && message.error) {
           waiter.reject(new Error(message.error.message ?? 'Codex app-server error'));
         } else {
@@ -1097,6 +1143,7 @@ function connectCodexAppServer(child: CodexChildProcess) {
     closed = true;
     for (const waiter of pending.values()) waiter.reject(new Error('Codex app-server exited'));
     pending.clear();
+    for (const listener of closeListeners) listener();
   });
 
   child.on('error', (error) => {
@@ -1124,6 +1171,10 @@ function connectCodexAppServer(child: CodexChildProcess) {
     onRequest(listener: (message: JsonRpcMessage) => void | Promise<void>): () => void {
       requestListeners.add(listener);
       return () => requestListeners.delete(listener);
+    },
+    onClose(listener: () => void): () => void {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
     },
     respond(id: JsonRpcMessage['id'], result: unknown): void {
       if (!closed && id !== undefined) {
