@@ -316,6 +316,16 @@ export const MessageMetadataSchema = z.object({
   stoppedTrace: z.boolean().optional(),
   traceOnly: z.boolean().optional(),
   compactedInto: IdSchema.optional(),
+  taskNudge: z.object({
+    taskId: IdSchema,
+    taskTitle: z.string().min(1),
+    reason: z.enum(['unblocked', 'idle', 'stalled', 'moved']),
+    assigneeId: IdSchema,
+    completedDependencyId: IdSchema.optional(),
+    completedDependencyTitle: z.string().optional(),
+    previousStatus: GoalTaskStatusSchema.optional(),
+    status: GoalTaskStatusSchema.optional(),
+  }).optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 

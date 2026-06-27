@@ -16,6 +16,7 @@
     "release:prepare": "bun scripts/release/prepare.ts",
     "release:check": "bun scripts/release/check.ts",
     "release:dist": "bun scripts/release/assemble-dist.ts",
+    "release:platform-tarballs": "bun scripts/release/assemble-platform-tarballs.ts",
     "release:pack": "bun scripts/release/pack.ts",
     "release:publish": "npm publish -w @ujima/agents --access public",
     "release:smoke": "bun scripts/release/smoke-pack.ts",

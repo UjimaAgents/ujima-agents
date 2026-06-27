@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
-import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Loader2, Maximize2, Sparkles } from "lucide-react";
+import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Download, ListTodo, Loader2, Maximize2, Sparkles, X } from "lucide-react";
 import { type AttachmentCategory } from "@ujima/shared/browser";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
@@ -80,6 +80,7 @@ export interface ChatMessageData {
    * of the rendered timeline so it doesn't show as a blank bubble.
    */
   traceOnly?: boolean;
+  taskNudge?: TaskNudgeData;
 }
 
 const DRAG_THRESHOLD = 30;
@@ -171,6 +172,7 @@ export const ChatMessage = memo(function ChatMessage({
   const showBody =
     message.content.trim().length > 0 &&
     !(artifactFile && isInternalMarkerContent(message.content)) &&
+    !message.taskNudge &&
     !(
       inlineCards.length > 0 &&
       (isBoilerplateStepContent(message.content) || message.kind === "system")
@@ -226,6 +228,9 @@ export const ChatMessage = memo(function ChatMessage({
               {inlineCards.length > 0 ? (
                 <MessageCardsView cards={inlineCards} {...cardActions} />
               ) : null}
+              {message.taskNudge ? (
+                <TaskNudgeCardView nudge={message.taskNudge} onOpenTasksTab={onOpenTasksTab} />
+              ) : null}
               {approvalShellTerminal ? (
                 <TerminalPane
                   className="mt-1.5"
@@ -279,7 +284,10 @@ export const ChatMessage = memo(function ChatMessage({
               {inlineCards.length > 0 ? (
                 <MessageCardsView cards={inlineCards} {...cardActions} />
               ) : null}
-              <div className={`${artifactFile || inlineCards.length > 0 ? "mt-3" : "mt-1"} chat-message-content`}>
+              {message.taskNudge ? (
+                <TaskNudgeCardView nudge={message.taskNudge} onOpenTasksTab={onOpenTasksTab} />
+              ) : null}
+              <div className={`${artifactFile || inlineCards.length > 0 || message.taskNudge ? "mt-3" : "mt-1"} chat-message-content`}>
                 {showBody ? (
                   <Markdown
                     content={message.content}
@@ -343,7 +351,8 @@ function getSystemMessageLabel(content: string): string {
     const firstLine = content.split("\n")[0]?.trim() ?? "";
     return firstLine.length > 0 ? firstLine : "Approval needed";
   }
-  return "System summary";
+  const firstLine = content.split("\n")[0]?.trim() ?? "";
+  return firstLine.length > 0 ? firstLine : "System message";
 }
 
 function isInternalMarkerContent(content: string): boolean {
@@ -356,11 +365,21 @@ function isInternalMarkerContent(content: string): boolean {
 
 /** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
 function systemMessageBodyMarkdown(content: string): string | null {
+  if (
+    content.startsWith(CONVERSATION_ARCHIVE_MARKER) ||
+    content.startsWith(CONVERSATION_SUMMARY_MARKER) ||
+    content.startsWith(SELF_NOTE_SUMMARY_MARKER)
+  ) {
+    return null;
+  }
   if (content.startsWith("[Approval needed]")) {
     const rest = content.split("\n").slice(1).join("\n").trim();
     return rest.length > 0 ? rest : null;
   }
-  return null;
+  const lines = content.split("\n");
+  if (lines.length <= 1) return null;
+  const rest = lines.slice(1).join("\n").trim();
+  return rest.length > 0 ? rest : null;
 }
 
 /** Matches `formatApprovalRelayMarkdown` shell relay body (`packages/shared` approval-scope). */
@@ -409,14 +428,6 @@ function parseRelayFilesystemBody(
     if (patchBody.length === 0) patchBody = undefined;
   }
   return { action, resourcePath, meta, body: patchBody };
-}
-
-function formatArtifactStatus(status: string): string {
-  return status
-    .trim()
-    .toLowerCase()
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 type ArtifactViewMode = "preview" | "markdown";
@@ -496,6 +507,16 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
     }).catch(() => undefined);
   }, [artifact.content]);
 
+  const downloadArtifact = useCallback(() => {
+    const blob = new Blob([artifact.content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = artifact.name || "artifact.txt";
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [artifact.content, artifact.name]);
+
   useEffect(() => {
     return () => {
       if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
@@ -504,25 +525,32 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
 
   return (
     <>
-      <div className="mt-3 overflow-hidden rounded-xl bg-zinc-50/70 shadow-sm ring-1 ring-zinc-200/50 dark:bg-zinc-900/30 dark:ring-zinc-800/60">
-        <div className="flex items-center justify-between gap-3 border-b border-zinc-200/60 px-3 py-2 dark:border-zinc-800/60">
-          <div className="min-w-0">
-            <p className="truncate text-[11px] leading-none text-zinc-400 dark:text-zinc-500">
-              {artifact.filePath}
+      <div className="mt-2 overflow-hidden rounded-[24px] border border-white/10 bg-[#1b1b1b] shadow-[0_24px_80px_rgba(0,0,0,0.32)] ring-1 ring-white/5">
+        <div className="flex items-center justify-between gap-3 px-5 pt-3">
+          <div className="flex min-w-0 items-center gap-2 text-zinc-400">
+            <ListTodo className="h-4 w-4 shrink-0" />
+            <p className="truncate text-[15px] font-medium tracking-[-0.01em] text-zinc-400">
+              {artifact.name}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {diff && <ArtifactViewToggle mode={viewMode} onChange={setViewMode} />}
-            <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-              {formatArtifactStatus(artifact.status)}
-            </span>
+          <div className="flex shrink-0 items-center gap-1.5 text-zinc-400">
+            {diff ? <ArtifactViewToggle mode={viewMode} onChange={setViewMode} /> : null}
+            <button
+              type="button"
+              onClick={downloadArtifact}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/5 hover:text-zinc-200"
+              title="Download artifact"
+              aria-label="Download artifact"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
             <button
               type="button"
               onClick={copyArtifact}
               className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
                 copied
-                  ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
-                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                  ? "text-zinc-100"
+                  : "hover:bg-white/5 hover:text-zinc-200"
               }`}
               title="Copy artifact"
               aria-label="Copy artifact"
@@ -532,7 +560,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
             <button
               type="button"
               onClick={() => setIsModalOpen(true)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/5 hover:text-zinc-200"
               title="Open in modal"
               aria-label="Open in modal"
             >
@@ -540,10 +568,10 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
             </button>
           </div>
         </div>
-        <div className="relative">
+        <div className="relative px-5 pb-5 pt-2">
           {viewMode === "markdown" && diff ? (
             <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
-              <div className="px-4 py-3 bg-white dark:bg-zinc-950/80 animate-in fade-in-50 duration-200">
+              <div className="animate-in fade-in-50 duration-200 rounded-[20px] bg-[#111111] px-0 py-0 text-zinc-100">
                 <UnifiedDiffView text={diff} />
               </div>
             </div>
@@ -559,19 +587,19 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
             />
           ) : (
             <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
-              <div className="px-4 py-3">
+              <div className="text-zinc-100 [&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400 [&_code]:text-zinc-200 [&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white [&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300 [&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300 [&_strong]:text-white [&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6">
                 <Markdown content={artifact.content} />
               </div>
             </div>
           )}
           {!isExpanded ? (
             <>
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-zinc-50 via-zinc-50/80 to-transparent dark:from-zinc-900 dark:via-zinc-900/80" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#1b1b1b] via-[#1b1b1b]/90 to-transparent" />
               <div className="absolute inset-x-0 bottom-3 z-20 flex justify-center">
                 <button
                   type="button"
                   onClick={() => setIsExpanded(true)}
-                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-zinc-950/90 px-3 py-1.5 text-[10px] font-semibold text-white shadow-lg shadow-black/20 backdrop-blur-md transition hover:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-400/70 dark:border-white/10 dark:bg-zinc-950/90 dark:text-white"
+                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-semibold text-zinc-100 shadow-lg shadow-black/20 backdrop-blur-md transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
                 >
                   See more
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -584,57 +612,68 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={artifact.name}
-        contentClassName="max-w-6xl"
+        contentClassName="max-w-6xl p-0 border-0 shadow-none bg-[#232323] dark:bg-[#232323]"
       >
-        <div className="space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
-                {artifact.filePath}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {diff && <ArtifactViewToggle mode={viewMode} onChange={setViewMode} />}
-              <span className="rounded-full bg-violet-100/80 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-                {formatArtifactStatus(artifact.status)}
-              </span>
-              <button
-                type="button"
-                onClick={copyArtifact}
-                className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
-                  copied
-                    ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
-                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-                }`}
-                title="Copy artifact"
-                aria-label="Copy artifact"
-              >
-                {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
+        <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] bg-white/[0.04] px-5 py-3 text-zinc-400">
+          <div className="flex min-w-0 items-center gap-2">
+            <ListTodo className="h-4 w-4 shrink-0" />
+            <p className="truncate text-[15px] font-medium tracking-[-0.01em] text-zinc-300">
+              {artifact.name}
+            </p>
           </div>
-          <div className="overflow-hidden rounded-xl ring-1 ring-zinc-200/60 dark:ring-zinc-800/70">
-            {viewMode === "markdown" && diff ? (
-              <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3 bg-white dark:bg-zinc-950/80">
-                <UnifiedDiffView text={diff} />
-              </div>
-            ) : isHtml ? (
-              <div className="max-h-[calc(100vh-12rem)] overflow-auto">
-                <iframe
-                  title={artifact.name}
-                  sandbox=""
-                  srcDoc={artifact.content}
-                  className="w-full border-0 bg-white dark:bg-zinc-950"
-                  style={{ height: iframeHeight }}
-                />
-              </div>
-            ) : (
-              <div className="max-h-[calc(100vh-12rem)] overflow-auto px-4 py-3">
-                <Markdown content={artifact.content} />
-              </div>
-            )}
+          <div className="flex shrink-0 items-center gap-1.5 text-zinc-400">
+            {diff ? <ArtifactViewToggle mode={viewMode} onChange={setViewMode} /> : null}
+            <button
+              type="button"
+              onClick={downloadArtifact}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/5 hover:text-zinc-200"
+              title="Download artifact"
+              aria-label="Download artifact"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={copyArtifact}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
+                copied ? "text-zinc-100" : "hover:bg-white/5 hover:text-zinc-200"
+              }`}
+              title="Copy artifact"
+              aria-label="Copy artifact"
+            >
+              {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(false)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/5 hover:text-zinc-200"
+              title="Close"
+              aria-label="Close"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
+        </div>
+        <div className="px-5 pb-5 pt-2">
+          {viewMode === "markdown" && diff ? (
+            <div className="max-h-[calc(100vh-12rem)] overflow-auto text-zinc-100">
+              <UnifiedDiffView text={diff} />
+            </div>
+          ) : isHtml ? (
+            <div className="max-h-[calc(100vh-12rem)] overflow-auto">
+              <iframe
+                title={artifact.name}
+                sandbox=""
+                srcDoc={artifact.content}
+                className="w-full border-0 bg-transparent"
+                style={{ height: iframeHeight }}
+              />
+            </div>
+          ) : (
+            <div className="max-h-[calc(100vh-12rem)] overflow-auto text-zinc-100 [&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400 [&_code]:text-zinc-200 [&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white [&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300 [&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300 [&_strong]:text-white [&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6">
+              <Markdown content={artifact.content} />
+            </div>
+          )}
         </div>
       </Modal>
     </>

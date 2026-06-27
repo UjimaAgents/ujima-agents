@@ -633,7 +633,7 @@ export function DragHandle({
             ? ((right - e.clientX) / width) * 100
             : ((e.clientX - left) / width) * 100;
         const minPct = side === "right" ? 33 : 15;
-        const pct = Math.max(minPct, Math.min(40, rawPct));
+        const pct = Math.max(minPct, Math.min(side === "right" ? 46 : 40, rawPct));
         onResize(pct);
       };
 

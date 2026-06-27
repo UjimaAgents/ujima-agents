@@ -179,6 +179,13 @@ function AggregatedRunPanel({
     (acc, op) => ({ ...acc, [op.type]: (acc[op.type] ?? 0) + 1 }),
     { edit: 0, delete: 0, read: 0, search: 0, shell: 0, tool: 0, memory: 0, goal: 0, question: 0, procedure: 0, schedule: 0, message: 0, delegate: 0 },
   );
+  const diffTotals = operations.reduce(
+    (acc, op) => ({
+      additions: acc.additions + op.additions,
+      deletions: acc.deletions + op.deletions,
+    }),
+    { additions: 0, deletions: 0 },
+  );
   const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
   const summaryParts = [
     counts.edit && `Edited ${counts.edit} ${plural(counts.edit, "file")}`,
@@ -233,6 +240,11 @@ function AggregatedRunPanel({
           <span className="min-w-0 flex-1 whitespace-normal break-words leading-5">
             {summaryText || "Executed tool actions"}
           </span>
+          {counts.edit + counts.delete > 0 ? (
+            <span className="shrink-0">
+              <DiffStat additions={diffTotals.additions} deletions={diffTotals.deletions} />
+            </span>
+          ) : null}
         </span>
         <Chevron open={panelOpen} />
       </button>

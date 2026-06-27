@@ -287,6 +287,11 @@ export class GoalSystemService {
         senderId: moverMemberId,
         body: `@${task.assigneeId} task "${task.title}" was moved from [${fromLabel}] → [${toLabel}]. (task_id: ${task.id})`,
         skipChannelCopy: true,
+        nudge: {
+          reason: 'moved',
+          previousStatus: oldStatus,
+          status: task.status,
+        },
       });
       this.lastNudgedAt.set(dedupKey, now);
     } catch {
@@ -358,9 +363,34 @@ export class GoalSystemService {
     senderId: string;
     body: string;
     skipChannelCopy?: boolean;
+    nudge?: {
+      reason: 'unblocked' | 'idle' | 'stalled' | 'moved';
+      completedDependency?: GoalTask;
+      previousStatus?: GoalTaskStatus;
+      status?: GoalTaskStatus;
+    };
   }): void {
     if (!this.conversations) return;
     const { organizationId, goal, task, senderId, body } = input;
+
+    const nudgeMetadata = input.nudge
+      ? {
+          taskNudge: {
+            taskId: task.id,
+            taskTitle: task.title,
+            reason: input.nudge.reason,
+            assigneeId: task.assigneeId,
+            ...(input.nudge.completedDependency
+              ? {
+                  completedDependencyId: input.nudge.completedDependency.id,
+                  completedDependencyTitle: input.nudge.completedDependency.title,
+                }
+              : {}),
+            ...(input.nudge.previousStatus ? { previousStatus: input.nudge.previousStatus } : {}),
+            ...(input.nudge.status ? { status: input.nudge.status } : {}),
+          },
+        }
+      : {};
 
     // Always wake the assignee via DM. The DM participant fanout
     // already excludes the sender (alertDirectMessageParticipants
@@ -374,7 +404,7 @@ export class GoalSystemService {
       recipientId: task.assigneeId,
       content: body,
       mentions: [task.assigneeId],
-      metadata: {},
+      metadata: nudgeMetadata,
     });
 
     // Also post to the goal channel for shared visibility, but ONLY
@@ -390,7 +420,7 @@ export class GoalSystemService {
           channelId: goal.channelId,
           body,
           mentions: [],
-          metadata: {},
+          metadata: nudgeMetadata,
         });
       }
     }
@@ -438,6 +468,10 @@ export class GoalSystemService {
         task,
         senderId: sender,
         body,
+        nudge: {
+          reason,
+          completedDependency,
+        },
       });
       this.lastNudgedAt.set(task.id, now);
       // Persist so the UI countdown survives a daemon restart and
