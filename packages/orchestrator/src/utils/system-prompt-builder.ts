@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
-import { buildEnvironmentTimestamp, type WakeReason } from '@ujima/shared';
+import { buildEnvironmentTimestamp, buildEnvironmentTimezone, type WakeReason } from '@ujima/shared';
 import { ANTI_MIRROR_SCAFFOLD_LINE, BASE_WAKE_SCAFFOLD_LINES } from './wake-reply-policy.js';
 import { loadProceduresForSystemPrompt as loadProceduresIndex } from '../tools/self-procedure.js';
 import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
@@ -169,29 +169,41 @@ export interface WakeContextInput {
 }
 
 /**
- * Per-wake mutations land here as user-role messages AFTER the
- * cache breakpoint. The anti-mirror line targets `gemini-*-flash`
- * (the only family that needs the explicit nudge today).
+ * Build the stable wake context block (timezone, anti-mirror) that should
+ * be persisted as a `role:'system'` message in the thread. This content
+ * does not change between wakes of the same (agent, thread, model) tuple,
+ * so it can be stored once and reused across restarts.
  *
- * Returns an empty array when no per-wake content applies — caller
- * appends as-is to its messages array.
+ * Returns a markdown string suitable for wrapping in a system message.
  */
-export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[] {
+export function buildStableWakeContext(input: WakeContextInput): string {
   const lines: string[] = [];
 
-  // Per-wake timestamp — moved out of the system prompt (where it busted
-  // the Anthropic prefix cache) into this per-wake block. Every wake
-  // produces a new timestamp but the system prompt stays byte-identical.
-  lines.push(buildEnvironmentTimestamp());
+  // Timezone — stable per session (only changes when the machine moves).
+  lines.push(buildEnvironmentTimezone());
 
   if (input.isMirrorFragile) {
     lines.push(ANTI_MIRROR_SCAFFOLD_LINE);
   }
 
+  return lines.join('\n');
+}
+
+/**
+ * Build the ephemeral per-wake context message (current date/time).
+ * This is the ONLY part of the wake context that changes between
+ * consecutive wakes. It is emitted as a `user`-role message at the
+ * tail of the messages array, AFTER the cache breakpoint, so the
+ * rest of the prompt stays cached.
+ *
+ * Returns an empty array when no per-wake content applies — caller
+ * appends as-is to its messages array.
+ */
+export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[] {
   return [
     {
       role: 'user',
-      content: `<wake-context>\n${lines.join('\n')}\n</wake-context>`,
+      content: `<wake-context>\n${buildEnvironmentTimestamp()}\n</wake-context>`,
     },
   ];
 }

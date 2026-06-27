@@ -84,6 +84,15 @@ export async function hydrate(deps: HydrateDeps): Promise<HydrationBundle> {
     }
   }
 
+  const eventsBlock = events.length > 0
+    ? [
+        `## Recent events (${events.length})`,
+        ...events.map((e) =>
+          `- [${e.timestamp}] ${e.type} from ${e.publisher}: ${truncate(JSON.stringify(e.payload), 200)}`
+        ),
+      ].join('\n')
+    : undefined;
+
   return {
     persona: agent.persona,
     taskPrompt: task.prompt,
@@ -93,7 +102,6 @@ export async function hydrate(deps: HydrateDeps): Promise<HydrationBundle> {
     systemPrompt: buildSystemPrompt({
       agent,
       task,
-      events,
       peerOutputs,
       approvedArtifacts,
       sessionId: deps.sessionId,
@@ -101,6 +109,7 @@ export async function hydrate(deps: HydrateDeps): Promise<HydrationBundle> {
       mcpMeta: deps.mcpMeta,
       constraints: deps.constraints,
     }),
+    eventsBlock,
   };
 }
 
@@ -129,7 +138,6 @@ function collectDomains(agent: AgentDef): string[] {
 function buildSystemPrompt(opts: {
   agent: AgentDef;
   task: TaskDef;
-  events: UjimaEvent[];
   peerOutputs: ContextEntry[];
   approvedArtifacts: ContextEntry[];
   sessionId?: string;
@@ -140,7 +148,7 @@ function buildSystemPrompt(opts: {
     maxSessionTokens?: number;
   };
 }): string {
-  const { agent, task, events, peerOutputs, approvedArtifacts, sessionId, teammates, mcpMeta, constraints } = opts;
+  const { agent, task, peerOutputs, approvedArtifacts, sessionId, teammates, mcpMeta, constraints } = opts;
   const sections: string[] = [];
 
   sections.push(`You are "${agent.name}" (agent id: ${agent.id}).`);
@@ -221,13 +229,6 @@ function buildSystemPrompt(opts: {
     sections.push(`\n## Peer outputs (${peerOutputs.length})`);
     for (const p of peerOutputs) {
       sections.push(`- ${p.key}: ${truncate(JSON.stringify(p.value), 400)}`);
-    }
-  }
-
-  if (events.length > 0) {
-    sections.push(`\n## Recent events (${events.length})`);
-    for (const e of events) {
-      sections.push(`- [${e.timestamp}] ${e.type} from ${e.publisher}: ${truncate(JSON.stringify(e.payload), 200)}`);
     }
   }
 

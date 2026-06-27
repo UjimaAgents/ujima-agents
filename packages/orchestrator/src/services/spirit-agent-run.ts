@@ -260,6 +260,9 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         ? [{ role: 'user' as const, content: input.extraPrompt }]
         : []),
     ];
+    const currentChannel = session.channelId
+      ? this.repo.getChannel(input.organizationId, session.channelId)
+      : undefined;
     const threadStateBlock = buildThreadStateBlock({
       messages: threadMessages,
       currentMember: { id: member.id, name: member.name },
@@ -267,6 +270,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       threadId: session.channelId,
       members: this.repo.listMembers(input.organizationId),
       wakeReason: supervisorRunRow?.wakeReason ?? null,
+      channelName: currentChannel?.name,
     });
     if (threadStateBlock) {
       contextMessages.push({ role: 'user', content: threadStateBlock });

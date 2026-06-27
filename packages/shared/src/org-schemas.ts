@@ -1,11 +1,11 @@
-import { z } from 'zod';
-import { MemberShellApprovalModeSchema } from './shell-approval.js';
-import { GoalStatusSchema, GoalTaskStatusSchema } from './goal-schemas.js';
+import {z} from "zod";
+import {MemberShellApprovalModeSchema} from "./shell-approval.js";
+import {GoalStatusSchema, GoalTaskStatusSchema} from "./goal-schemas.js";
 
 export const IdSchema = z.string().min(1);
 export type Id = z.infer<typeof IdSchema>;
 
-export const TimestampSchema = z.string().datetime({ offset: true });
+export const TimestampSchema = z.string().datetime({offset: true});
 export type Timestamp = z.infer<typeof TimestampSchema>;
 
 export const PaginationQuerySchema = z.object({
@@ -22,46 +22,73 @@ export function createPaginatedSchema<T extends z.ZodTypeAny>(itemSchema: T) {
   });
 }
 
-export const MemberKindSchema = z.enum(['human', 'agent']);
+export const MemberKindSchema = z.enum(["human", "agent"]);
 export type MemberKind = z.infer<typeof MemberKindSchema>;
 
-export const ChannelMemberModeSchema = z.enum(['active', 'passive', 'muted', 'temp_disable']);
+export const ChannelMemberModeSchema = z.enum([
+  "active",
+  "passive",
+  "muted",
+  "temp_disable",
+]);
 export type ChannelMemberMode = z.infer<typeof ChannelMemberModeSchema>;
 
 export const ChannelMemberSettingsSchema = z.object({
   channelId: IdSchema,
   memberId: IdSchema,
-  mode: ChannelMemberModeSchema.default('active'),
+  mode: ChannelMemberModeSchema.default("active"),
   updatedAt: TimestampSchema.optional(),
 });
 export type ChannelMemberSettings = z.infer<typeof ChannelMemberSettingsSchema>;
 
-export const ChannelKindSchema = z.enum(['general', 'group', 'dm', 'task-run', 'self']);
+export const ChannelKindSchema = z.enum([
+  "general",
+  "group",
+  "dm",
+  "task-run",
+  "self",
+]);
 export type ChannelKind = z.infer<typeof ChannelKindSchema>;
 
-export const ToolActionSchema = z.enum(['read', 'write', 'execute', 'mcp', 'message', 'create', 'update']);
+export const ToolActionSchema = z.enum([
+  "read",
+  "write",
+  "execute",
+  "mcp",
+  "message",
+  "create",
+  "update",
+]);
 export type ToolAction = z.infer<typeof ToolActionSchema>;
 
-export const ProviderScopeSchema = z.enum(['organization', 'workspace', 'member']);
+export const ProviderScopeSchema = z.enum([
+  "organization",
+  "workspace",
+  "member",
+]);
 export type ProviderScope = z.infer<typeof ProviderScopeSchema>;
 
-export const ConfigOwnerSchema = z.enum(['config', 'dashboard']);
+export const ConfigOwnerSchema = z.enum(["config", "dashboard"]);
 export type ConfigOwner = z.infer<typeof ConfigOwnerSchema>;
 
-export const OrgApprovalStatusSchema = z.enum(['pending', 'approved', 'rejected']);
+export const OrgApprovalStatusSchema = z.enum([
+  "pending",
+  "approved",
+  "rejected",
+]);
 export type OrgApprovalStatus = z.infer<typeof OrgApprovalStatusSchema>;
 
-export const AuditStatusSchema = z.enum(['ok', 'blocked', 'error']);
+export const AuditStatusSchema = z.enum(["ok", "blocked", "error"]);
 export type AuditStatus = z.infer<typeof AuditStatusSchema>;
 
 export const RunStatusSchema = z.enum([
-  'queued',
-  'running',
-  'waiting_for_input',
-  'waiting_for_approval',
-  'completed',
-  'failed',
-  'cancelled',
+  "queued",
+  "running",
+  "waiting_for_input",
+  "waiting_for_approval",
+  "completed",
+  "failed",
+  "cancelled",
 ]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
@@ -72,27 +99,47 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 export const TaskSessionStatusSchema = RunStatusSchema;
 export type TaskSessionStatus = z.infer<typeof TaskSessionStatusSchema>;
 
-export const TaskExecutionModeSchema = z.enum(['concurrent', 'slim']);
+export const TaskExecutionModeSchema = z.enum(["concurrent", "slim"]);
 export type TaskExecutionMode = z.infer<typeof TaskExecutionModeSchema>;
 
-export const MessageKindSchema = z.enum(['human', 'agent', 'system']);
+export const MessageKindSchema = z.enum(["human", "agent", "system"]);
 export type MessageKind = z.infer<typeof MessageKindSchema>;
 
-export const MessageMentionKindSchema = z.enum(['mention', 'assignment', 'fyi']);
+export const MessageMentionKindSchema = z.enum([
+  "mention",
+  "assignment",
+  "fyi",
+]);
 export type MessageMentionKind = z.infer<typeof MessageMentionKindSchema>;
 
-export const PresenceStateSchema = z.enum(['online', 'offline', 'busy', 'away']);
+export const PresenceStateSchema = z.enum([
+  "online",
+  "offline",
+  "busy",
+  "away",
+]);
 export type PresenceState = z.infer<typeof PresenceStateSchema>;
 
-export const ResourceTypeSchema = z.enum(['file', 'folder', 'shell', 'mcp', 'message', 'goal', 'goal_task', 'question']);
+export const ResourceTypeSchema = z.enum([
+  "file",
+  "folder",
+  "shell",
+  "mcp",
+  "message",
+  "goal",
+  "goal_task",
+  "question",
+]);
 export type ResourceType = z.infer<typeof ResourceTypeSchema>;
 
-export const RoleScopesSchema = z.record(z.array(z.string().min(1))).default({});
+export const RoleScopesSchema = z
+  .record(z.array(z.string().min(1)))
+  .default({});
 export type RoleScopes = z.infer<typeof RoleScopesSchema>;
 
 export const WorkspaceConfigSchema = z.object({
   /** Empty until onboarding or workspace activation sets a path. */
-  root: z.string().default(''),
+  root: z.string().default(""),
   roleScopes: RoleScopesSchema,
 });
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
@@ -106,7 +153,7 @@ export const OrganizationSchema = z.object({
   id: IdSchema,
   name: z.string().min(1),
   workspace: WorkspaceConfigSchema,
-  organizationChart: OrganizationChartSchema.default({ reportsTo: {} }),
+  organizationChart: OrganizationChartSchema.default({reportsTo: {}}),
 });
 export type Organization = z.infer<typeof OrganizationSchema>;
 
@@ -119,7 +166,7 @@ export const MemberSchema = z.object({
   llm: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   shellApprovalMode: MemberShellApprovalModeSchema.optional(),
-  presence: PresenceStateSchema.default('offline'),
+  presence: PresenceStateSchema.default("offline"),
   createdAt: TimestampSchema.optional(),
   retiredAt: TimestampSchema.optional(),
 });
@@ -161,7 +208,7 @@ export const ChannelSchema = z.object({
   organizationId: IdSchema.optional(),
   name: z.string().min(1),
   kind: ChannelKindSchema,
-  topic: z.string().default(''),
+  topic: z.string().default(""),
   memberIds: z.array(IdSchema).default([]),
   parentMessageId: IdSchema.optional(),
   createdAt: TimestampSchema.optional(),
@@ -171,10 +218,10 @@ export type Channel = z.infer<typeof ChannelSchema>;
 
 export const ConfigFieldOwnershipSchema = z.object({
   organizationId: IdSchema,
-  entityType: z.enum(['organization', 'role', 'member', 'channel', 'provider']),
+  entityType: z.enum(["organization", "role", "member", "channel", "provider"]),
   entityId: z.string().min(1),
   fieldName: z.string().min(1),
-  owner: ConfigOwnerSchema.default('dashboard'),
+  owner: ConfigOwnerSchema.default("dashboard"),
   allowDashboardOverride: z.boolean().default(false),
   updatedAt: TimestampSchema.optional(),
 });
@@ -185,7 +232,7 @@ export const ConversationThreadSchema = z.object({
   organizationId: IdSchema,
   channelId: IdSchema.optional(),
   memberIds: z.array(IdSchema).default([]),
-  title: z.string().default(''),
+  title: z.string().default(""),
   createdAt: TimestampSchema,
 });
 export type ConversationThread = z.infer<typeof ConversationThreadSchema>;
@@ -200,12 +247,12 @@ export const MessageToolCallSchema = z.object({
 export type MessageToolCall = z.infer<typeof MessageToolCallSchema>;
 
 export const AttachmentCategorySchema = z.enum([
-  'image',
-  'document',
-  'audio',
-  'video',
-  'archive',
-  'other',
+  "image",
+  "document",
+  "audio",
+  "video",
+  "archive",
+  "other",
 ]);
 export type AttachmentCategory = z.infer<typeof AttachmentCategorySchema>;
 
@@ -257,76 +304,92 @@ export const HandoffMetadataSchema = z.object({
 });
 export type HandoffMetadata = z.infer<typeof HandoffMetadataSchema>;
 
-export const ReasoningEffortSchema = z.enum(['none', 'low', 'medium', 'high', 'extra_high']);
+export const ReasoningEffortSchema = z.enum([
+  "none",
+  "low",
+  "medium",
+  "high",
+  "extra_high",
+]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
-export const MessageMetadataSchema = z.object({
-  goalMode: z.boolean().optional(),
-  scheduleMode: z.boolean().optional(),
-  reasoningEffort: ReasoningEffortSchema.optional(),
-  delegate: z.object({
-    id: IdSchema.optional(),
-    parentRunId: IdSchema.optional(),
+export const MessageMetadataSchema = z
+  .object({
+    goalMode: z.boolean().optional(),
+    scheduleMode: z.boolean().optional(),
+    reasoningEffort: ReasoningEffortSchema.optional(),
+    delegate: z
+      .object({
+        id: IdSchema.optional(),
+        parentRunId: IdSchema.optional(),
+        /**
+         * Channel the delegation was initiated from. Present when the
+         * delegation runs as a channel-scoped thread (Slack-style) rather
+         * than a private DM; used to post the in-channel pointer and to
+         * route the completion marker back to the right channel.
+         */
+        parentChannelId: IdSchema.optional(),
+        /** Guards the in-channel completion marker so it fires exactly once. */
+        markerPosted: z.boolean().optional(),
+        kind: z.enum(["worker", "explorer"]).optional(),
+        index: z.number().int().nonnegative().optional(),
+        status: z
+          .enum([
+            "queued",
+            "running",
+            "dispatched",
+            "completed",
+            "no_reply",
+            "timed_out",
+            "delegate_failed",
+            "waiting_for_approval",
+            "waiting_for_input",
+            "cancelled",
+          ])
+          .optional(),
+      })
+      .optional(),
     /**
-     * Channel the delegation was initiated from. Present when the
-     * delegation runs as a channel-scoped thread (Slack-style) rather
-     * than a private DM; used to post the in-channel pointer and to
-     * route the completion marker back to the right channel.
+     * Lightweight, clickable pointer posted into the main channel when a
+     * delegation runs as a channel-scoped thread. Lets the channel show
+     * that delegation happened (and its outcome) and links into the
+     * delegate thread without flooding the main feed.
      */
-    parentChannelId: IdSchema.optional(),
-    /** Guards the in-channel completion marker so it fires exactly once. */
-    markerPosted: z.boolean().optional(),
-    kind: z.enum(['worker', 'explorer']).optional(),
-    index: z.number().int().nonnegative().optional(),
-    status: z.enum([
-      'queued',
-      'running',
-      'dispatched',
-      'completed',
-      'no_reply',
-      'timed_out',
-      'delegate_failed',
-      'waiting_for_approval',
-      'waiting_for_input',
-      'cancelled',
-    ]).optional(),
-  }).optional(),
-  /**
-   * Lightweight, clickable pointer posted into the main channel when a
-   * delegation runs as a channel-scoped thread. Lets the channel show
-   * that delegation happened (and its outcome) and links into the
-   * delegate thread without flooding the main feed.
-   */
-  delegateMarker: z.object({
-    kind: z.enum(['start', 'done']),
-    delegationThreadId: IdSchema,
-    to: IdSchema.optional(),
-    agentName: z.string().min(1).optional(),
-  }).optional(),
-  /**
-   * Set by the `channel.handoff` tool. `complete: true` signals
-   * the chain terminated (replaces the old `'Acknowledged.'`
-   * literal termination protocol).
-   */
-  handoff: HandoffMetadataSchema.optional(),
-  /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
-  runId: IdSchema.optional(),
-  runProgress: z.boolean().optional(),
-  failedTrace: z.boolean().optional(),
-  stoppedTrace: z.boolean().optional(),
-  traceOnly: z.boolean().optional(),
-  compactedInto: IdSchema.optional(),
-  taskNudge: z.object({
-    taskId: IdSchema,
-    taskTitle: z.string().min(1),
-    reason: z.enum(['unblocked', 'idle', 'stalled', 'moved']),
-    assigneeId: IdSchema,
-    completedDependencyId: IdSchema.optional(),
-    completedDependencyTitle: z.string().optional(),
-    previousStatus: GoalTaskStatusSchema.optional(),
-    status: GoalTaskStatusSchema.optional(),
-  }).optional(),
-}).optional();
+    delegateMarker: z
+      .object({
+        kind: z.enum(["start", "done"]),
+        delegationThreadId: IdSchema,
+        to: IdSchema.optional(),
+        agentName: z.string().min(1).optional(),
+      })
+      .optional(),
+    /**
+     * Set by the `channel.handoff` tool. `complete: true` signals
+     * the chain terminated (replaces the old `'Acknowledged.'`
+     * literal termination protocol).
+     */
+    handoff: HandoffMetadataSchema.optional(),
+    /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
+    runId: IdSchema.optional(),
+    runProgress: z.boolean().optional(),
+    failedTrace: z.boolean().optional(),
+    stoppedTrace: z.boolean().optional(),
+    traceOnly: z.boolean().optional(),
+    compactedInto: IdSchema.optional(),
+    taskNudge: z
+      .object({
+        taskId: IdSchema,
+        taskTitle: z.string().min(1),
+        reason: z.enum(["unblocked", "idle", "stalled", "moved"]),
+        assigneeId: IdSchema,
+        completedDependencyId: IdSchema.optional(),
+        completedDependencyTitle: z.string().optional(),
+        previousStatus: GoalTaskStatusSchema.optional(),
+        status: GoalTaskStatusSchema.optional(),
+      })
+      .optional(),
+  })
+  .optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 
 export const MessageSchema = z.object({
@@ -337,7 +400,7 @@ export const MessageSchema = z.object({
   parentMessageId: IdSchema.optional(),
   senderId: IdSchema,
   senderKind: MemberKindSchema,
-  kind: MessageKindSchema.default('human'),
+  kind: MessageKindSchema.default("human"),
   content: z.string(),
   /** Model "thinking" / reasoning from the previous turn; required by some APIs to be echoed back. */
   reasoningContent: z.string().optional(),
@@ -365,7 +428,7 @@ export const MessageMentionSchema = z.object({
   id: IdSchema,
   messageId: IdSchema,
   memberId: IdSchema,
-  kind: MessageMentionKindSchema.default('mention'),
+  kind: MessageMentionKindSchema.default("mention"),
   createdAt: TimestampSchema.optional(),
 });
 export type MessageMention = z.infer<typeof MessageMentionSchema>;
@@ -374,14 +437,14 @@ export const ProviderBindingSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
   apiKeyRef: z.string().min(1).optional(),
-  scope: ProviderScopeSchema.default('workspace'),
+  scope: ProviderScopeSchema.default("workspace"),
 });
 export type ProviderBinding = z.infer<typeof ProviderBindingSchema>;
 
 export const ToolCapabilitySchema = z.object({
   id: IdSchema,
   name: z.string().min(1),
-  description: z.string().default(''),
+  description: z.string().default(""),
   actions: z.array(ToolActionSchema).default([]),
   pathScopes: z.array(z.string().min(1)).default([]),
   requiresApproval: z.boolean().default(true),
@@ -399,8 +462,8 @@ export const ApprovalRequestSchema = z.object({
   resourceType: ResourceTypeSchema,
   resourcePath: z.string().min(1),
   action: ToolActionSchema,
-  status: OrgApprovalStatusSchema.default('pending'),
-  reason: z.string().default(''),
+  status: OrgApprovalStatusSchema.default("pending"),
+  reason: z.string().default(""),
   createdAt: TimestampSchema,
   resolvedAt: TimestampSchema.optional(),
 });
@@ -413,7 +476,7 @@ export const AuditEventSchema = z.object({
   action: z.string().min(1),
   targetType: z.string().min(1),
   targetId: z.string().min(1).optional(),
-  status: AuditStatusSchema.default('ok'),
+  status: AuditStatusSchema.default("ok"),
   createdAt: TimestampSchema,
   metadata: z.record(z.string(), z.unknown()).default({}),
   // Connector-action unwrap (mcp_connector_dispatch_plan.md §12). These map
@@ -434,8 +497,8 @@ export const RunStateSchema = z.object({
   agentId: IdSchema,
   threadId: IdSchema.optional(),
   status: RunStatusSchema,
-  step: z.string().default(''),
-  summary: z.string().default(''),
+  step: z.string().default(""),
+  summary: z.string().default(""),
   startedAt: TimestampSchema,
   endedAt: TimestampSchema.optional(),
   // Why this run was created. Drives mandatory-reply enforcement and
@@ -469,10 +532,10 @@ export const RunStepSchema = z.object({
   toolId: z.string().min(1),
   action: ToolActionSchema,
   resourceType: ResourceTypeSchema,
-  resourcePath: z.string().default(''),
+  resourcePath: z.string().default(""),
   input: z.record(z.string(), z.unknown()).default({}),
   output: z.unknown().optional(),
-  status: AuditStatusSchema.default('ok'),
+  status: AuditStatusSchema.default("ok"),
   createdAt: TimestampSchema,
 });
 export type RunStep = z.infer<typeof RunStepSchema>;
@@ -504,10 +567,10 @@ export const TaskSessionSchema = z.object({
   slug: z.string().min(1),
   channelId: IdSchema,
   requestedBy: IdSchema,
-  executionMode: TaskExecutionModeSchema.default('concurrent'),
-  status: TaskSessionStatusSchema.default('queued'),
-  prompt: z.string().default(''),
-  summary: z.string().default(''),
+  executionMode: TaskExecutionModeSchema.default("concurrent"),
+  status: TaskSessionStatusSchema.default("queued"),
+  prompt: z.string().default(""),
+  summary: z.string().default(""),
   teamMemberIds: z.array(IdSchema).default([]),
   origin: TaskSessionOriginSchema.default({}),
   promotionMetadata: z.record(z.string(), z.unknown()).default({}),
@@ -518,13 +581,21 @@ export const TaskSessionSchema = z.object({
 });
 export type TaskSession = z.infer<typeof TaskSessionSchema>;
 
-export const CronExpressionSchema = z.string().min(1).regex(
-  /^(\S+\s+){4}\S+$/,
-  'Must be a valid 5-field cron expression (min hour dom mon dow)',
-);
+export const CronExpressionSchema = z
+  .string()
+  .min(1)
+  .regex(
+    /^(\S+\s+){4}\S+$/,
+    "Must be a valid 5-field cron expression (min hour dom mon dow)"
+  );
 export type CronExpression = z.infer<typeof CronExpressionSchema>;
 
-export const JobStatusSchema = z.enum(['active', 'paused', 'completed', 'failed']);
+export const JobStatusSchema = z.enum([
+  "active",
+  "paused",
+  "completed",
+  "failed",
+]);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
 // -----------------------------------------------------------------------
@@ -549,60 +620,60 @@ const MessageCardCommon = {
 
 export const TaskJoinCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('task.join'),
+  kind: z.literal("task.join"),
   memberIds: z.array(IdSchema).default([]),
 });
 
 export const TaskOriginLinkCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('task.origin-link'),
+  kind: z.literal("task.origin-link"),
   taskChannelId: IdSchema,
   taskSlug: z.string().min(1),
 });
 
 export const TaskSummaryCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('task.summary'),
-  outcome: z.enum(['completed', 'failed', 'cancelled']),
-  summary: z.string().default(''),
+  kind: z.literal("task.summary"),
+  outcome: z.enum(["completed", "failed", "cancelled"]),
+  summary: z.string().default(""),
   taskChannelId: IdSchema.optional(),
   taskSlug: z.string().min(1).optional(),
 });
 
 export const ArtifactFileCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('artifact.file'),
+  kind: z.literal("artifact.file"),
   artifactId: IdSchema,
   name: z.string().min(1),
   filePath: z.string().min(1),
   html: z.string(),
   diff: z.string().optional(),
-  artifactFormat: z.enum(['html', 'markdown']).default('html'),
+  artifactFormat: z.enum(["html", "markdown"]).default("html"),
   status: GoalStatusSchema,
 });
 
 export const ApprovalCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('approval'),
+  kind: z.literal("approval"),
   approvalId: IdSchema,
   status: OrgApprovalStatusSchema,
   resourceType: ResourceTypeSchema,
   resourcePath: z.string().min(1),
   action: ToolActionSchema,
-  reason: z.string().default(''),
+  reason: z.string().default(""),
 });
 
 export const PromotionConfirmCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('task.promotion-confirm'),
-  decision: z.enum(['promote', 'confirm']),
+  kind: z.literal("task.promotion-confirm"),
+  decision: z.enum(["promote", "confirm"]),
   team: z.array(IdSchema).default([]),
-  rationale: z.string().default(''),
+  rationale: z.string().default(""),
 });
 
 export const ToolCallCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('tool.call'),
+  kind: z.literal("tool.call"),
   toolCallId: IdSchema,
   toolName: z.string().min(1),
   args: z.record(z.string(), z.unknown()).default({}),
@@ -620,7 +691,7 @@ export const GoalBoardTaskPreviewSchema = z.object({
 
 export const GoalBoardCreatedCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('goal.board.created'),
+  kind: z.literal("goal.board.created"),
   goalId: IdSchema,
   goalTitle: z.string().min(1),
   goalStatus: GoalStatusSchema,
@@ -630,7 +701,7 @@ export const GoalBoardCreatedCardSchema = z.object({
 
 export const GoalTaskUpdatedCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('goal.task.updated'),
+  kind: z.literal("goal.task.updated"),
   goalId: IdSchema,
   taskId: IdSchema,
   taskTitle: z.string().min(1),
@@ -672,7 +743,7 @@ export type ToolResult = z.infer<typeof ToolResultSchema>;
 // it's the runtime presence of the agent on a specific task, distinct
 // from the persistent `members` row that owns the agent's identity.
 
-export const SpiritRoleSchema = z.enum(['worker', 'supervisor']);
+export const SpiritRoleSchema = z.enum(["worker", "supervisor"]);
 export type SpiritRole = z.infer<typeof SpiritRoleSchema>;
 
 export const SpiritStatusSchema = RunStatusSchema;
@@ -683,9 +754,9 @@ export const SpiritSchema = z.object({
   organizationId: IdSchema,
   taskSessionId: IdSchema,
   memberId: IdSchema,
-  role: SpiritRoleSchema.default('worker'),
+  role: SpiritRoleSchema.default("worker"),
   runId: IdSchema.optional(),
-  status: SpiritStatusSchema.default('queued'),
+  status: SpiritStatusSchema.default("queued"),
   iteration: z.number().int().min(0).default(0),
   tokensUsed: z.number().int().min(0).default(0),
   lastMessageId: IdSchema.optional(),
@@ -709,10 +780,10 @@ export type Spirit = z.infer<typeof SpiritSchema>;
 // -----------------------------------------------------------------------
 
 export const MemoryEntryKindSchema = z.enum([
-  'fact',
-  'preference',
-  'identity',
-  'rule',
+  "fact",
+  "preference",
+  "identity",
+  "rule",
 ]);
 export type MemoryEntryKind = z.infer<typeof MemoryEntryKindSchema>;
 
@@ -754,16 +825,17 @@ export const WorkspaceFileSchema = z.object({
 });
 export type WorkspaceFile = z.infer<typeof WorkspaceFileSchema>;
 
-export const WorkspaceFileNodeSchema = z.lazy((): z.ZodType<WorkspaceFileNode> =>
-  z.object({
-    kind: z.enum(['file', 'folder']),
-    name: z.string().min(1),
-    path: z.string().min(1),
-    children: z.array(WorkspaceFileNodeSchema),
-  }),
+export const WorkspaceFileNodeSchema = z.lazy(
+  (): z.ZodType<WorkspaceFileNode> =>
+    z.object({
+      kind: z.enum(["file", "folder"]),
+      name: z.string().min(1),
+      path: z.string().min(1),
+      children: z.array(WorkspaceFileNodeSchema),
+    })
 );
 export interface WorkspaceFileNode {
-  kind: 'file' | 'folder';
+  kind: "file" | "folder";
   name: string;
   path: string;
   children: WorkspaceFileNode[];
@@ -797,7 +869,7 @@ export type DecisionLogEntry = z.infer<typeof DecisionLogEntrySchema>;
 // Procedures as Culture (docs/procedures-as-culture.md)
 // -----------------------------------------------------------------------
 
-export const ProcedureScopeSchema = z.enum(['org', 'channel', 'agent']);
+export const ProcedureScopeSchema = z.enum(["org", "channel", "agent"]);
 export type ProcedureScope = z.infer<typeof ProcedureScopeSchema>;
 
 /** Append-only version history. One row per save. */
@@ -833,7 +905,11 @@ export type RunProcedureApplied = z.infer<typeof RunProcedureAppliedSchema>;
 // Scheduled Jobs (cron)
 // -----------------------------------------------------------------------
 
-export const ScheduledJobTypeSchema = z.enum(['schedule', 'heartbeat', 'self_improvement']);
+export const ScheduledJobTypeSchema = z.enum([
+  "schedule",
+  "heartbeat",
+  "self_improvement",
+]);
 export type ScheduledJobType = z.infer<typeof ScheduledJobTypeSchema>;
 
 export const ScheduledJobSchema = z.object({
@@ -844,8 +920,8 @@ export const ScheduledJobSchema = z.object({
   prompt: z.string().min(1),
   channelId: IdSchema.optional(),
   memberId: IdSchema,
-  status: JobStatusSchema.default('active'),
-  type: ScheduledJobTypeSchema.default('schedule'),
+  status: JobStatusSchema.default("active"),
+  type: ScheduledJobTypeSchema.default("schedule"),
   lastRunAt: TimestampSchema.optional(),
   nextRunAt: TimestampSchema.optional(),
   runCount: z.number().int().min(0).default(0),
@@ -867,8 +943,8 @@ export const ScheduleCardJobPreviewSchema = z.object({
 
 export const ScheduleCardSchema = z.object({
   ...MessageCardCommon,
-  kind: z.literal('schedule'),
-  action: z.enum(['created', 'cancelled', 'listed']),
+  kind: z.literal("schedule"),
+  action: z.enum(["created", "cancelled", "listed"]),
   jobId: IdSchema.optional(),
   name: z.string().min(1).optional(),
   cronExpression: CronExpressionSchema.optional(),
@@ -881,7 +957,7 @@ export const ScheduleCardSchema = z.object({
   jobs: z.array(ScheduleCardJobPreviewSchema).default([]),
 });
 
-export const MessageCardSchema = z.discriminatedUnion('kind', [
+export const MessageCardSchema = z.discriminatedUnion("kind", [
   TaskJoinCardSchema,
   TaskOriginLinkCardSchema,
   TaskSummaryCardSchema,
@@ -902,10 +978,14 @@ export type MessageCard = z.infer<typeof MessageCardSchema>;
 // schema + persistence; PR 9 fills the analysis. `signalMetadata`
 // is a per-direction shape: demote candidates carry idle-run counts,
 // promote candidates carry invocation-volume and error-rate stats.
-export const TierCurationDirectionSchema = z.enum(['demote', 'promote']);
+export const TierCurationDirectionSchema = z.enum(["demote", "promote"]);
 export type TierCurationDirection = z.infer<typeof TierCurationDirectionSchema>;
 
-export const TierCurationStatusSchema = z.enum(['pending', 'applied', 'dismissed']);
+export const TierCurationStatusSchema = z.enum([
+  "pending",
+  "applied",
+  "dismissed",
+]);
 export type TierCurationStatus = z.infer<typeof TierCurationStatusSchema>;
 
 export const TierCurationSuggestionSchema = z.object({
@@ -914,22 +994,26 @@ export const TierCurationSuggestionSchema = z.object({
   memberId: IdSchema,
   mcpServerId: IdSchema,
   direction: TierCurationDirectionSchema,
-  rationale: z.string().default(''),
+  rationale: z.string().default(""),
   signalMetadata: z.record(z.string(), z.unknown()).default({}),
-  status: TierCurationStatusSchema.default('pending'),
+  status: TierCurationStatusSchema.default("pending"),
   createdAt: TimestampSchema,
   resolvedAt: TimestampSchema.optional(),
 });
-export type TierCurationSuggestion = z.infer<typeof TierCurationSuggestionSchema>;
+export type TierCurationSuggestion = z.infer<
+  typeof TierCurationSuggestionSchema
+>;
 
 export const CreateScheduledJobInputSchema = z.object({
   name: z.string().min(1),
   cronExpression: CronExpressionSchema,
   prompt: z.string().min(1),
   channelId: IdSchema.optional(),
-  type: ScheduledJobTypeSchema.optional().default('schedule'),
+  type: ScheduledJobTypeSchema.optional().default("schedule"),
 });
-export type CreateScheduledJobInput = z.infer<typeof CreateScheduledJobInputSchema>;
+export type CreateScheduledJobInput = z.infer<
+  typeof CreateScheduledJobInputSchema
+>;
 
 export const UpdateScheduledJobInputSchema = z.object({
   name: z.string().min(1).optional(),
@@ -939,14 +1023,22 @@ export const UpdateScheduledJobInputSchema = z.object({
   status: JobStatusSchema.optional(),
   type: ScheduledJobTypeSchema.optional(),
 });
-export type UpdateScheduledJobInput = z.infer<typeof UpdateScheduledJobInputSchema>;
+export type UpdateScheduledJobInput = z.infer<
+  typeof UpdateScheduledJobInputSchema
+>;
 
 // -----------------------------------------------------------------------
 // Self-Improvement Reviews
 // -----------------------------------------------------------------------
 
-export const SelfImprovementTriggerTypeSchema = z.enum(['heartbeat', 'post_turn', 'manual']);
-export type SelfImprovementTriggerType = z.infer<typeof SelfImprovementTriggerTypeSchema>;
+export const SelfImprovementTriggerTypeSchema = z.enum([
+  "heartbeat",
+  "post_turn",
+  "manual",
+]);
+export type SelfImprovementTriggerType = z.infer<
+  typeof SelfImprovementTriggerTypeSchema
+>;
 
 export const SelfImprovementReviewSchema = z.object({
   id: IdSchema,
@@ -954,7 +1046,7 @@ export const SelfImprovementReviewSchema = z.object({
   runId: IdSchema,
   memberId: IdSchema,
   triggerType: SelfImprovementTriggerTypeSchema,
-  summary: z.string().default(''),
+  summary: z.string().default(""),
   memoryWrites: z.number().int().min(0).default(0),
   procedureWrites: z.number().int().min(0).default(0),
   createdAt: TimestampSchema,
@@ -979,16 +1071,20 @@ export type SelfImprovementReview = z.infer<typeof SelfImprovementReviewSchema>;
 // the architecture rule: supervisors never automatically inherit
 // worker MCPs.
 
-export const McpTransportSchema = z.enum(['stdio', 'sse', 'http-streamable']);
+export const McpTransportSchema = z.enum(["stdio", "sse", "http-streamable"]);
 export type McpTransport = z.infer<typeof McpTransportSchema>;
 
-export const McpIsolationSchema = z.enum(['shared', 'per-agent']);
+export const McpIsolationSchema = z.enum(["shared", "per-agent"]);
 export type McpIsolation = z.infer<typeof McpIsolationSchema>;
 
-export const McpServerStatusSchema = z.enum(['active', 'disabled', 'error']);
+export const McpServerStatusSchema = z.enum(["active", "disabled", "error"]);
 export type McpServerStatus = z.infer<typeof McpServerStatusSchema>;
 
-export const McpAttachmentScopeSchema = z.enum(['worker', 'supervisor', 'both']);
+export const McpAttachmentScopeSchema = z.enum([
+  "worker",
+  "supervisor",
+  "both",
+]);
 export type McpAttachmentScope = z.infer<typeof McpAttachmentScopeSchema>;
 
 // Connector dispatch tier (mcp_connector_dispatch_plan.md §7.1, §17.5).
@@ -1002,7 +1098,7 @@ export type McpAttachmentScope = z.infer<typeof McpAttachmentScopeSchema>;
 // The flag UJIMA_MCP_DISPATCH gates whether the V2 spawn path reads
 // `tier` at all. Legacy spawn is tier-blind by design; default 'native'
 // means flag-off and tier='dispatch' rows still behave exactly as today.
-export const McpAttachmentTierSchema = z.enum(['native', 'dispatch']);
+export const McpAttachmentTierSchema = z.enum(["native", "dispatch"]);
 export type McpAttachmentTier = z.infer<typeof McpAttachmentTierSchema>;
 
 /**
@@ -1016,16 +1112,16 @@ export const McpServerSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
   name: z.string().min(1),
-  description: z.string().default(''),
-  category: z.string().default('general'),
+  description: z.string().default(""),
+  category: z.string().default("general"),
   transport: McpTransportSchema,
   command: z.string().optional(),
   args: z.array(z.string()).default([]),
   envKeyRef: z.string().min(1).optional(),
   url: z.string().optional(),
   headersKeyRef: z.string().min(1).optional(),
-  isolation: McpIsolationSchema.default('shared'),
-  status: McpServerStatusSchema.default('active'),
+  isolation: McpIsolationSchema.default("shared"),
+  status: McpServerStatusSchema.default("active"),
   lastTestedAt: TimestampSchema.optional(),
   lastTestError: z.string().optional(),
   createdBy: IdSchema,
@@ -1071,8 +1167,8 @@ export const AgentMcpAttachmentSchema = z.object({
   organizationId: IdSchema,
   memberId: IdSchema,
   mcpServerId: IdSchema,
-  scope: McpAttachmentScopeSchema.default('worker'),
-  tier: McpAttachmentTierSchema.default('native'),
+  scope: McpAttachmentScopeSchema.default("worker"),
+  tier: McpAttachmentTierSchema.default("native"),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -1099,8 +1195,8 @@ export const ChannelMcpAttachmentSchema = z.object({
   organizationId: IdSchema,
   channelId: IdSchema,
   mcpServerId: IdSchema,
-  scope: McpAttachmentScopeSchema.default('worker'),
-  tier: McpAttachmentTierSchema.default('dispatch'),
+  scope: McpAttachmentScopeSchema.default("worker"),
+  tier: McpAttachmentTierSchema.default("dispatch"),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -1113,7 +1209,7 @@ export const AgentToolAttachmentSchema = z.object({
   memberId: IdSchema,
   mcpServerId: IdSchema,
   toolName: z.string().min(1),
-  scope: McpAttachmentScopeSchema.default('worker'),
+  scope: McpAttachmentScopeSchema.default("worker"),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -1127,7 +1223,7 @@ export type AgentToolAttachment = z.infer<typeof AgentToolAttachmentSchema>;
  */
 export const McpToolDescriptorSchema = z.object({
   name: z.string().min(1),
-  description: z.string().default(''),
+  description: z.string().default(""),
   inputSchema: z.record(z.string(), z.unknown()).optional(),
   /** @deprecated use McpToolClassification.risk via the classifications table. */
   destructive: z.boolean().optional(),
@@ -1149,8 +1245,8 @@ export const McpToolClassificationSchema = z.object({
   organizationId: IdSchema,
   mcpServerId: IdSchema,
   toolName: z.string().min(1),
-  risk: z.enum(['read', 'write', 'destructive']),
-  source: z.enum(['inferred', 'manual', 'registry']),
+  risk: z.enum(["read", "write", "destructive"]),
+  source: z.enum(["inferred", "manual", "registry"]),
   needsReview: z.boolean().default(false),
   reason: z.string().optional(),
   updatedAt: TimestampSchema,
@@ -1171,8 +1267,8 @@ export type PluginSkillManifest = z.infer<typeof PluginSkillManifestSchema>;
 
 export const PluginManifestSchema = z.object({
   name: z.string().min(1),
-  description: z.string().default(''),
-  version: z.string().default('0.0.0'),
+  description: z.string().default(""),
+  version: z.string().default("0.0.0"),
   author: z.string().optional(),
   skills: z.array(PluginSkillManifestSchema).default([]),
 });
@@ -1186,7 +1282,7 @@ export const PluginInstallSchema = z.object({
   version: z.string().min(1),
   sourceUrl: z.string().min(1),
   localPath: z.string().min(1),
-  status: z.enum(['installed', 'error']).default('installed'),
+  status: z.enum(["installed", "error"]).default("installed"),
   createdBy: IdSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -1201,7 +1297,7 @@ export const SkillInstallSchema = z.object({
   pluginName: z.string().min(1),
   skillName: z.string().min(1),
   commandName: z.string().min(1),
-  description: z.string().default(''),
+  description: z.string().default(""),
   userInvocable: z.boolean().default(false),
   disableModelInvocation: z.boolean().default(false),
   skillPath: z.string().min(1),

@@ -27,6 +27,10 @@ import { isCompactionSummarySystemMessage } from '../services/conversation-summa
 import { messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
 import { resolveOpenAIAccessToken } from './codex-auth.js';
 
+export function isWakeContextMessage(message: Message): boolean {
+  return message.kind === 'system' && message.metadata?.wakeContext === true;
+}
+
 export function toModelMessages(
   messages: Message[],
   selfId?: string,
@@ -35,13 +39,18 @@ export function toModelMessages(
   return sanitizeModelMessages(filterVisibleMessages(messages)
     .filter(
       (message) =>
-        (message.kind !== 'system' || isCompactionSummarySystemMessage(message)),
+        (message.kind !== 'system'
+          || isCompactionSummarySystemMessage(message)
+          || isWakeContextMessage(message)),
     )
     .flatMap((message) => messageToModelMessages(message, selfId, options.includeReasoning ?? false)));
 }
 
 function messageToModelMessages(message: Message, selfId?: string, includeReasoning = false): ModelMessage[] {
   if (message.kind === 'system') {
+    if (isWakeContextMessage(message)) {
+      return [{ role: 'system' as const, content: message.content }];
+    }
     return [
       {
         role: 'user' as const,

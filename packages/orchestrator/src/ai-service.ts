@@ -35,10 +35,13 @@ import { requireTeam } from './utils/require-team.js';
 import { resolveVisiblePromptChannels } from './utils/visible-prompt-channels.js';
 import {
   buildCacheableSystem,
+  buildStableWakeContext,
   buildWakeContextMessages,
   loadCultureForSystemPrompt,
   loadProceduresForSystemPrompt,
 } from './utils/system-prompt-builder.js';
+import { buildSystemMessage } from './services/message-factory.js';
+import { isWakeContextMessage } from './utils/to-model-messages.js';
 import { buildThreadStateBlock } from './utils/thread-state.js';
 import { buildWorkspaceStateBlock } from './utils/workspace-state.js';
 import { buildPromptMessages } from './utils/prompt-assembly.js';
@@ -536,6 +539,12 @@ export class AiService {
     // agnostic (XML wrapper, works on Claude / DeepSeek / GPT / Gemini).
     // Resolved from the wake's sourceMessageId when available so the
     // "responders since wake" computation is correct on long threads.
+    const currentChannelId = input.threadId
+      ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
+      : undefined;
+    const currentChannel = currentChannelId
+      ? this.repo.getChannel(input.organizationId, currentChannelId)
+      : undefined;
     const threadStateBlock = buildThreadStateBlock({
       messages: threadMessages,
       currentMember: { id: member.id, name: member.name },
@@ -543,6 +552,7 @@ export class AiService {
       threadId: input.threadId,
       members: this.repo.listMembers(input.organizationId),
       wakeReason: wakeReasonForPalette,
+      channelName: currentChannel?.name,
     });
     if (threadStateBlock) {
       contextMessages.push({
@@ -554,13 +564,10 @@ export class AiService {
     // Workspace-state ground truth. Surfaces recent artifacts, channel
     // decisions, and persistent memory inline so the model sees durable
     // context at every wake.
-    const currentChannelIdForState = input.threadId
-      ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
-      : undefined;
     const workspaceStateBlock = await buildWorkspaceStateBlock({
       organizationId: input.organizationId,
       memberId: member.id,
-      channelId: currentChannelIdForState,
+      channelId: currentChannelId,
       threadId: input.threadId,
       repo: this.repo,
     });
@@ -571,21 +578,40 @@ export class AiService {
       });
     }
 
-    // Bet 1 — per-wake mutations land here as user-role messages.
-    // These are the lines that previously mutated `system` per wake
-    // and busted the cache (anti-mirror for gemini-flash, self-
-    // followup publish contract for scheduler wakes). The base
-    // scaffold (DM vs channel) is per-thread stable and is folded
-    // into the cacheable system prompt above via the
-    // `policy.scaffoldBlock` route; only the wake-reason-specific
-    // additions live below the cache breakpoint.
+    // Stable wake context — persisted as a system message so it
+    // survives across restarts and loads as `role:'system'` at the
+    // start of the messages array. Only timezone + anti-mirror are
+    // stable; the current timestamp is emitted separately below.
     const resolvedModelId = (model as { modelId?: unknown }).modelId;
     const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
-    const wakeContextMessages = buildWakeContextMessages({
+    const isFragile = isMirrorFragileModel(modelIdString);
+    const wakeCtxInput = {
       wakeReason: wakeReasonForPalette,
       modelIdString,
-      isMirrorFragile: isMirrorFragileModel(modelIdString),
-    });
+      isMirrorFragile: isFragile,
+    };
+    const existingWakeCtx = threadMessages.find(isWakeContextMessage);
+    if (!existingWakeCtx) {
+      try {
+        const stableCtx = buildStableWakeContext(wakeCtxInput);
+        const systemMsg = buildSystemMessage({
+          organizationId: input.organizationId,
+          threadId: input.threadId,
+          content: stableCtx,
+          metadata: { wakeContext: true },
+          createdAt: new Date(0).toISOString(), // epoch — always first chronologically
+        });
+        this.repo.saveMessage(systemMsg);
+      } catch {
+        // Non-critical — degraded wake still works; context will be
+        // rebuilt next wake and retried.
+      }
+    }
+
+    // Per-wake timestamp — the ONLY dynamic part of the wake context.
+    // Emitted as a user-role message at the tail, after the cache
+    // breakpoint, so the system prompt + history stay cached.
+    const wakeContextMessages = buildWakeContextMessages(wakeCtxInput);
     contextMessages.push(...wakeContextMessages);
     if (isDelegateTurn) {
       contextMessages.push(...buildDelegateTurnContextMessages(getDelegateKind(sourceMessage)));
