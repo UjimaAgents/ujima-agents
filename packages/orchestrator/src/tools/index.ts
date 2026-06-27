@@ -36,6 +36,7 @@ import {
   viewTool,
   writeTool,
 } from './workspace-tools.js';
+import { skillReadTool } from './skill-read.js';
 
 export const ORCHESTRATOR_TOOLS = {
   'channel.post': channelPostTool,
@@ -76,6 +77,7 @@ export const ORCHESTRATOR_TOOLS = {
   message: messageTool,
   schedule: scheduleTool,
   'agent.delegate': agentDelegateTool,
+  'skill.read': skillReadTool,
 } as unknown as Record<string, OrchestratorTool>;
 
 // Tools an agent always has access to, regardless of its role's `tools`
@@ -172,6 +174,8 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   // Background job management — needed when shell is baseline
   'job_output',
   'job_kill',
+  // Skill loading — agents must be able to read skill instructions
+  'skill.read',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools

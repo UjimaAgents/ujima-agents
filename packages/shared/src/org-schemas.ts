@@ -129,6 +129,7 @@ export const ResourceTypeSchema = z.enum([
   "goal",
   "goal_task",
   "question",
+  "skill",
 ]);
 export type ResourceType = z.infer<typeof ResourceTypeSchema>;
 

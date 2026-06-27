@@ -57,7 +57,7 @@ jobs:
 
   # ── Build platform tarballs (matrix) ─────────────────────────
   platform-tarballs:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
@@ -106,7 +106,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ujima-${{ matrix.os }}-${{ matrix.arch }}-tarball
-          path: packages/distribution/dist/platform-tarballs/ujima-*.tar.gz*
+          path: |
+            packages/distribution/dist/platform-tarballs/ujima-*.tar.gz*
+            packages/distribution/dist/platform-tarballs/ujima-*.zip*
 
   # ── GitHub Release ───────────────────────────────────────────
   github-release:
@@ -156,6 +158,8 @@ jobs:
             artifacts/**/ujima-agents-*.tgz
             artifacts/**/ujima-*.tar.gz
             artifacts/**/ujima-*.tar.gz.sha256
+            artifacts/**/ujima-*.zip
+            artifacts/**/ujima-*.zip.sha256
             .github/winget/ujima-agents.installer.yaml
           fail_on_unmatched_files: true
         env:

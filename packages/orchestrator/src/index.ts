@@ -102,6 +102,7 @@ export {
   summarizeTeam,
   validateProviderKeys,
 } from './services/index.js';
+export { DEFAULT_SKILL_URLS } from './services/index.js';
 export {
   NotificationService,
   resolveApprovalFromTelegram,

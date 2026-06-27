@@ -9,10 +9,18 @@
 # (downloaded by the release workflow before this step).
 
 ARG UJIMA_VERSION
+ARG TARGETARCH
 
-# ── Stage 1: Extract tarball ───────────────────────────────────────────
-FROM scratch AS tarball
-COPY docker-build/ujima-*.tar.gz /tmp/ujima.tar.gz
+# ── Stage 1a: Extract amd64 tarball ────────────────────────────────────
+FROM scratch AS tarball-amd64
+COPY docker-build/ujima-*-linux-x64.tar.gz /tmp/ujima.tar.gz
+
+# ── Stage 1b: Extract arm64 tarball ────────────────────────────────────
+FROM scratch AS tarball-arm64
+COPY docker-build/ujima-*-linux-arm64.tar.gz /tmp/ujima.tar.gz
+
+# ── Stage 1: Select correct tarball ────────────────────────────────────
+FROM tarball-${TARGETARCH} AS tarball
 
 # ── Stage 2: Runtime image ─────────────────────────────────────────────
 FROM debian:bookworm-slim

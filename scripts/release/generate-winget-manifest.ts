@@ -64,7 +64,8 @@ export function tripleName(os: string, arch: string): string {
 
 export function installerUrl(version: string, triple: string): string {
   const tag = `v${version}`;
-  return `https://github.com/UjimaAgents/ujima-agents/releases/download/${tag}/ujima-${version}-${triple}.tar.gz`;
+  const ext = triple.startsWith('win-') ? 'zip' : 'tar.gz';
+  return `https://github.com/UjimaAgents/ujima-agents/releases/download/${tag}/ujima-${version}-${triple}.${ext}`;
 }
 
 export function buildManifest(
@@ -189,7 +190,8 @@ function yamlValue(value: string | boolean | number): string {
 }
 
 export function readSha256(version: string, triple: string, tarballsDir: string): string {
-  const shaFile = join(tarballsDir, `ujima-${version}-${triple}.tar.gz.sha256`);
+  const ext = triple.startsWith('win-') ? 'zip' : 'tar.gz';
+  const shaFile = join(tarballsDir, `ujima-${version}-${triple}.${ext}.sha256`);
   if (!existsSync(shaFile)) {
     throw new Error(
       `SHA256 file not found: ${shaFile}`,

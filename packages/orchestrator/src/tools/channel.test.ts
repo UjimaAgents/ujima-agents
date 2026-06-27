@@ -384,6 +384,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'self.procedure.list',
         'self.procedure.remove',
         'self.procedure.view',
+        'skill.read',
         'view',
         'download',
         'edit',

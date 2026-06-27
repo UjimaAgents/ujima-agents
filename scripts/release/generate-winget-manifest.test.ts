@@ -29,21 +29,21 @@ describe('installerUrl', () => {
   it('builds the correct GitHub release URL for win-x64', () => {
     const url = installerUrl('1.2.3', 'win-x64');
     expect(url).toBe(
-      'https://github.com/UjimaAgents/ujima-agents/releases/download/v1.2.3/ujima-1.2.3-win-x64.tar.gz',
+      'https://github.com/UjimaAgents/ujima-agents/releases/download/v1.2.3/ujima-1.2.3-win-x64.zip',
     );
   });
 
   it('builds the correct URL for win-arm64', () => {
     const url = installerUrl('0.0.50', 'win-arm64');
     expect(url).toBe(
-      'https://github.com/UjimaAgents/ujima-agents/releases/download/v0.0.50/ujima-0.0.50-win-arm64.tar.gz',
+      'https://github.com/UjimaAgents/ujima-agents/releases/download/v0.0.50/ujima-0.0.50-win-arm64.zip',
     );
   });
 
   it('strips leading v from version correctly', () => {
     const url = installerUrl('1.0.0', 'win-x64');
     expect(url).toContain('/download/v1.0.0/');
-    expect(url).toContain('ujima-1.0.0-win-x64');
+    expect(url).toContain('ujima-1.0.0-win-x64.zip');
   });
 });
 

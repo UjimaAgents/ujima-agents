@@ -116,6 +116,7 @@ export {
   toReadableEnglishTimestamp,
 } from './conversation-summary.js';
 export { OnboardingService } from './onboarding.js';
+export { DEFAULT_SKILL_URLS } from './onboarding.js';
 export type {
   OnboardingInlineTeam,
   OnboardingInput,
@@ -1481,7 +1482,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
-  const onboarding = new OnboardingService(context.repo, context.teamStore);
+  // pluginRegistry is constructed early so OnboardingService can reference it
+  // for default-skill seeding at org creation time.
+  const pluginRegistry = new PluginRegistryService(
+    context.repo,
+    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
+  );
+  const onboarding = new OnboardingService(context.repo, context.teamStore, pluginRegistry);
   // Single named dependency for the org-IDs source used by the
   // attachment-cleanup sweep. Declaring it as a typed local
   // function makes the contract explicit at the bootstrap
@@ -1499,6 +1506,19 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       'ApiServicesContext.repo.listOrganizations must return an array of organizations',
     );
   }
+
+  // Seed default skills for orgs that have none installed yet.
+  // This is a one-time startup sweep for existing orgs created before
+  // the default-skill seeding was added to OnboardingService.
+  // Best-effort and fire-and-forget — a network error should never
+  // delay service startup.
+  void (async () => {
+    for (const orgId of probeIds) {
+      const installed = context.repo.listOrganizationSkillInstalls?.(orgId) ?? [];
+      if (installed.length > 0) continue;
+      await onboarding.seedDefaultSkills(orgId, '__startup_sweep__');
+    }
+  })();
 
   // Bet 1c (Hermes review) — post-turn memory-review counter.
   // Counter ticks per completed run; threshold-hit spawns a
@@ -1758,10 +1778,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   const tierCuration = createTierCurationService({ repo: context.repo });
   const governance = new GovernanceService(context.repo);
-  const pluginRegistry = new PluginRegistryService(
-    context.repo,
-    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
-  );
+  // pluginRegistry is already constructed above, near OnboardingService.
 
   // Bet 5 (Hermes review) — trajectory JSONL projection. One JSONL
   // line per completed run, gated by env var. Fire-and-forget, no

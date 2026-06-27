@@ -6,5 +6,5 @@ export function getSkillInstructions(role: RoleConfig): string {
   }
 
   const skillNames = role.skills.join(', ');
-  return `\n\n# Available Skills\nYou have access to the following skills: ${skillNames}.\nYou can read their instructions and implementations at runtime by viewing the files in the \`.ujima/skills/<skill-name>/SKILL.md\` directories using your file reading tools.`;
+  return `\n\n# Available Skills\nYou have access to the following skills: ${skillNames}.\nTo load the full instructions for any skill, call \`skill.read\` with its \`name\` (exactly as shown in <available_skills>).`;
 }

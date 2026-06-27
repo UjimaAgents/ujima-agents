@@ -211,6 +211,14 @@ export const DEFAULT_TOOL_CATALOG: Record<string, ToolCapability> = {
     pathScopes: [],
     requiresApproval: true,
   },
+  'skill.read': {
+    id: 'skill.read',
+    name: 'Skill Read',
+    description: 'Load the full instructions for an installed skill by its name. Call this when you see a skill listed in <available_skills> and want to follow its instructions.',
+    actions: ['read'],
+    pathScopes: [],
+    requiresApproval: false,
+  },
 };
 
 export const PERSONALITY_PRESETS: Record<string, PersonalityPreset> = {

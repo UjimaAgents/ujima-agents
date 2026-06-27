@@ -23,6 +23,17 @@ import { reclaimOrphanOrganizationsAtPath } from './workspace-path-claim.js';
 import { persistTeamConfig } from './config-sync.js';
 import { visibleChannelsFromRepo } from './settings.js';
 import { visiblePublicChannels } from './channel-visibility.js';
+import type { PluginRegistryService } from './plugin-registry.js';
+
+/**
+ * Skill repos to install automatically for every new organisation.
+ * These are best-effort: a network error or invalid URL is logged and
+ * skipped rather than failing the onboarding request.
+ */
+export const DEFAULT_SKILL_URLS: readonly string[] = [
+  'https://github.com/openai/skills/tree/main/skills/.curated/define-goal',
+  'https://github.com/Vincent-presh/whats-next',
+];
 
 export interface OnboardingInlineTeam {
   name?: string;
@@ -90,6 +101,7 @@ export class OnboardingService {
   constructor(
     private readonly repo: ApiRepository,
     private readonly teamStore: TeamStore,
+    private readonly pluginRegistry?: PluginRegistryService,
   ) {}
 
   async onboard(input: OnboardingInput): Promise<OnboardingResult> {
@@ -306,6 +318,30 @@ export class OnboardingService {
     });
 
     this.teamStore.setTeam(team, organizationId);
+
+    // Seed default skills — best-effort, async so network errors
+    // never block or fail the onboarding response.
+    void this.seedDefaultSkills(organizationId, ownerId);
+
     return result;
+  }
+
+  /** Install DEFAULT_SKILL_URLS into a freshly-created or existing org. */
+  async seedDefaultSkills(
+    organizationId: string,
+    createdBy: string,
+  ): Promise<void> {
+    if (!this.pluginRegistry) return;
+    for (const url of DEFAULT_SKILL_URLS) {
+      try {
+        await this.pluginRegistry.installFromUrl({ organizationId, createdBy, sourceUrl: url });
+      } catch (err) {
+        // best-effort: log and continue — a bad URL or network hiccup
+        // should never break org creation or the migration sweep.
+        console.warn(
+          `[onboarding] failed to seed default skill from ${url}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   }
 }

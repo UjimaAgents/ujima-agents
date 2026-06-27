@@ -1485,7 +1485,23 @@ function buildToolStep(
     }
   }
 
-  const hasRich = !!(terminal || filesystem || grep || webSearch);
+  let skillRead: TraceStepData["skillRead"] | undefined;
+  if (name === "skill.read") {
+    const args = mergedPayload?.toolCall?.args as Record<string, unknown> | undefined;
+    const skillName = typeof args?.name === "string" ? args.name : "skill";
+    const pluginName = typeof args?.plugin === "string" ? args.plugin : undefined;
+    const description = typeof args?.description === "string" ? args.description : undefined;
+    const rawOutput = resultBody?.toolResult?.result;
+    const outputStr =
+      typeof rawOutput === "string"
+        ? rawOutput
+        : rawOutput != null
+          ? JSON.stringify(rawOutput)
+          : undefined;
+    skillRead = { skillName, pluginName, description, output: outputStr };
+  }
+
+  const hasRich = !!(terminal || filesystem || grep || webSearch || skillRead);
 
   const actorId = mergedPayload?.agentId ?? call?.publisher ?? result?.publisher;
   if (!actorId) {
@@ -1513,6 +1529,7 @@ function buildToolStep(
     filesystem,
     grep,
     webSearch,
+    skillRead,
     actorId,
     actorName: actor.name,
     ...(runId ? { runId } : {}),

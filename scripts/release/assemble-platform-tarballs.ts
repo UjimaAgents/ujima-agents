@@ -31,6 +31,7 @@ function tripleName(os: string, arch: string): string {
 }
 
 async function downloadNode(stagingDir: string, nodeTriple: string) {
+  mkdirSync(stagingDir, { recursive: true });
   const d = join(stagingDir, "node");
   if (existsSync(d)) rmSync(d, { recursive: true, force: true });
   const isWin = nodeTriple.startsWith("win-");
@@ -44,7 +45,14 @@ async function downloadNode(stagingDir: string, nodeTriple: string) {
   const e = join(stagingDir, "node-v" + NODE_VERSION + "-" + nodeTriple);
   if (isWin) {
     await $`unzip -o ${archive} -d ${stagingDir}`.nothrow();
-    if (existsSync(e)) { if (existsSync(join(e, "node.exe"))) cpSync(join(e, "node.exe"), join(d, "node.exe")); rmSync(e, { recursive: true, force: true }); }
+    if (existsSync(e)) {
+      if (existsSync(join(e, "node.exe"))) {
+        const binDir = join(d, "bin");
+        mkdirSync(binDir, { recursive: true });
+        cpSync(join(e, "node.exe"), join(binDir, "node.exe"));
+      }
+      rmSync(e, { recursive: true, force: true });
+    }
   } else {
     await $`tar xzf ${archive} -C ${stagingDir}`.nothrow();
     if (existsSync(e)) {
@@ -93,21 +101,42 @@ async function installNative(ujimaDir: string, nodeDir: string) {
   if (!existsSync(npm)) { log("npm not found, skipping native install"); return; }
   for (const dep of ["better-sqlite3@^12.9.0", "onnxruntime-node@^1.20.0"]) {
     log("Installing " + dep + "...");
-    const r = await $`${nodeExe} ${npm} install ${dep} --no-save --ignore-scripts --prefix ${runtimeDir}`.cwd(runtimeDir).nothrow();
+    const r = await $`${nodeExe} ${npm} install ${dep} --no-save --prefix ${runtimeDir}`.cwd(runtimeDir).nothrow();
     if (r.exitCode !== 0) console.warn(dep + " failed (" + r.exitCode + "), skipping");
     else log(dep + " installed");
   }
 }
 
-async function makeTarball(stagingDir: string, triple: string, version: string) {
+async function makeArchive(stagingDir: string, triple: string, version: string, isWin: boolean) {
   mkdirSync(TARBALLS_DIR, { recursive: true });
-  const name = "ujima-" + version + "-" + triple + ".tar.gz";
+  const ext = isWin ? "zip" : "tar.gz";
+  const name = "ujima-" + version + "-" + triple + "." + ext;
   const p = join(TARBALLS_DIR, name);
   log("Creating " + name + "...");
-  const r = await $`tar czf ${p} -C ${stagingDir} ujima`.nothrow();
-  if (r.exitCode !== 0) throw new Error("tar failed for " + name);
+  let r;
+  if (isWin) {
+    const sourceDir = join(stagingDir, "ujima");
+    r = await $`powershell -Command "Compress-Archive -Path '${sourceDir}' -DestinationPath '${p}' -Force"`.nothrow();
+  } else {
+    r = await $`tar czf ${p} -C ${stagingDir} ujima`.nothrow();
+  }
+  if (r.exitCode !== 0) throw new Error("Archive creation failed for " + name);
   const sha = await $`shasum -a 256 ${p} | cut -d' ' -f1`.nothrow();
-  if (sha.exitCode === 0) { writeFileSync(p + ".sha256", sha.stdout.toString().trim()); }
+  if (sha.exitCode === 0) {
+    writeFileSync(p + ".sha256", sha.stdout.toString().trim());
+  } else {
+    try {
+      const crypto = require("node:crypto");
+      const fs = require("node:fs");
+      const hash = crypto.createHash("sha256");
+      const fileBuffer = fs.readFileSync(p);
+      hash.update(fileBuffer);
+      const hex = hash.digest("hex");
+      writeFileSync(p + ".sha256", hex);
+    } catch (e) {
+      console.warn("Failed to calculate SHA256: ", e);
+    }
+  }
   log("Created " + name + " (" + (statSync(p).size / 1024 / 1024).toFixed(1) + " MB)");
 }
 
@@ -119,11 +148,11 @@ async function assemble(os: string, arch: string, version: string) {
   if (existsSync(sd)) rmSync(sd, { recursive: true, force: true });
   mkdirSync(sd, { recursive: true });
   log("Assembling " + triple + "...");
-  await downloadNode(sd, cfg.node);
+  await downloadNode(join(sd, "ujima"), cfg.node);
   copyArtifacts(sd, cfg.rust);
   writeFileSync(join(sd, "ujima", "package.json"), JSON.stringify({ name: "ujima-agents", version, private: true, engines: { node: ">=" + NODE_VERSION } }, null, 2) + "\n");
-  await installNative(join(sd, "ujima"), join(sd, "node"));
-  await makeTarball(sd, triple, version);
+  await installNative(join(sd, "ujima"), join(sd, "ujima", "node"));
+  await makeArchive(sd, triple, version, os === "windows");
   return triple;
 }
 

@@ -7,6 +7,7 @@ import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
 import {GrepToolPane} from "./grep-tool-pane";
 import {WebSearchToolPane} from "./web-search-tool-pane";
+import {SkillReadPane} from "./skill-read-pane";
 import { UnifiedDiffView } from "./unified-diff-view";
 import { collectFileChanges } from "../../change-summary";
 
@@ -96,6 +97,14 @@ export interface TraceStepData {
       source: string;
       rank: number;
     }[];
+  };
+  /** skill.read tool invocation — show the SkillReadPane. */
+  skillRead?: {
+    skillName: string;
+    pluginName?: string;
+    description?: string;
+    /** Raw output string returned by the skill.read tool. */
+    output?: string;
   };
 }
 
@@ -576,6 +585,14 @@ export const TraceStep = memo(function TraceStep({
       status={step.webSearch.status}
       source={step.webSearch.source}
       results={step.webSearch.results}
+    />
+  ) : step.skillRead ? (
+    <SkillReadPane
+      skillName={step.skillRead.skillName}
+      pluginName={step.skillRead.pluginName}
+      description={step.skillRead.description}
+      output={step.skillRead.output}
+      status={step.status}
     />
   ) : step.detail.trim() ? (
     <Markdown content={step.detail} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-0! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5 [&_h1]:!text-[11px] [&_h2]:!text-[11px] [&_h3]:!text-[11px] [&_h4]:!text-[11px] [&_h5]:!text-[11px] [&_h6]:!text-[11px]" />
