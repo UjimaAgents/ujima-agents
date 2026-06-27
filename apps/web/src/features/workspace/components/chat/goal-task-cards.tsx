@@ -1,5 +1,5 @@
 import { memo, useState, type ReactNode } from "react";
-import { ArrowRight, ChevronDown, ChevronUp, Clock, ExternalLink, KanbanSquare, Users } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronUp, Clock, ExternalLink, KanbanSquare, Users, AlertTriangle, Zap } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import {
   formatGoalStatusLabel,
@@ -391,5 +391,80 @@ export const MessageCardsView = memo(function MessageCardsView({
         }
       })}
     </>
+  );
+});
+
+export interface TaskNudgeData {
+  taskId: string;
+  taskTitle: string;
+  reason: "unblocked" | "idle" | "stalled" | "moved";
+  assigneeId: string;
+  completedDependencyId?: string;
+  completedDependencyTitle?: string;
+  previousStatus?: GoalTaskStatus;
+  status?: GoalTaskStatus;
+}
+
+export const TaskNudgeCardView = memo(function TaskNudgeCardView({
+  nudge,
+  onOpenTasksTab,
+}: {
+  nudge: TaskNudgeData;
+  onOpenTasksTab?: () => void;
+}) {
+  if (!nudge) return null;
+
+  const config = {
+    unblocked: {
+      title: "Task Unblocked",
+      icon: Zap,
+      iconClass: "bg-emerald-100/80 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+      description: nudge.completedDependencyTitle
+        ? `Dependency "${nudge.completedDependencyTitle}" completed. You can start when ready.`
+        : "All dependencies completed. You can start when ready.",
+    },
+    stalled: {
+      title: "Task Stalled",
+      icon: AlertTriangle,
+      iconClass: "bg-amber-100/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+      description: "This task has been in progress with no update for a while. Please post progress or update status.",
+    },
+    idle: {
+      title: "Task Pending",
+      icon: Clock,
+      iconClass: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+      description: "This task is pending and unblocked. Please proceed when ready.",
+    },
+    moved: {
+      title: "Task Moved",
+      icon: ArrowRight,
+      iconClass: "bg-violet-100/80 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300",
+      description: nudge.previousStatus && nudge.status
+        ? `Moved from ${goalTaskColumnLabel(nudge.previousStatus)} → ${goalTaskColumnLabel(nudge.status)}`
+        : "Task status updated.",
+    },
+  }[nudge.reason];
+
+  const Icon = config.icon;
+
+  return (
+    <CardShell footer={<ViewBoardButton onOpenTasksTab={onOpenTasksTab} />}>
+      <div className="flex items-start gap-2.5">
+        <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${config.iconClass}`}>
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+            {config.title}
+          </p>
+          <p className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100 leading-tight">
+            {nudge.taskTitle}
+          </p>
+          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+            {config.description}
+          </p>
+        </div>
+      </div>
+    </CardShell>
   );
 });

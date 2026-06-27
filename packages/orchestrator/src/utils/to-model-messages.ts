@@ -370,6 +370,7 @@ export async function resolveSpiritModel(params: {
       model: selectLanguageModel({
         kind: provider.kind,
         modelId,
+        cwd: params.team.workspace.root,
         apiKey,
         baseUrl: provider.baseUrl,
         reasoningEffort: params.reasoningEffort,

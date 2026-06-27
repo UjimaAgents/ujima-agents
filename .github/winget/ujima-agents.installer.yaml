@@ -1,0 +1,53 @@
+# Winget manifest for Ujima Agents
+# Submit to https://github.com/microsoft/winget-pkgs
+# PackageIdentifier: UjimaAgents.Ujima
+#
+# NOTE: This file is auto-generated during CI by scripts/release/generate-winget-manifest.ts.
+# Manual edits will be overwritten on the next release. To submit to winget-pkgs:
+#   Fork https://github.com/microsoft/winget-pkgs
+#   Copy this file to manifests/u/UjimaAgents/Ujima/<VERSION>/
+#   Open a PR against winget-pkgs
+#
+# See scripts/release/generate-winget-manifest.ts for the canonical generator.
+
+PackageIdentifier: UjimaAgents.Ujima
+PackageVersion: "0.0.0-dev"
+PackageLocale: en-US
+Publisher: Ujima Agents
+PublisherUrl: https://github.com/UjimaAgents
+PackageName: Ujima Agents
+PackageUrl: https://github.com/UjimaAgents/ujima-agents
+License: MIT
+LicenseUrl: https://github.com/UjimaAgents/ujima-agents/blob/main/LICENSE
+ShortDescription: Framework for building Slack-like teams of AI agents — CLI, API, and web UI.
+Description: Ujima is a framework for building teams of AI agents that communicate like Slack channels, with workspace-bounded execution.
+Moniker: ujima
+Tags:
+  - ai
+  - agents
+  - mcp
+  - claude
+  - developer-tools
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: PLACEHOLDER_URL
+    InstallerSha256: PLACEHOLDER_WIN_X64
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: ujima.bat
+        PortableCommandAlias: ujima
+    Commands:
+      - ujima
+  - Architecture: arm64
+    InstallerType: zip
+    InstallerUrl: PLACEHOLDER_URL
+    InstallerSha256: PLACEHOLDER_WIN_ARM64
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: ujima.bat
+        PortableCommandAlias: ujima
+    Commands:
+      - ujima
+ManifestType: merged
+ManifestVersion: 1.9.0

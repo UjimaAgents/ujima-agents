@@ -684,6 +684,13 @@ function sentenceCase(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
+function getBasename(path?: string): string {
+  if (!path) return "";
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (index >= 0) return path.slice(index + 1);
+  return path;
+}
+
 function deriveToolLine(
   input: ReasoningTraceInput,
   event: ActivityEvent | undefined,
@@ -819,49 +826,49 @@ function deriveToolLine(
 
   if (parsed.action === "write" && parsed.resourceType === "file" && path) {
     return {
-      title: `${actorLabel} is writing to ${path}`,
+      title: `${actorLabel} is writing to ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "file" && path && isDeleteOp) {
     return {
-      title: `${actorLabel} deleted file ${path}`,
+      title: `${actorLabel} deleted file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "file" && path && isCreateOp) {
     return {
-      title: `${actorLabel} created file ${path}`,
+      title: `${actorLabel} created file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "file" && path && isReadOp) {
     return {
-      title: `${actorLabel} read file ${path}`,
+      title: `${actorLabel} read file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if ((parsed.action === "execute" || parsed.action === "write") && parsed.resourceType === "file" && path) {
     return {
-      title: `${actorLabel} updated file ${path}`,
+      title: `${actorLabel} updated file ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "folder" && path && isDeleteOp) {
     return {
-      title: `${actorLabel} deleted folder ${path}`,
+      title: `${actorLabel} deleted folder ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if (parsed.resourceType === "folder" && path && isCreateOp) {
     return {
-      title: `${actorLabel} created folder ${path}`,
+      title: `${actorLabel} created folder ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
   if ((parsed.action === "write" || parsed.action === "execute") && parsed.resourceType === "folder" && path && isUpdateOp) {
     return {
-      title: `${actorLabel} updated folder ${path}`,
+      title: `${actorLabel} updated folder ${getBasename(path)}`,
       detail: `${actorLabel} called ${toolName} ${location}.`,
     };
   }
@@ -1485,7 +1492,23 @@ function buildToolStep(
     }
   }
 
-  const hasRich = !!(terminal || filesystem || grep || webSearch);
+  let skillRead: TraceStepData["skillRead"] | undefined;
+  if (name === "skill.read") {
+    const args = mergedPayload?.toolCall?.args as Record<string, unknown> | undefined;
+    const skillName = typeof args?.name === "string" ? args.name : "skill";
+    const pluginName = typeof args?.plugin === "string" ? args.plugin : undefined;
+    const description = typeof args?.description === "string" ? args.description : undefined;
+    const rawOutput = resultBody?.toolResult?.result;
+    const outputStr =
+      typeof rawOutput === "string"
+        ? rawOutput
+        : rawOutput != null
+          ? JSON.stringify(rawOutput)
+          : undefined;
+    skillRead = { skillName, pluginName, description, output: outputStr };
+  }
+
+  const hasRich = !!(terminal || filesystem || grep || webSearch || skillRead);
 
   const actorId = mergedPayload?.agentId ?? call?.publisher ?? result?.publisher;
   if (!actorId) {
@@ -1513,6 +1536,7 @@ function buildToolStep(
     filesystem,
     grep,
     webSearch,
+    skillRead,
     actorId,
     actorName: actor.name,
     ...(runId ? { runId } : {}),

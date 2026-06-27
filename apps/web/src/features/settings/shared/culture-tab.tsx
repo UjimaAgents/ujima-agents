@@ -1,9 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
-import { ShieldCheck, Trash2 } from "lucide-react";
-import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookText, PencilLine, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
+import { FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
+import { SettingsErrorAlert } from "@/features/settings/shared/settings-alert";
+import {
+  SettingsBadge,
+  SettingsGhostIconButton,
+  SettingsPrimaryButton,
+  SettingsSecondaryButton,
+} from "@/features/settings/shared/settings-buttons";
+import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-state";
+import { SettingsList, SettingsListRow, SettingsRowIcon } from "@/features/settings/shared/settings-list-row";
+import { SettingsSection } from "@/features/settings/shared/settings-section";
+import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
 
 interface ProcedureSummary {
   scope: "org" | "channel" | "agent";
@@ -38,14 +49,22 @@ interface ApiError {
 export interface CultureTabProps {
   organizationId: string;
   channelId: string | null;
+  members?: readonly { id: string; name: string }[];
 }
-
-const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 function endpointBase(channelId: string | null): string {
   return channelId
     ? `/api/channels/${encodeURIComponent(channelId)}/culture`
     : `/api/settings/culture`;
+}
+
+function formatProcedureName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 64);
 }
 
 async function errorMessage(
@@ -56,7 +75,7 @@ async function errorMessage(
   return body?.message ?? `${fallback} (${response.status}).`;
 }
 
-export const CultureTab = memo(function CultureTab({ organizationId, channelId }: CultureTabProps) {
+export const CultureTab = memo(function CultureTab({ organizationId, channelId, members }: CultureTabProps) {
   const [items, setItems] = useState<ProcedureSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +92,16 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId }
 
   const isOrg = channelId === null;
   const base = useMemo(() => endpointBase(channelId), [channelId]);
+  const memberNames = useMemo(
+    () => new Map((members ?? []).map((member) => [member.id, member.name])),
+    [members],
+  );
+  const editingName = editing ? formatProcedureName(editing.name) : "";
+  const helperName = editing
+    ? editing.existing
+      ? "This name is fixed after creation."
+      : "We will format this into a file-safe slug on save."
+    : "";
 
   const refresh = useCallback(async () => {
     if (!organizationId) return;
@@ -148,8 +177,9 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId }
 
   const submit = useCallback(async () => {
     if (!editing) return;
-    if (!NAME_PATTERN.test(editing.name)) {
-      setError("Name must be lowercase letters, digits, hyphens (2-64 chars).");
+    const name = formatProcedureName(editing.name);
+    if (!name) {
+      setError("Name is required.");
       return;
     }
     if (editing.description.trim().length < 1) {
@@ -168,7 +198,7 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId }
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           organizationId,
-          name: editing.name,
+          name,
           description: editing.description.trim(),
           body: editing.body,
           enforced: isOrg ? editing.enforced : false,
@@ -214,163 +244,192 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId }
     () => [...items].sort((a, b) => a.name.localeCompare(b.name)),
     [items],
   );
+  const formatUpdatedAt = useCallback((value: string) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? value
+      : new Intl.DateTimeFormat(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(date);
+  }, []);
+  const formatUpdatedBy = useCallback(
+    (value: string) => memberNames.get(value) ?? "Unknown member",
+    [memberNames],
+  );
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-            {isOrg ? "Workspace Culture" : "Channel Culture"}
-          </h3>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            {isOrg
-              ? "Cultural norms that apply across this organization."
-              : "Norms specific to this channel."}
-          </p>
-        </div>
-        {!editing ? (
-          <SettingsPrimaryButton onClick={beginAdd}>
-            Add procedure
-          </SettingsPrimaryButton>
-        ) : null}
-      </header>
+    <div className="space-y-6">
+      <SettingsTabActions>
+        <SettingsPrimaryButton onClick={beginAdd} disabled={Boolean(editing)}>
+          <Sparkles className="h-4 w-4" />
+          Add procedure
+        </SettingsPrimaryButton>
+      </SettingsTabActions>
 
       {error ? (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
-          {error}
-        </div>
+        <SettingsErrorAlert message={error} onDismiss={() => setError(null)} />
       ) : null}
 
       {editing ? (
-        <div className="space-y-3 rounded border border-zinc-200 p-4 dark:border-zinc-800">
-          <div>
-            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Name
-            </label>
-            <input
-              className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              value={editing.name}
-              disabled={editing.existing}
-              placeholder="pages-stay-open"
-              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-            />
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Lowercase letters, digits, hyphens (2-64 characters). Cannot be
-              changed after creation.
-            </p>
+        <SettingsSection
+          title={editing.existing ? "Edit procedure" : "New procedure"}
+          description={helperName}
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            <FieldShell
+              label="Name"
+              htmlFor="culture-name"
+              hint="We turn spaces and punctuation into a clean file name."
+            >
+              <TextInput
+                id="culture-name"
+                value={editing.name}
+                disabled={editing.existing}
+                placeholder="Pages stay open"
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                onBlur={() => {
+                  if (editing.existing) return;
+                  const next = formatProcedureName(editing.name);
+                  if (next !== editing.name) setEditing({ ...editing, name: next });
+                }}
+              />
+              {editing.name && !editing.existing ? (
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  Saved as <span className="font-mono text-zinc-700 dark:text-zinc-200">{editingName}</span>
+                </p>
+              ) : null}
+            </FieldShell>
+
+            <FieldShell
+              label="Description"
+              htmlFor="culture-description"
+              hint="Short. Human. One line is enough."
+            >
+              <TextInput
+                id="culture-description"
+                value={editing.description}
+                maxLength={200}
+                placeholder="What this procedure keeps true."
+                onChange={(e) =>
+                  setEditing({ ...editing, description: e.target.value })
+                }
+              />
+            </FieldShell>
           </div>
-          <div>
-            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Description
-            </label>
-            <input
-              className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              value={editing.description}
-              maxLength={200}
-              placeholder="One sentence: what this procedure enforces."
-              onChange={(e) =>
-                setEditing({ ...editing, description: e.target.value })
-              }
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Body
-            </label>
-            <textarea
-              className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+
+          <FieldShell
+            label="Body"
+            htmlFor="culture-body"
+            hint="Write the actual guidance or rule text."
+          >
+            <TextArea
+              id="culture-body"
               rows={8}
               value={editing.body}
               onChange={(e) => setEditing({ ...editing, body: e.target.value })}
               placeholder="When you ... do ..."
+              className="font-mono text-sm"
             />
-          </div>
+          </FieldShell>
+
           {isOrg ? (
-            <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <label className="flex items-center gap-3 rounded-2xl border border-zinc-200 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
               <input
                 type="checkbox"
                 checked={editing.enforced}
                 onChange={(e) =>
                   setEditing({ ...editing, enforced: e.target.checked })
                 }
+                className="h-4 w-4 rounded border-zinc-300 text-violet-600 focus:ring-violet-500"
               />
               <ShieldCheck className="h-4 w-4 text-amber-600" aria-hidden />
-              Mark as LAW (max 3 per org).
+              Mark as LAW
+              <span className="text-zinc-500 dark:text-zinc-400">(max 3 per workspace)</span>
             </label>
           ) : null}
-          <div className="flex gap-2 pt-1">
+
+          <div className="flex flex-wrap items-center gap-2">
             <SettingsPrimaryButton
               onClick={() => void submit()}
               disabled={busy}
             >
               {busy ? "Saving…" : editing.existing ? "Save changes" : "Create"}
             </SettingsPrimaryButton>
-            <button
-              type="button"
-              onClick={cancelEdit}
-              className="rounded border border-zinc-300 px-3 py-1 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-            >
+            <SettingsSecondaryButton onClick={cancelEdit}>
               Cancel
-            </button>
+            </SettingsSecondaryButton>
           </div>
-        </div>
+        </SettingsSection>
       ) : null}
 
-      {loading ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
-      ) : sortedItems.length === 0 && !editing ? (
-        <div className="rounded border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          No {isOrg ? "workspace" : "channel"} culture yet.
-        </div>
-      ) : (
-        <ul className="space-y-2">
-          {sortedItems.map((item) => (
-            <li
-              key={item.name}
-              className="flex items-start justify-between gap-3 rounded border border-zinc-200 p-3 dark:border-zinc-800"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm text-zinc-900 dark:text-zinc-100">
-                    {item.name}
-                  </span>
-                  {item.enforced ? (
-                    <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900 dark:text-amber-200">
-                      <ShieldCheck className="h-3 w-3" aria-hidden /> LAW
-                    </span>
-                  ) : null}
-                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                    v{item.version}
-                  </span>
-                </div>
-                <p className="mt-0.5 truncate text-sm text-zinc-600 dark:text-zinc-300">
-                  {item.description}
-                </p>
-                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
-                  Updated {item.updatedAt} by {item.updatedBy}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => void beginEdit(item.name)}
-                  className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPendingRemove(item.name)}
-                  className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
-                  title="Remove"
-                >
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <SettingsSection
+        title="Procedures"
+        description={isOrg ? "Workspace rules and norms." : "Channel-specific norms."}
+      >
+        {loading ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
+        ) : sortedItems.length === 0 ? (
+          <SettingsEmptyState
+            icon={BookText}
+            title={`No ${isOrg ? "workspace" : "channel"} culture yet`}
+            description="Add one procedure or LAW to make this culture explicit."
+            action={!editing ? (
+              <SettingsPrimaryButton onClick={beginAdd}>
+                <Sparkles className="h-4 w-4" />
+                Add procedure
+              </SettingsPrimaryButton>
+            ) : undefined}
+          />
+        ) : (
+          <SettingsList>
+            {sortedItems.map((item) => (
+              <SettingsListRow
+                key={item.name}
+                leading={<SettingsRowIcon icon={Sparkles} />}
+                primary={<span className="font-mono">{item.name}</span>}
+                secondary={
+                  <div className="space-y-1">
+                    <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                      {item.description}
+                    </p>
+                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                      Updated {formatUpdatedAt(item.updatedAt)} by {formatUpdatedBy(item.updatedBy)}
+                    </p>
+                  </div>
+                }
+                badge={
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {item.enforced ? (
+                      <SettingsBadge variant="warning">
+                        <ShieldCheck className="h-3 w-3" />
+                        LAW
+                      </SettingsBadge>
+                    ) : null}
+                    <SettingsBadge variant="violet">v{item.version}</SettingsBadge>
+                  </div>
+                }
+                actions={
+                  <>
+                    <SettingsSecondaryButton
+                      onClick={() => void beginEdit(item.name)}
+                    >
+                      <PencilLine className="h-3.5 w-3.5" />
+                      Edit
+                    </SettingsSecondaryButton>
+                    <SettingsGhostIconButton
+                      title="Remove procedure"
+                      onClick={() => setPendingRemove(item.name)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </SettingsGhostIconButton>
+                  </>
+                }
+              />
+            ))}
+          </SettingsList>
+        )}
+      </SettingsSection>
 
       <ConfirmDialog
         isOpen={Boolean(pendingRemove)}

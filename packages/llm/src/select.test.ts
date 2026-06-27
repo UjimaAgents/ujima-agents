@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { jsonSchema, stepCountIs, streamText } from 'ai';
@@ -201,6 +203,71 @@ function createFakeAppServer(): {
           stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
           continue;
         }
+        if (text === 'collab tool call') {
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'collabToolCall', id: 'collab_1', tool: 'my_collab', status: 'completed', receiverThreadId: 'thr_2', agentStatus: 'idle' } } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
+        if (text.startsWith('use delegate too')) {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 170,
+            method: 'item/tool/call',
+            params: {
+              threadId: 'thr_1',
+              turnId: 'turn_1',
+              callId: 'delegate_call_1',
+              tool: 'ujima_agent_delegate',
+              arguments: {
+                action: 'spawn',
+                to: 'Ava Foster',
+                message: 'Do the frontend lane.',
+              },
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'legacy command approval') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 150,
+            method: 'execCommandApproval',
+            params: {
+              conversationId: 'thr_1',
+              callId: 'cmd_legacy_1',
+              command: ['npm', 'test'],
+              cwd: '/repo',
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'legacy patch approval') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 151,
+            method: 'applyPatchApproval',
+            params: {
+              conversationId: 'thr_1',
+              callId: 'patch_legacy_1',
+              fileChanges: { 'src/a.ts': { type: 'add', content: 'new content' } },
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'started item caching approval') {
+          stdout.write(`${JSON.stringify({ method: 'item/started', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'fileChange', id: 'fc_cached_1', changes: [{ path: 'src/a.ts', kind: 'add', diff: 'cached new file' }], status: 'inProgress' } } })}\n`);
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 152,
+            method: 'item/fileChange/requestApproval',
+            params: {
+              threadId: 'thr_1',
+              turnId: 'turn_1',
+              itemId: 'fc_cached_1',
+            },
+          })}\n`);
+          continue;
+        }
         stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hello from app-server' } })}\n`);
         stdout.write(`${JSON.stringify({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg_1', text: 'hello from app-server' } } })}\n`);
         stdout.write(`${JSON.stringify({
@@ -219,6 +286,58 @@ function createFakeAppServer(): {
   });
 
   return child;
+}
+
+function loadRealIvyCodexFixture(): {
+  organizationId: string;
+  memberId: string;
+  name: string;
+  modelId: string;
+  threadId: string;
+  messageCount: number;
+  workspaceRoot: string;
+} | null {
+  const dbPath = '/Users/mac/.ujima/data/ujima.db';
+  if (!existsSync(dbPath)) return null;
+  try {
+    const row = execFileSync('sqlite3', [
+      dbPath,
+      `
+      with ivy as (
+        select organization_id, id, name, llm, model
+        from members
+        where name = 'Ivy Brooks'
+        limit 1
+      )
+      select ivy.organization_id, ivy.id, ivy.name, ivy.llm, ivy.model,
+             threads.id, count(messages.id), organizations.workspace_root
+      from ivy
+      join organizations on organizations.id = ivy.organization_id
+      join threads on threads.organization_id = ivy.organization_id
+        and threads.id like '%' || ivy.id || '%'
+      left join messages on messages.organization_id = threads.organization_id
+        and messages.thread_id = threads.id
+      group by ivy.organization_id, ivy.id, ivy.name, ivy.llm, ivy.model, threads.id, organizations.workspace_root
+      order by count(messages.id) desc
+      limit 1;
+      `,
+    ], { encoding: 'utf8' }).trim();
+    const [organizationId, memberId, name, provider, modelId, threadId, messageCount, workspaceRoot] = row.split('|');
+    if (!organizationId || !memberId || !name || provider !== 'openai-codex' || !modelId || !threadId || !messageCount || !workspaceRoot) {
+      return null;
+    }
+    return {
+      organizationId,
+      memberId,
+      name,
+      modelId,
+      threadId,
+      workspaceRoot,
+      messageCount: Number(messageCount),
+    };
+  } catch {
+    return null;
+  }
 }
 
 afterEach(() => {
@@ -329,6 +448,153 @@ describe('selectLanguageModel', () => {
     expect(turnStart.params.input).toEqual([{ type: 'text', text: 'new question', text_elements: [] }]);
   });
 
+  it('keeps one Codex thread alive for later turns on the same model instance', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const first = await model.doGenerate({
+      prompt: [
+        { role: 'user', content: [{ type: 'text', text: 'seed question' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'seed answer' }] },
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      ],
+    });
+    const firstText = first.content.find((part: { type?: string; text?: string }) => part.type === 'text' && part.text)?.text ?? '';
+
+    await model.doGenerate({
+      prompt: [
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: firstText }] },
+        { role: 'user', content: [{ type: 'text', text: 'follow up' }] },
+      ],
+    });
+
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'thread/start')).toHaveLength(1);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'thread/inject_items')).toHaveLength(1);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/start')).toHaveLength(2);
+  });
+
+  it('keeps one Codex thread alive when each turn reselects the model', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const firstModel = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4-mini',
+      cwd: '/workspace',
+    }) as any;
+    const first = await firstModel.doGenerate({
+      prompt: [
+        { role: 'system', content: 'You are Ivy Brooks.\nCurrent thread ID: dm:ivy:phoebe' },
+        { role: 'user', content: [{ type: 'text', text: 'seed question' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'seed answer' }] },
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      ],
+    });
+    const firstText = first.content.find((part: { type?: string; text?: string }) => part.type === 'text' && part.text)?.text ?? '';
+
+    const secondModel = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4-mini',
+      cwd: '/workspace',
+    }) as any;
+    await secondModel.doGenerate({
+      prompt: [
+        { role: 'system', content: 'You are Ivy Brooks.\nCurrent thread ID: dm:ivy:phoebe' },
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: firstText }] },
+        { role: 'user', content: [{ type: 'text', text: 'follow up' }] },
+      ],
+    });
+
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'thread/start')).toHaveLength(1);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'thread/inject_items')).toHaveLength(1);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/start')).toHaveLength(2);
+  });
+
+  const realIvyFixture = loadRealIvyCodexFixture();
+  (realIvyFixture ? it : it.skip)('keeps one Codex thread for Ivy Brooks from the real .ujima DB', async () => {
+    const fixture = realIvyFixture!;
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    expect(fixture.name).toBe('Ivy Brooks');
+    expect(fixture.messageCount).toBeGreaterThan(1);
+
+    const system = `You are ${fixture.name}.\nCurrent thread ID: ${fixture.threadId}`;
+    await (selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: fixture.modelId,
+      cwd: fixture.workspaceRoot,
+    }) as any).doGenerate({
+      prompt: [
+        { role: 'system', content: system },
+        { role: 'user', content: [{ type: 'text', text: 'seed question' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'seed answer' }] },
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      ],
+    });
+    await (selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: fixture.modelId,
+      cwd: fixture.workspaceRoot,
+    }) as any).doGenerate({
+      prompt: [
+        { role: 'system', content: system },
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'hello from app-server' }] },
+        { role: 'user', content: [{ type: 'text', text: 'follow up' }] },
+      ],
+    });
+
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'thread/start')).toHaveLength(1);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/start')).toHaveLength(2);
+  });
+
+  it('uses the real current request before wake context so Ivy can call agent.delegate', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4-mini',
+      cwd: '/Users/mac/Documents/Work/Timetotest',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [
+        { role: 'system', content: 'You are Ivy Brooks.\nAvailable tools: agent.delegate' },
+        { role: 'user', content: [{ type: 'text', text: 'old question' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'old answer' }] },
+        { role: 'user', content: [{ type: 'text', text: 'use delegate too' }] },
+        { role: 'user', content: [{ type: 'text', text: '<wake-context>\nCurrent date: 2026-06-27\n</wake-context>' }] },
+      ],
+      tools: [{
+        type: 'function',
+        name: 'agent.delegate',
+        description: 'Delegate',
+        inputSchema: { type: 'object' },
+      }],
+    });
+
+    expect(result.content).toEqual([{
+      type: 'tool-call',
+      toolCallId: 'delegate_call_1',
+      toolName: 'agent.delegate',
+      input: '{"action":"spawn","to":"Ava Foster","message":"Do the frontend lane."}',
+    }]);
+    const turnStart = child.requests.find((req) => (req as { method?: string }).method === 'turn/start') as {
+      params: { input?: { text?: string }[] };
+    };
+    expect(turnStart.params.input?.[0]?.text).toContain('use delegate too');
+    expect(turnStart.params.input?.[0]?.text).toContain('<wake-context>');
+  });
+
   it('responds to Codex dynamic tools with app-server content item casing', async () => {
     const child = createFakeAppServer();
     setCodexAppServerSpawn(vi.fn(() => child) as never);
@@ -357,7 +623,7 @@ describe('selectLanguageModel', () => {
     const response = child.requests.find((req) => (req as { id?: number; method?: string }).id === 99 && !(req as { method?: string }).method) as {
       result?: { contentItems?: { type?: string; text?: string }[] };
     };
-    expect(response.result?.contentItems?.[0]?.type).toBe('input_text');
+    expect(response.result?.contentItems?.[0]?.type).toBe('inputText');
     expect(response.result?.contentItems?.[0]?.text).toBe('');
     expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/interrupt')).toHaveLength(1);
   });
@@ -662,5 +928,126 @@ describe('selectLanguageModel', () => {
       { type: 'text', text: 'first saved message' },
       { type: 'text', text: 'second saved message' },
     ]);
+  });
+
+  it('correctly maps collabToolCall items', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'collab tool call' }] }],
+      tools: [{ type: 'function', name: 'agent.delegate', description: 'delegate', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'collab_1',
+        toolName: 'agent.delegate',
+        providerExecuted: true,
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'collab_1',
+        toolName: 'agent.delegate',
+        result: {
+          status: 'completed',
+          receiverThreadId: 'thr_2',
+          agentStatus: 'idle',
+        },
+      },
+    ]);
+  });
+
+  it('correctly handles legacy execCommandApproval and declines with decline', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'legacy command approval' }] }],
+      tools: [{ type: 'function', name: 'shell', description: 'shell', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'cmd_legacy_1',
+        toolName: 'shell',
+        input: '{"command":"npm","args":["test"],"cwd":"/repo"}',
+      },
+    ]);
+
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 150 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
+  });
+
+  it('correctly handles legacy applyPatchApproval and declines with decline', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'legacy patch approval' }] }],
+      tools: [{ type: 'function', name: 'shell', description: 'shell', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'patch_legacy_1',
+        toolName: 'shell',
+      },
+    ]);
+    expect((result.content[0] as { input?: string }).input).toContain('apply_patch');
+
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 151 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
+  });
+
+  it('caches proposed changes from item/started for file change approval request', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const result = await model.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'started item caching approval' }] }],
+      tools: [{ type: 'function', name: 'write', description: 'write', inputSchema: { type: 'object' } }],
+    });
+
+    expect(result.content).toMatchObject([
+      {
+        type: 'tool-call',
+        toolCallId: 'fc_cached_1',
+        toolName: 'write',
+        input: '{"file_path":"src/a.ts","content":"cached new file"}',
+      },
+    ]);
+
+    const declined = child.requests.find((req) => (req as { id?: number }).id === 152 && !(req as { method?: string }).method) as {
+      result?: { decision?: string };
+    };
+    expect(declined.result?.decision).toBe('decline');
   });
 });

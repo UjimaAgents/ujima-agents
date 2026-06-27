@@ -7,6 +7,7 @@ import {BackgroundShellJobPane} from "./background-shell-job-pane";
 import {FilesystemToolPane} from "./filesystem-tool-pane";
 import {GrepToolPane} from "./grep-tool-pane";
 import {WebSearchToolPane} from "./web-search-tool-pane";
+import {SkillReadPane} from "./skill-read-pane";
 import { UnifiedDiffView } from "./unified-diff-view";
 import { collectFileChanges } from "../../change-summary";
 
@@ -97,12 +98,37 @@ export interface TraceStepData {
       rank: number;
     }[];
   };
+  /** skill.read tool invocation — show the SkillReadPane. */
+  skillRead?: {
+    skillName: string;
+    pluginName?: string;
+    description?: string;
+    /** Raw output string returned by the skill.read tool. */
+    output?: string;
+  };
 }
 
-function getBasename(path?: string): string {
-  if (!path) return "file";
-  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return index >= 0 ? path.slice(index + 1) : path;
+
+function PathBreadcrumb({ path, className = "" }: { path: string; className?: string }) {
+  if (!path) return null;
+  const cleaned = path.replace(/.*\/Work\/[^\/]+\//, "").replace(/^\.\//, "");
+  const index = Math.max(cleaned.lastIndexOf("/"), cleaned.lastIndexOf("\\"));
+  if (index >= 0) {
+    const prefix = cleaned.slice(0, index + 1);
+    const file = cleaned.slice(index + 1);
+    return (
+      <span
+        className={`group/path inline-flex items-center cursor-help min-w-0 ${className}`}
+        title={path}
+      >
+        <span className="opacity-0 max-w-0 inline-block overflow-hidden transition-all duration-300 ease-out group-hover/path:opacity-100 group-hover/path:max-w-[24rem] group-hover/path:mr-1 font-normal select-none whitespace-nowrap text-xs text-foreground/70">
+          {prefix}
+        </span>
+        <span className="font-semibold text-foreground/80 group-hover/path:text-foreground">{file}</span>
+      </span>
+    );
+  }
+  return <span className={`font-semibold text-foreground/80 ${className}`}>{cleaned}</span>;
 }
 
 const Chevron = ({ open }: { open: boolean }) =>
@@ -125,10 +151,6 @@ function DiffBody({ op }: { op: AggregatedOperation }) {
   if (!op.body) return null;
   return (
     <div className={`mt-1.5 overflow-hidden ${TERMINAL_PANEL}`}>
-      <div className="flex border-b border-foreground/[0.06] bg-foreground/[0.015] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-foreground/60 justify-between">
-        <span>{getBasename(op.file)}</span>
-        <DiffStat additions={op.additions} deletions={op.deletions} />
-      </div>
       <div className="max-h-60 overflow-y-auto p-2.5 select-text">
         <UnifiedDiffView text={op.body} />
       </div>
@@ -178,6 +200,13 @@ function AggregatedRunPanel({
   const counts = operations.reduce<Record<AggregatedOperation["type"], number>>(
     (acc, op) => ({ ...acc, [op.type]: (acc[op.type] ?? 0) + 1 }),
     { edit: 0, delete: 0, read: 0, search: 0, shell: 0, tool: 0, memory: 0, goal: 0, question: 0, procedure: 0, schedule: 0, message: 0, delegate: 0 },
+  );
+  const diffTotals = operations.reduce(
+    (acc, op) => ({
+      additions: acc.additions + op.additions,
+      deletions: acc.deletions + op.deletions,
+    }),
+    { additions: 0, deletions: 0 },
   );
   const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
   const summaryParts = [
@@ -233,6 +262,11 @@ function AggregatedRunPanel({
           <span className="min-w-0 flex-1 whitespace-normal break-words leading-5">
             {summaryText || "Executed tool actions"}
           </span>
+          {counts.edit + counts.delete > 0 && !panelOpen ? (
+            <span className="shrink-0">
+              <DiffStat additions={diffTotals.additions} deletions={diffTotals.deletions} />
+            </span>
+          ) : null}
         </span>
         <Chevron open={panelOpen} />
       </button>
@@ -251,8 +285,9 @@ function AggregatedRunPanel({
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}
                   header={
-                    <span className="break-words">
-                      {verb} <span className="font-semibold text-foreground/90">{getBasename(op.file)}</span>
+                    <span className="break-words flex items-center gap-1 min-w-0 max-w-[calc(100%-6rem)]">
+                      <span className="shrink-0">{verb}</span>
+                      <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
                     </span>
                   }
                   trailing={<DiffStat additions={op.additions} deletions={op.deletions} />}
@@ -264,19 +299,24 @@ function AggregatedRunPanel({
 
             if (op.type === "read") {
               return (
-                <div key={op.id} className="py-1 text-xs text-foreground/60 pl-2 truncate">
-                  Read <span className="font-semibold text-foreground/75">{getBasename(op.file)}</span>{" "}
-                  {op.lines ? <span className="inline-block ml-1 text-foreground/40 font-medium">(lines {op.lines})</span> : null}
+                <div key={op.id} className="py-1 text-xs text-foreground/60 pl-2 truncate flex items-center gap-1">
+                  <span className="shrink-0">Read</span>
+                  <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
+                  {op.lines ? <span className="inline-block ml-1 text-foreground/40 font-medium shrink-0">(lines {op.lines})</span> : null}
                 </div>
               );
             }
 
             if (op.type === "search") {
               return (
-                <div key={op.id} className="py-1 text-xs text-foreground/70 pl-2 truncate">
-                  Searched for <span className="font-mono text-[11px] text-foreground/80">&ldquo;{op.query}&rdquo;</span>
+                <div key={op.id} className="py-1 text-xs text-foreground/70 pl-2 truncate flex items-center gap-1">
+                  <span className="shrink-0">Searched for</span>
+                  <span className="font-mono text-[11px] text-foreground/80 truncate max-w-[8rem]">&ldquo;{op.query}&rdquo;</span>
                   {op.file ? (
-                    <> in <span className="font-semibold text-foreground/75">{getBasename(op.file)}</span></>
+                    <>
+                      <span className="shrink-0">in</span>
+                      <PathBreadcrumb path={op.file} className="min-w-0 truncate" />
+                    </>
                   ) : null}
                 </div>
               );
@@ -564,6 +604,14 @@ export const TraceStep = memo(function TraceStep({
       status={step.webSearch.status}
       source={step.webSearch.source}
       results={step.webSearch.results}
+    />
+  ) : step.skillRead ? (
+    <SkillReadPane
+      skillName={step.skillRead.skillName}
+      pluginName={step.skillRead.pluginName}
+      description={step.skillRead.description}
+      output={step.skillRead.output}
+      status={step.status}
     />
   ) : step.detail.trim() ? (
     <Markdown content={step.detail} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-0! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5 [&_h1]:!text-[11px] [&_h2]:!text-[11px] [&_h3]:!text-[11px] [&_h4]:!text-[11px] [&_h5]:!text-[11px] [&_h6]:!text-[11px]" />

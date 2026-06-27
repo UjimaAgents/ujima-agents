@@ -577,6 +577,12 @@ export class SpiritService extends SpiritServiceSupervisor {
               }
             }
           }
+          // Discard the just-published deltas so that if the run is
+          // cancelled mid-stream publishStreamedTrace only contains
+          // text from the current (un-published) step — not a
+          // concatenation of every turn the agent produced.
+          streamedTrace.text = '';
+          streamedTrace.reasoning = '';
           this.emitRunTokens(
             running.organizationId,
             running.id,

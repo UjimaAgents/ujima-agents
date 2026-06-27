@@ -39,6 +39,7 @@ const CODEX_APP_SERVER_ARGS = [
 
 let spawnCodexAppServer: SpawnCodexAppServer = spawn;
 const sharedRpcs = new Map<string, Promise<CodexRpc>>();
+const sharedSessions = new Map<string, CodexThreadSession>();
 
 interface CodexChildProcess {
   stdin: Writable;
@@ -79,6 +80,18 @@ interface CodexTextItem {
   id: string;
   text: string;
 }
+interface CodexStartedItem {
+  id?: string;
+  type?: string;
+  command?: string | null;
+  cwd?: string | null;
+  changes?: unknown;
+}
+interface CodexThreadSession {
+  threadId: string;
+  baseInstructions: string;
+  toolSignature: string;
+}
 
 const CODEX_DEVELOPER_INSTRUCTIONS = [
   'Use Ujima dynamic tools for workspace actions. Do not use Codex native shell, fs, or file-change tools when a Ujima tool is available.',
@@ -94,6 +107,7 @@ export function setCodexAppServerSpawn(spawnImpl: SpawnCodexAppServer | undefine
     void rpc.then((value) => value.close()).catch(() => undefined);
   }
   sharedRpcs.clear();
+  sharedSessions.clear();
   spawnCodexAppServer = spawnImpl ?? spawn;
 }
 
@@ -154,31 +168,53 @@ async function generateWithCodex(
   handlers?: CodexStreamHandlers,
 ): Promise<LanguageModelV3GenerateResult> {
   const rpc = await rpcPromise;
+  const cwd = options.cwd ?? process.cwd();
   const allTools = functionTools(callOptions.tools);
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
   const toolNames = new Map(allTools.map((tool) => [codexToolName(tool.name), tool.name]));
   const prompt = splitPrompt(callOptions.prompt);
-  const thread = await rpc.request<{ thread: { id: string } }>('thread/start', {
-    model: options.modelId,
-    cwd: options.cwd ?? process.cwd(),
-    ephemeral: true,
-    serviceName: 'ujima',
-    approvalPolicy: 'untrusted',
-    approvalsReviewer: 'user',
-    sandbox: 'read-only',
-    baseInstructions: prompt.baseInstructions,
-    developerInstructions: CODEX_DEVELOPER_INSTRUCTIONS,
-    dynamicTools: allTools.map((tool) => ({
-      name: codexToolName(tool.name),
-      description: tool.description ?? '',
-      inputSchema: tool.inputSchema,
-    })),
-  });
-  const threadId = thread.thread.id;
-  if (prompt.historyItems.length > 0) {
-    await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
+  const toolSignature = stringifyJson(allTools.map((tool) => ({
+    name: codexToolName(tool.name),
+    description: tool.description ?? '',
+    inputSchema: tool.inputSchema,
+  })));
+  const sessionKey = codexSessionKey(cwd, options.modelId, prompt.baseInstructions, toolSignature);
+  const session = sharedSessions.get(sessionKey);
+  const shouldReuseThread =
+    !!session &&
+    prompt.historyItems.length > 0 &&
+    session.baseInstructions === prompt.baseInstructions &&
+    session.toolSignature === toolSignature;
+  let threadId = session?.threadId;
+  if (!shouldReuseThread) {
+    const thread = await rpc.request<{ thread: { id: string } }>('thread/start', {
+      model: options.modelId,
+      cwd,
+      ephemeral: true,
+      serviceName: 'ujima',
+      approvalPolicy: 'untrusted',
+      approvalsReviewer: 'user',
+      sandbox: 'read-only',
+      baseInstructions: prompt.baseInstructions,
+      developerInstructions: CODEX_DEVELOPER_INSTRUCTIONS,
+      dynamicTools: allTools.map((tool) => ({
+        name: codexToolName(tool.name),
+        description: tool.description ?? '',
+        inputSchema: tool.inputSchema,
+      })),
+    });
+    threadId = thread.thread.id;
+    sharedSessions.set(sessionKey, {
+      threadId,
+      baseInstructions: prompt.baseInstructions,
+      toolSignature,
+    });
+    if (prompt.historyItems.length > 0) {
+      await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
+    }
   }
   const state = {
+    startedItems: new Map<string, CodexStartedItem>(),
     textItems: [] as CodexTextItem[],
     textItemsById: new Map<string, CodexTextItem>(),
     fallbackTextId: undefined as string | undefined,
@@ -228,12 +264,12 @@ async function generateWithCodex(
         availableToolNames,
       });
       if (!translated) {
-        rpc.respond(msg.id, { contentItems: [{ type: 'input_text', text: 'Invalid tool call' }], success: false });
+        rpc.respond(msg.id, { contentItems: [{ type: 'inputText', text: 'Invalid tool call' }], success: false });
         return;
       }
       queueToolCall(translated, params.turnId);
       rpc.respond(msg.id, {
-        contentItems: [{ type: 'input_text', text: '' }],
+        contentItems: [{ type: 'inputText', text: '' }],
         success: true,
       });
       return;
@@ -247,12 +283,21 @@ async function generateWithCodex(
         cwd?: string | null;
       };
       if (params.threadId !== threadId) return;
-      if (params.itemId && params.command && availableToolNames.has('shell')) {
+      let command = params.command;
+      let cwd = params.cwd;
+      if (params.itemId) {
+        const startedItem = state.startedItems.get(params.itemId);
+        if (startedItem) {
+          command = command ?? startedItem.command;
+          cwd = cwd ?? startedItem.cwd;
+        }
+      }
+      if (params.itemId && command && availableToolNames.has('shell')) {
         queueToolCall({
           type: 'tool-call',
           toolCallId: params.itemId,
           toolName: 'shell',
-          input: JSON.stringify({ command: params.command, cwd: params.cwd ?? undefined }),
+          input: JSON.stringify({ command, cwd: cwd ?? undefined }),
         }, params.turnId);
       }
       rpc.respond(msg.id, { decision: 'decline' });
@@ -278,7 +323,7 @@ async function generateWithCodex(
           }),
         });
       }
-      rpc.respond(msg.id, { decision: 'denied' });
+      rpc.respond(msg.id, { decision: 'decline' });
       return;
     }
     if (msg.method === 'item/fileChange/requestApproval') {
@@ -293,10 +338,15 @@ async function generateWithCodex(
       };
       if (params.threadId !== threadId) return;
       const callId = params.itemId ?? params.callId ?? params.item?.id;
+      let changes = params.changes ?? params.fileChanges ?? params.item?.changes;
+      if (!changes && callId) {
+        const startedItem = state.startedItems.get(callId);
+        changes = startedItem?.changes;
+      }
       const call = callId
         ? fileChangeApprovalToolCall(
           callId,
-          params.changes ?? params.fileChanges ?? params.item?.changes,
+          changes,
           availableToolNames,
         )
         : null;
@@ -320,12 +370,25 @@ async function generateWithCodex(
           input: JSON.stringify({ command: applyPatchCommandFromLegacyChanges(params.fileChanges) }),
         });
       }
-      rpc.respond(msg.id, { decision: 'denied' });
+      rpc.respond(msg.id, { decision: 'decline' });
+      return;
     }
   });
   const offNotification = rpc.onNotification((msg) => {
     const params = msg.params as { threadId?: string } | undefined;
     if (params?.threadId && params.threadId !== threadId) return;
+    if (msg.method === 'item/started') {
+      const item = (msg.params as { item?: { id?: string; type?: string } } | undefined)?.item;
+      if (item?.id) {
+        state.startedItems.set(item.id, item);
+      }
+    }
+    if (msg.method === 'turn/started') {
+      const turn = (msg.params as { turn?: { id?: string } } | undefined)?.turn;
+      if (turn?.id) {
+        state.responseId = turn.id;
+      }
+    }
     if (msg.method === 'item/agentMessage/delta') {
       const deltaParams = msg.params as { itemId?: unknown; delta?: unknown } | undefined;
       const delta = typeof deltaParams?.delta === 'string' ? deltaParams.delta : '';
@@ -377,7 +440,7 @@ async function generateWithCodex(
     const started = await rpc.request<{ turn: { id: string } }>('turn/start', {
       threadId,
       input: prompt.input,
-      cwd: options.cwd ?? process.cwd(),
+      cwd,
       effort: codexReasoningEffort(options.reasoningEffort),
     });
     state.responseId = started.turn.id;
@@ -433,10 +496,35 @@ function getCodexRpc(options: CodexAppServerModelOptions): Promise<CodexRpc> {
   if (existing) return existing;
   const created = createCodexRpc(options).catch((error) => {
     sharedRpcs.delete(key);
+    deleteCodexSessionsForCwd(key);
     throw error;
   });
+  void created.then((rpc) => {
+    rpc.onClose(() => {
+      if (sharedRpcs.get(key) === created) {
+        sharedRpcs.delete(key);
+        deleteCodexSessionsForCwd(key);
+      }
+    });
+  }).catch(() => undefined);
   sharedRpcs.set(key, created);
   return created;
+}
+
+function codexSessionKey(
+  cwd: string,
+  modelId: string,
+  baseInstructions: string,
+  toolSignature: string,
+): string {
+  return `${JSON.stringify(cwd)}\n${modelId}\n${baseInstructions}\n${toolSignature}`;
+}
+
+function deleteCodexSessionsForCwd(cwd: string): void {
+  const prefix = `${JSON.stringify(cwd)}\n`;
+  for (const key of sharedSessions.keys()) {
+    if (key.startsWith(prefix)) sharedSessions.delete(key);
+  }
 }
 
 function functionTools(tools: LanguageModelV3CallOptions['tools']): LanguageModelV3FunctionTool[] {
@@ -615,16 +703,18 @@ function translateCodexThreadItem(
     }, record.status === 'failed');
   }
 
-  if (type === 'collabAgentToolCall') {
+  if (type === 'collabToolCall' || type === 'collabAgentToolCall') {
+    const receiverId = stringArg(record, 'receiverThreadId') ?? (Array.isArray(record.receiverThreadIds) ? record.receiverThreadIds[0] : undefined);
+    const agentStatusValue = record.agentStatus ?? record.agentsStates;
     return providerToolPair(id, 'agent.delegate', {
       tool: stringArg(record, 'tool') ?? '',
       prompt: stringArg(record, 'prompt') ?? '',
       model: stringArg(record, 'model'),
     }, {
       status: stringArg(record, 'status') ?? '',
-      receiverThreadIds: Array.isArray(record.receiverThreadIds) ? record.receiverThreadIds : [],
-      agentsStates: record.agentsStates ?? {},
-    }, record.status === 'failed');
+      receiverThreadId: receiverId ?? null,
+      agentStatus: agentStatusValue ?? null,
+    }, record.status === 'failed' || record.status === 'declined');
   }
 
   return null;
@@ -658,6 +748,9 @@ function providerToolPair(
 }
 
 function fileChangeToolName(change: Record<string, unknown> | undefined): string {
+  if (typeof change?.kind === 'string') {
+    return change.kind === 'add' ? 'write' : 'edit';
+  }
   const kind = objectArgs(change?.kind);
   return kind.type === 'add' ? 'write' : 'edit';
 }
@@ -744,6 +837,9 @@ function normalizeFileChanges(rawChanges: unknown): Record<string, unknown>[] {
 }
 
 function changeKind(change: Record<string, unknown>): string {
+  if (typeof change.kind === 'string') {
+    return change.kind;
+  }
   const kind = objectArgs(change.kind);
   return stringArg(kind, 'type') ?? stringArg(change, 'type') ?? 'update';
 }
@@ -764,7 +860,9 @@ function changeNewString(change: Record<string, unknown>): string | undefined {
     stringArg(change, 'newString') ??
     stringArg(change, 'newText') ??
     stringArg(change, 'after') ??
-    stringArg(change, 'content');
+    stringArg(change, 'content') ??
+    stringArg(change, 'diff') ??
+    stringArg(change, 'patch');
 }
 
 function applyPatchCommandFromFileChanges(changes: Record<string, unknown>[]): string {
@@ -922,13 +1020,15 @@ function splitPrompt(prompt: LanguageModelV3Prompt): {
 } {
   const system = prompt.filter((message) => message.role === 'system');
   const messages = prompt.filter((message) => message.role !== 'system');
-  const current = messages.at(-1);
-  const history = current ? messages.slice(0, -1) : [];
+  const currentIndex = findCodexCurrentMessageIndex(messages);
+  const current = currentIndex >= 0 ? messages[currentIndex] : messages.at(-1);
+  const history = currentIndex >= 0 ? messages.slice(0, currentIndex) : current ? messages.slice(0, -1) : [];
+  const tailContext = currentIndex >= 0 ? messages.slice(currentIndex + 1) : [];
   const historyItems = promptToResponseItems(history);
-  let input = current ? messageToInput(current) : [];
+  let input = current ? messageToInput(current, tailContext) : tailContext.length ? textInput(messagesText(tailContext)) : [];
   if (current?.role === 'tool') {
     historyItems.push(...promptToResponseItems([current]));
-    input = textInput('Continue.');
+    input = textInput(compactText(['Continue.', messagesText(tailContext)].join('\n\n')));
   }
   return {
     baseInstructions: system.map((message) => message.content).join('\n\n') ||
@@ -936,6 +1036,22 @@ function splitPrompt(prompt: LanguageModelV3Prompt): {
     historyItems,
     input: input.length > 0 ? input : textInput('Continue.'),
   };
+}
+
+function findCodexCurrentMessageIndex(messages: LanguageModelV3Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (!isCodexTailContextMessage(messages[index])) return index;
+  }
+  return -1;
+}
+
+function isCodexTailContextMessage(message: LanguageModelV3Message | undefined): boolean {
+  if (!message || message.role !== 'user') return false;
+  const text = contentText(message).trim();
+  return text.startsWith('<wake-context>') ||
+    text.startsWith('<thread-state>') ||
+    text.startsWith('<workspace-state>') ||
+    text.startsWith('<delegate_turn>');
 }
 
 function promptToResponseItems(prompt: LanguageModelV3Prompt): CodexResponseItem[] {
@@ -972,13 +1088,21 @@ function textResponseItem(role: string, text: string): CodexResponseItem[] {
   return text ? [{ type: 'message', role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }] }] : [];
 }
 
-function messageToInput(message: LanguageModelV3Message): CodexUserInput[] {
-  const text = contentText(message);
+function messageToInput(message: LanguageModelV3Message, tailContext: LanguageModelV3Message[] = []): CodexUserInput[] {
+  const text = compactText([contentText(message), messagesText(tailContext)].join('\n\n'));
   return text ? textInput(text) : [];
 }
 
 function textInput(text: string): CodexUserInput[] {
   return [{ type: 'text', text, text_elements: [] }];
+}
+
+function messagesText(messages: LanguageModelV3Message[]): string {
+  return compactText(messages.map((message) => contentText(message)).join('\n\n'));
+}
+
+function compactText(text: string): string {
+  return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function contentText(message: LanguageModelV3Message, allowed = ['text']): string {
@@ -1063,6 +1187,7 @@ function connectCodexAppServer(child: CodexChildProcess) {
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let closed = false;
   const rl = createInterface({ input: child.stdout });
+  const closeListeners = new Set<() => void>();
 
   const notify = (message: JsonRpcMessage) => {
     for (const listener of listeners) listener(message);
@@ -1078,10 +1203,10 @@ function connectCodexAppServer(child: CodexChildProcess) {
     }
     if (message.method && message.id !== undefined) {
       for (const listener of requestListeners) void listener(message);
-    } else if (typeof message.id === 'number') {
-      const waiter = pending.get(message.id);
+    } else if (message.id !== undefined) {
+      const waiter = pending.get(Number(message.id));
       if (waiter) {
-        pending.delete(message.id);
+        pending.delete(Number(message.id));
         if ('error' in message && message.error) {
           waiter.reject(new Error(message.error.message ?? 'Codex app-server error'));
         } else {
@@ -1097,6 +1222,7 @@ function connectCodexAppServer(child: CodexChildProcess) {
     closed = true;
     for (const waiter of pending.values()) waiter.reject(new Error('Codex app-server exited'));
     pending.clear();
+    for (const listener of closeListeners) listener();
   });
 
   child.on('error', (error) => {
@@ -1124,6 +1250,10 @@ function connectCodexAppServer(child: CodexChildProcess) {
     onRequest(listener: (message: JsonRpcMessage) => void | Promise<void>): () => void {
       requestListeners.add(listener);
       return () => requestListeners.delete(listener);
+    },
+    onClose(listener: () => void): () => void {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
     },
     respond(id: JsonRpcMessage['id'], result: unknown): void {
       if (!closed && id !== undefined) {

@@ -1,15 +1,13 @@
 import { DEFAULT_TOOL_CATALOG } from './constants.js';
 import { DEFAULT_ROLE_TOOLS } from './roles/shared.js';
 
-// Bumped from 3 → 4 to trigger the role-class default-fill migration
-// below. Empty `role.tools: []` arrays (left over from the freshly-
-// onboarded UI flow) get a class-appropriate write surface so an
-// agent that commits to "draft the BRD" can actually write the file.
-// `shell`, `download`, and `filesystem` (raw) stay strict opt-in
-// even for engineer-class — those are the real blast-radius surfaces
-// and a malformed model call shouldn't be able to run arbitrary
-// shell commands without the operator deliberately enabling it.
-export const TEAM_CONFIG_VERSION = 4;
+// Bumped from 3 → 4 to trigger the role-class default-fill migration.
+// Bumped from 4 → 5 to seed skill.read into all existing roles' tool
+// lists so the UI settings show it checked by default for every agent.
+// skill.read is already in ALWAYS_AVAILABLE_AGENT_TOOLS on the
+// orchestrator side, so it was always callable — this migration just
+// makes it visible as "enabled" in the web UI.
+export const TEAM_CONFIG_VERSION = 5;
 
 // Role-class default tool sets. Used by the v4 migration to fill
 // roles whose `tools` array is empty. The keys are matched
@@ -179,6 +177,31 @@ function migrateToV4(config: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+/**
+ * V5 — seed `skill.read` into every role's `tools` array if it isn't
+ * already present.  Since `skill.read` is already gated as a baseline
+ * tool in `ALWAYS_AVAILABLE_AGENT_TOOLS` on the orchestrator side,
+ * agents could already call it; this migration makes the web UI show
+ * it as checked/enabled for all existing roles.
+ */
+function migrateToV5(config: Record<string, unknown>): Record<string, unknown> {
+  const roles = Array.isArray(config.roles)
+    ? config.roles.map((role) => {
+        if (!isRecord(role)) return role;
+        const tools = Array.isArray(role.tools) ? [...role.tools] : [];
+        if (!tools.includes('skill.read')) {
+          tools.push('skill.read');
+        }
+        return { ...role, tools };
+      })
+    : config.roles;
+  return {
+    ...config,
+    configVersion: TEAM_CONFIG_VERSION,
+    roles,
+  };
+}
+
 function needsToolCatalogUpgrade(config: Record<string, unknown>): boolean {
   if (!isRecord(config.tools)) return true;
   const tools = config.tools as Record<string, unknown>;
@@ -195,19 +218,20 @@ export interface TeamConfigMigrationResult {
 export function migrateAgentTeamConfig(input: unknown): TeamConfigMigrationResult {
   const config = isRecord(input) ? { ...input } : {};
   const fromVersion = typeof config.configVersion === 'number' ? config.configVersion : 1;
-  // Chain v3 then v4 — v3 ensures the tool catalog and legacy-tool
+  // Chain v3 → v4 → v5 — v3 ensures the tool catalog and legacy-tool
   // mapping is in place; v4 layers the role-class default fill on
-  // top of the result.
+  // top of the result; v5 seeds skill.read into every role's tools.
   const afterV3 = migrateToV3(config);
   const afterV4 = migrateToV4(afterV3);
+  const afterV5 = migrateToV5(afterV4);
   const migrated =
     fromVersion < TEAM_CONFIG_VERSION ||
     needsToolCatalogUpgrade(config) ||
-    JSON.stringify(config.roles ?? []) !== JSON.stringify(afterV4.roles ?? []) ||
-    JSON.stringify(config.tools ?? {}) !== JSON.stringify(afterV4.tools ?? {});
+    JSON.stringify(config.roles ?? []) !== JSON.stringify(afterV5.roles ?? []) ||
+    JSON.stringify(config.tools ?? {}) !== JSON.stringify(afterV5.tools ?? {});
 
   return {
-    config: afterV4,
+    config: afterV5,
     migrated,
     fromVersion,
     toVersion: TEAM_CONFIG_VERSION,

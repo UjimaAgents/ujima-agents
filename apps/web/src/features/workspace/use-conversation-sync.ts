@@ -888,6 +888,7 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
     pending: false,
     inputTokens: message.inputTokens,
     outputTokens: message.outputTokens,
+    ...(message.metadata?.taskNudge ? { taskNudge: message.metadata.taskNudge } : {}),
     ...(message.metadata?.traceOnly ? { traceOnly: true } : {}),
     ...(message.metadata?.runId ? { streamRunId: message.metadata.runId } : {}),
     ...(messageModeTag(message.metadata) ? { tag: messageModeTag(message.metadata) } : {}),

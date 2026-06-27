@@ -377,9 +377,10 @@ export function ChannelView({
 
   const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
   const globalApprovals = useWorkspaceStore((state) => state.approvals);
+  const globalActivity = useWorkspaceStore((state) => state.activity);
   const activeAgentChats = useMemo(
-    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns, approvals: globalApprovals }, currentThreadId),
-    [bootstrap.channels, currentThreadId, globalActiveRuns, globalApprovals, members],
+    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns, approvals: globalApprovals, activity: globalActivity }, currentThreadId),
+    [bootstrap.channels, currentThreadId, globalActiveRuns, globalApprovals, globalActivity, members],
   );
   const activeTerminals = useWorkspaceStore(selectActiveTerminals);
   const composerReasoningEffort =
@@ -435,7 +436,6 @@ export function ChannelView({
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
   const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
   const conversationColorIndex = Math.max(memberIndexById.get(conversation.id) ?? 0, 0);
-  // eslint-disable-next-line react-hooks/incompatible-library
   const messageVirtualizer = useVirtualizer({
     count: feed.messages.length,
     getScrollElement: () => listRef.current,
@@ -670,8 +670,7 @@ export function ChannelView({
       }
       setResolvingApprovals((state) => ({ ...state, [approvalId]: true }));
       setApprovalErrors((state) => {
-        const next = { ...state };
-        delete next[approvalId];
+        const { [approvalId]: _removed, ...next } = state;
         return next;
       });
       try {
@@ -700,8 +699,7 @@ export function ChannelView({
         }
       } finally {
         setResolvingApprovals((state) => {
-          const next = { ...state };
-          delete next[approvalId];
+          const { [approvalId]: _removed, ...next } = state;
           return next;
         });
       }
@@ -753,8 +751,7 @@ export function ChannelView({
     async (questionId: string, selectedOption: string) => {
       setResolvingQuestions((state) => ({ ...state, [questionId]: true }));
       setQuestionErrors((state) => {
-        const next = { ...state };
-        delete next[questionId];
+        const { [questionId]: _removed, ...next } = state;
         return next;
       });
       try {
@@ -779,8 +776,7 @@ export function ChannelView({
         });
       } finally {
         setResolvingQuestions((state) => {
-          const next = { ...state };
-          delete next[questionId];
+          const { [questionId]: _removed, ...next } = state;
           return next;
         });
       }
@@ -944,54 +940,61 @@ export function ChannelView({
       className={`grid flex-1 min-h-0 overflow-hidden bg-white dark:bg-[#09090b] ${WORKSPACE_MAIN_GRID_TRANSITION}`}
       style={{ gridTemplateColumns: `minmax(0, 1fr) minmax(0, ${detailsCol})` }}
     >
-      <div className="flex h-full min-h-0 min-w-0 flex-col">
-        <ChatHeader
-          title={conversation.name}
-          type={conversation.type === "agent" ? "dm" : "channel"}
-          avatarName={isAgent ? conversation.name : undefined}
-          avatarColorIndex={conversationColorIndex}
-          status={selectedStatus.variant}
-          statusLabel={selectedStatus.label}
-          actions={
-            isAgent && agentMember && onMemberUpdated ? (
-              <CollapsibleHeaderActions
-                kind="agent"
-                chatFontSize={chatFontSize}
-                onChatFontSizeChange={setChatFontSize}
-                orgId={bootstrap.organization?.id ?? ""}
-                agentMember={agentMember}
-                providers={bootstrap.providers}
-                orgShellApprovalMode={orgShellApprovalMode}
-                goalMode={goalMode}
-                onMemberUpdated={onMemberUpdated}
-                onOpenAgentEditor={onOpenAgentEditor}
-              />
-            ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
-              <CollapsibleHeaderActions
-                kind="channel"
-                chatFontSize={chatFontSize}
-                onChatFontSizeChange={setChatFontSize}
-                channelValue={orgShellApprovalMode}
-                onChannelChange={onOrgShellApprovalModeChange}
-              />
-            ) : (
-              <CollapsibleHeaderActions
-                kind="channel"
-                chatFontSize={chatFontSize}
-                onChatFontSizeChange={setChatFontSize}
-                channelValue={"never" as ShellApprovalMode}
-                onChannelChange={async () => {}}
-              />
-            )
-          }
-          showDetails={showDetails}
-          onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
-        />
-        <ChatTabs
-          tabs={tabsWithCounts}
-          activeTab={activeTab}
-          onTabChange={handleTabChange}
-        />
+      <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
+        {/* Absolute header and tabs overlay */}
+        <div className="absolute top-0 left-0 right-0 z-30 flex flex-col pointer-events-none">
+          <div className="pointer-events-auto">
+            <ChatHeader
+              title={conversation.name}
+              type={conversation.type === "agent" ? "dm" : "channel"}
+              avatarName={isAgent ? conversation.name : undefined}
+              avatarColorIndex={conversationColorIndex}
+              status={selectedStatus.variant}
+              statusLabel={selectedStatus.label}
+              actions={
+                isAgent && agentMember && onMemberUpdated ? (
+                  <CollapsibleHeaderActions
+                    kind="agent"
+                    chatFontSize={chatFontSize}
+                    onChatFontSizeChange={setChatFontSize}
+                    orgId={bootstrap.organization?.id ?? ""}
+                    agentMember={agentMember}
+                    providers={bootstrap.providers}
+                    orgShellApprovalMode={orgShellApprovalMode}
+                    goalMode={goalMode}
+                    onMemberUpdated={onMemberUpdated}
+                    onOpenAgentEditor={onOpenAgentEditor}
+                  />
+                ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
+                  <CollapsibleHeaderActions
+                    kind="channel"
+                    chatFontSize={chatFontSize}
+                    onChatFontSizeChange={setChatFontSize}
+                    channelValue={orgShellApprovalMode}
+                    onChannelChange={onOrgShellApprovalModeChange}
+                  />
+                ) : (
+                  <CollapsibleHeaderActions
+                    kind="channel"
+                    chatFontSize={chatFontSize}
+                    onChatFontSizeChange={setChatFontSize}
+                    channelValue={"never" as ShellApprovalMode}
+                    onChannelChange={async () => undefined}
+                  />
+                )
+              }
+              showDetails={showDetails}
+              onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
+            />
+          </div>
+          <div className="pointer-events-auto">
+            <ChatTabs
+              tabs={tabsWithCounts}
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+            />
+          </div>
+        </div>
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col">
             {feed.archiving ? (
@@ -1002,7 +1005,7 @@ export function ChannelView({
                 </div>
               </div>
             ) : null}
-            <ChatMessageList ref={listRef} onScroll={handleScroll}>
+            <ChatMessageList ref={listRef} onScroll={handleScroll} className="pt-24">
             {feed.loading && feed.messages.length === 0 ? (
               <ConversationSkeleton />
             ) : feed.messages.length > 0 ? (
@@ -1097,12 +1100,12 @@ export function ChannelView({
             <TabEmpty context="tasks" label="No organization context available." />
           )
         ) : activeTab === "culture" ? (
-          conversation.type === "channel" && organizationId ? (
+          (conversation.type === "channel" || conversation.type === "agent") && organizationId ? (
             <TabPanel>
-              <CultureTab organizationId={organizationId} channelId={conversation.id} />
+              <CultureTab organizationId={organizationId} channelId={conversation.id} members={traceMembers} />
             </TabPanel>
           ) : (
-            <TabEmpty context="generic" label="Channel culture is only available in channels." />
+            <TabEmpty context="generic" label="Culture is only available in channels and DMs." />
           )
         ) : activeTab === "files" ? (
           feed.loading ? (
@@ -1168,14 +1171,21 @@ export function ChannelView({
                     name: chat.name,
                   });
                 }}
-                className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-zinc-950/80 px-3.5 py-1.5 text-xs text-zinc-100 shadow-lg backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20"
+                className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
               >
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                <span className="font-medium">
-                  {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">
+                    {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
+                  </span>
+                  {chat.activityText ? (
+                    <span className="live-activity-shimmer block truncate text-[10px] leading-tight">
+                      {chat.activityText}
+                    </span>
+                  ) : null}
                 </span>
                 {chat.pendingApprovals > 0 ? (
                   <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950">
@@ -1190,9 +1200,9 @@ export function ChannelView({
                 <button
                   type="button"
                   onClick={() => setIsTerminalDrawerOpen(true)}
-                  className="flex items-center gap-2 rounded-full border border-violet-500/20 bg-zinc-950/85 px-3.5 py-1.5 text-xs font-semibold text-zinc-100 shadow-lg shadow-black/20 backdrop-blur-md transition hover:bg-zinc-900/95 dark:border-violet-500/20 dark:bg-zinc-950/90 dark:text-zinc-100 dark:hover:bg-zinc-900/95"
+                  className="flex items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
                 >
-                  <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-400" />
+                  <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500 dark:text-zinc-400" />
                   <span>
                     {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
                   </span>
@@ -1200,7 +1210,7 @@ export function ChannelView({
                 <button
                   type="button"
                   onClick={() => setIsTerminalDrawerOpen(true)}
-                  className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-violet-500/20 bg-zinc-950/85 text-zinc-400 shadow-lg shadow-black/20 transition hover:bg-zinc-900/95 dark:border-violet-500/20 dark:bg-zinc-950/90 dark:text-zinc-400 dark:hover:bg-zinc-900/95"
+                  className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-zinc-200/50 bg-white/30 text-zinc-500 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-400"
                   aria-label="More terminal details"
                 >
                   <span className="text-xs font-semibold">...</span>
@@ -1215,7 +1225,7 @@ export function ChannelView({
               <button
                 type="button"
                 onClick={() => scrollToLatest("smooth")}
-                className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-700 shadow-sm transition hover:bg-violet-100 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15"
+                className="inline-flex items-center rounded-full border border-zinc-200/50 bg-white/30 px-3 py-1 text-[11px] font-semibold text-violet-600 shadow-sm backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-violet-400"
               >
                 ({newMessagesLabel})
               </button>
@@ -1334,7 +1344,7 @@ export function ChannelView({
 
 function TabPanel({ children }: { children: ReactNode }) {
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pt-24">
       {children}
     </div>
   );
@@ -1342,7 +1352,7 @@ function TabPanel({ children }: { children: ReactNode }) {
 
 function TabEmpty({ context, label }: { context?: "messages" | "members" | "approvals" | "tasks" | "files" | "activity" | "search" | "generic"; label?: string }) {
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pt-24">
       <EmptyState context={context ?? "generic"} title={label} />
     </div>
   );

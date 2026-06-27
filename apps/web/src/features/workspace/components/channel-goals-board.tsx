@@ -9,7 +9,6 @@ import {
   MessageSquare,
   Pencil,
   PlayCircle,
-  Users,
 } from "lucide-react";
 import type {
   Goal,
@@ -22,6 +21,9 @@ import {Avatar} from "./chat/primitives";
 import {QuestionCard} from "./chat/question-card";
 import type {BootstrapResponse} from "@ujima/api-schema";
 import { Select } from "@/components/ui/select";
+import { isLiveRun } from "../feed-selectors";
+import { liveActivityTextForRun } from "../live-activity-text";
+import { useWorkspaceStore } from "../workspace-store";
 
 interface ChannelGoalsBoardProps {
   channelId?: string;
@@ -151,44 +153,70 @@ function GoalSwitcherDropdown({
   onImplement,
   actionLoading,
 }: GoalSwitcherDropdownProps) {
-  return (
-    <div className="flex items-center gap-3">
-      <Select
-        value={selectedGoalId ?? ""}
-        onChange={(e) => onSelect(e.target.value || null)}
-        placeholder="All Goals"
-        className="flex-1"
-        size="sm"
-        options={[
-          { value: "", label: "All Goals" },
-          ...goals.map((goal) => {
-            const counts = goalTaskCounts[goal.id];
-            const label = counts
-              ? `${goal.title} (${counts.completed}/${counts.total})`
-              : goal.title;
-            return { value: goal.id, label };
-          }),
-        ]}
-      />
+  const selectedGoal = goals.find((g) => g.id === selectedGoalId) ?? null;
+  const counts = selectedGoal ? goalTaskCounts[selectedGoal.id] : null;
 
-      {selectedGoalId && (() => {
-        const goal = goals.find((g) => g.id === selectedGoalId);
-        if (!goal || goal.status !== "planning") return null;
-        return (
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-zinc-100 dark:border-zinc-900/60">
+      <div className="flex flex-wrap items-center gap-3 min-w-[200px] flex-1">
+        <Select
+          value={selectedGoalId ?? ""}
+          onChange={(e) => onSelect(e.target.value || null)}
+          placeholder="All Goals"
+          className="max-w-[280px] w-full sm:w-auto"
+          size="sm"
+          options={[
+            { value: "", label: "All Goals" },
+            ...goals.map((goal) => {
+              const counts = goalTaskCounts[goal.id];
+              const label = counts
+                ? `${goal.title} (${counts.completed}/${counts.total})`
+                : goal.title;
+              return { value: goal.id, label };
+            }),
+          ]}
+        />
+
+        {selectedGoal && (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-800/50">
+            <span
+              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                selectedGoal.status === "running"
+                  ? "bg-violet-500 animate-pulse"
+                  : selectedGoal.status === "completed"
+                    ? "bg-emerald-500"
+                    : "bg-zinc-400 dark:bg-zinc-600"
+              }`}
+            />
+            <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wider">
+              {selectedGoal.status === "planning" ? "Planning" : selectedGoal.status}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 shrink-0">
+        {counts ? (
+          <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900/60 px-2 py-1 rounded-full border border-zinc-200/50 dark:border-zinc-800/50">
+            {counts.completed} / {counts.total} Tasks Completed
+          </span>
+        ) : null}
+
+        {selectedGoal && selectedGoal.status === "planning" && (
           <button
-            onClick={() => onImplement(goal)}
-            disabled={actionLoading === `implement:${goal.id}`}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-500 disabled:opacity-50"
+            onClick={() => onImplement(selectedGoal)}
+            disabled={actionLoading === `implement:${selectedGoal.id}`}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-500 disabled:opacity-50"
           >
-            {actionLoading === `implement:${goal.id}` ? (
+            {actionLoading === `implement:${selectedGoal.id}` ? (
               <Clock className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <PlayCircle className="h-3.5 w-3.5" />
             )}
             Implement
           </button>
-        );
-      })()}
+        )}
+      </div>
     </div>
   );
 }
@@ -200,6 +228,7 @@ interface TaskCardProps {
   depTask: GoalTask | null | undefined;
   isBlocked: boolean;
   assigneeName: string;
+  activityText?: string;
   actionLoading: boolean;
   members: BootstrapResponse["members"];
   tasks: GoalTask[];
@@ -213,6 +242,7 @@ function TaskCard({
   depTask,
   isBlocked,
   assigneeName,
+  activityText,
   actionLoading,
   members,
   refresh,
@@ -254,7 +284,13 @@ function TaskCard({
       draggable
       onDragStart={() => onDragStart(task.id)}
       onDragEnd={onDragEnd}
-      className={`group relative flex flex-col p-3 rounded-xl border bg-white dark:bg-zinc-900 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)] hover:shadow-[0_4px_12px_-2px rgba(0,0,0,0.08)] hover:-translate-y-[1px] transition-all duration-200 cursor-grab active:cursor-grabbing ${actionLoading ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 ${isBlocked ? "border-l-[3px] border-l-red-400 dark:border-l-red-500" : task.dependsOnTaskId && task.status !== "completed" && task.status !== "in_progress" ? "border-l-[3px] border-l-amber-400 dark:border-l-amber-500" : ""}`}
+      className={`group relative flex flex-col p-3 rounded-xl border bg-white dark:bg-zinc-900 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)] hover:shadow-[0_4px_12px_-2px_rgba(0,0,0,0.08)] hover:-translate-y-[1px] transition-all duration-200 cursor-grab active:cursor-grabbing ${actionLoading ? "opacity-50" : ""} border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 ${
+        isBlocked
+          ? "border-l-2 border-l-red-500 bg-gradient-to-r from-red-500/[0.02] to-transparent dark:from-red-500/[0.04]"
+          : task.dependsOnTaskId && task.status !== "completed" && task.status !== "in_progress"
+            ? "border-l-2 border-l-amber-500 bg-gradient-to-r from-amber-500/[0.02] to-transparent dark:from-amber-500/[0.04]"
+            : ""
+      }`}
     >
       {/* Edit button */}
       <button
@@ -308,6 +344,13 @@ function TaskCard({
             {task.title}
           </h4>
 
+          {activityText ? (
+            <div className="mb-2 flex min-w-0 items-center gap-1.5 text-[10px] font-medium">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="live-activity-shimmer truncate">{activityText}</span>
+            </div>
+          ) : null}
+
           {/* Blocked indicator */}
           {isBlocked && depTask && (
             <div
@@ -330,18 +373,21 @@ function TaskCard({
           )}
 
           <div className="flex items-center justify-between mt-auto pt-3 border-t border-zinc-100 dark:border-zinc-900/60">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
               <Avatar name={assigneeName} size="xs" />
+              <span className="truncate text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                {assigneeName}
+              </span>
               {task.handoverSummary && (
                 <div
-                  className="text-zinc-400 dark:text-zinc-500 cursor-help"
+                  className="text-zinc-400 dark:text-zinc-500 cursor-help shrink-0"
                   title={task.handoverSummary}
                 >
                   <MessageSquare className="h-3.5 w-3.5" />
                 </div>
               )}
             </div>
-            <GripVertical className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition-colors" />
+            <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition-colors" />
           </div>
         </>
       )}
@@ -374,6 +420,19 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
     () => new Map(members.map((m) => [m.id, m])),
     [members]
   );
+  const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
+  const globalActivity = useWorkspaceStore((state) => state.activity);
+  const activityTextByAgent = useMemo(() => {
+    const latestByAgent = new Map<string, (typeof globalActiveRuns)[number]>();
+    for (const run of globalActiveRuns) {
+      if (!isLiveRun(run)) continue;
+      const previous = latestByAgent.get(run.agentId);
+      if (!previous || Date.parse(run.startedAt) > Date.parse(previous.startedAt)) {
+        latestByAgent.set(run.agentId, run);
+      }
+    }
+    return new Map([...latestByAgent].map(([agentId, run]) => [agentId, liveActivityTextForRun(run, globalActivity)]));
+  }, [globalActiveRuns, globalActivity]);
   const storageKey = `goalSwitcher:${channelId ?? "__workspace__"}`;
 
   const {goals, tasks, questions} = board;
@@ -687,16 +746,29 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
   if (selectedGoal && filteredTasks.length === 0 && pendingQuestions.length === 0) {
     const isPlanning = selectedGoal.status === "planning";
     return (
-      <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 bg-white px-3 py-3 dark:bg-[#09090b]">
-        <div className="pb-3">
-          <GoalSwitcherDropdown
-            goals={sortedGoals}
-            selectedGoalId={selectedGoalId}
-            goalTaskCounts={goalTaskCounts}
-            onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
-            onImplement={handleImplement}
-            actionLoading={actionLoading}
-          />
+      <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 bg-white px-3 py-3 pt-24 dark:bg-[#09090b] gap-4">
+        <div className="flex flex-col gap-1 border-b border-zinc-100 pb-4 dark:border-zinc-800/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <KanbanSquare className="h-5 w-5 text-violet-500" />
+              <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-50">
+                Channel Goals & Tasks
+              </h2>
+            </div>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Orchestrate agent goals, review pending questions, and track tasks to completion.
+            </p>
+          </div>
+          <div className="shrink-0 mt-3 sm:mt-0">
+            <GoalSwitcherDropdown
+              goals={sortedGoals}
+              selectedGoalId={selectedGoalId}
+              goalTaskCounts={goalTaskCounts}
+              onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
+              onImplement={handleImplement}
+              actionLoading={actionLoading}
+            />
+          </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center text-center">
           <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
@@ -727,110 +799,106 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
     );
   }
 
-  const selectedCount = activeGoalId ? goalTaskCounts[activeGoalId] : null;
-
   return (
-    <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 space-y-4 overflow-y-auto bg-white px-3 py-3 dark:bg-[#09090b]">
-      {/* Goal switcher dropdown */}
-      <GoalSwitcherDropdown
-        goals={sortedGoals}
-        selectedGoalId={selectedGoalId}
-        goalTaskCounts={goalTaskCounts}
-        onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
-        onImplement={handleImplement}
-        actionLoading={actionLoading}
-      />
-
-      {/* Selected goal status indicator */}
-      {selectedGoal && (
-        <div className="flex items-center gap-2 -mt-2 pb-1">
-          <span
-            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-              selectedGoal.status === "running"
-                ? "bg-violet-500 animate-pulse"
-                : selectedGoal.status === "completed"
-                  ? "bg-emerald-500"
-                  : "bg-zinc-400 dark:bg-zinc-600"
-            }`}
-          />
-          <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-            {selectedGoal.status === "planning" ? "Planning" : selectedGoal.status}
-          </span>
-          {selectedCount && (
-            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-              {selectedCount.completed}/{selectedCount.total} tasks
-            </span>
-          )}
+    <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 space-y-4 bg-white px-3 py-3 pt-24 dark:bg-[#09090b]">
+      <div className="flex flex-col gap-1 border-b border-zinc-100 pb-4 dark:border-zinc-800/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <KanbanSquare className="h-5 w-5 text-violet-500" />
+            <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-50">
+              Channel Goals & Tasks
+            </h2>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Orchestrate agent goals, review pending questions, and track tasks to completion.
+          </p>
         </div>
-      )}
+        <div className="shrink-0 mt-3 sm:mt-0">
+          <GoalSwitcherDropdown
+            goals={sortedGoals}
+            selectedGoalId={selectedGoalId}
+            goalTaskCounts={goalTaskCounts}
+            onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
+            onImplement={handleImplement}
+            actionLoading={actionLoading}
+          />
+        </div>
+      </div>
 
-      {pendingQuestions.map((q) => (
-        <QuestionCard
-          key={q.id}
-          question={q}
-          resolving={actionLoading === q.id}
-          onAnswer={handleAnswerQuestion}
-        />
-      ))}
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pb-4 pr-1">
+        {pendingQuestions.map((q) => (
+          <QuestionCard
+            key={q.id}
+            question={q}
+            resolving={actionLoading === q.id}
+            onAnswer={handleAnswerQuestion}
+          />
+        ))}
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3 min-h-0 overflow-y-auto pb-4">
-        {COLUMNS.map((col) => {
-          const tasksInCol = columnTasks[col.id];
-          return (
-            <div
-              key={col.id}
-              onDragOver={(e) => onDragOver(e, col.id)}
-              onDragLeave={(e) => onDragLeave(e, col.id)}
-              onDrop={() => onDrop(col.id)}
-              className={`flex flex-col h-full min-h-[400px] rounded-xl border bg-white p-3 transition-all duration-150 dark:bg-[#09090b] ${dragOverColumn === col.id ? "border-zinc-400 dark:border-zinc-600" : "border-zinc-200/60 dark:border-zinc-800/50"}`}
-            >
-              <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-                    {col.label}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 min-h-0">
+          {COLUMNS.map((col) => {
+            const tasksInCol = columnTasks[col.id];
+            return (
+              <div
+                key={col.id}
+                onDragOver={(e) => onDragOver(e, col.id)}
+                onDragLeave={(e) => onDragLeave(e, col.id)}
+                onDrop={() => onDrop(col.id)}
+                className={`flex flex-col h-full min-h-[400px] rounded-xl border p-3 transition-all duration-150 bg-zinc-50/50 dark:bg-zinc-950/20 ${
+                  dragOverColumn === col.id
+                    ? "border-zinc-300 dark:border-zinc-700 bg-zinc-100/50 dark:bg-zinc-900/30"
+                    : "border-zinc-200/50 dark:border-zinc-800/30"
+                }`}
+              >
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                      {col.label}
+                    </span>
+                  </div>
+                  <span className="inline-flex items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-900 text-[10px] font-bold px-2 py-0.5 text-zinc-500 dark:text-zinc-400 border border-zinc-200/20 dark:border-zinc-800/20">
+                    {tasksInCol.length}
                   </span>
                 </div>
-                <span className="inline-flex items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-900 text-[10px] font-bold px-2 py-0.5 text-zinc-500 dark:text-zinc-400 border border-zinc-200/20 dark:border-zinc-800/20">
-                  {tasksInCol.length}
-                </span>
-              </div>
 
-              <div className="flex-1 space-y-2 overflow-y-auto min-h-0 max-h-[600px] pr-1">
-                {tasksInCol.length === 0 ? (
-                  <div
-                    className={`flex flex-col items-center justify-center py-10 border border-dashed rounded-xl transition-colors duration-150 ${dragOverColumn === col.id ? "border-zinc-400 dark:border-zinc-600" : "border-zinc-200 dark:border-zinc-800"}`}
-                  >
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">
-                      {dragOverColumn === col.id ? "Drop here" : "Empty column"}
-                    </p>
-                  </div>
-                ) : (
-                  tasksInCol.map((task) => {
-                    const assignee = memberById.get(task.assigneeId);
-                    const assigneeName = assignee?.name ?? task.assigneeId;
-                    const isBlocked = task.status === 'blocked' || task.status === 'blocked_by_failure' || task.status === 'failed' || task.status === 'cancelled';
-                    const depTask = task.dependsOnTaskId ? tasks.find((t) => t.id === task.dependsOnTaskId) : null;
-                    return (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        depTask={depTask}
-                        isBlocked={isBlocked}
-                        assigneeName={assigneeName}
-                        actionLoading={actionLoading === task.id}
-                        members={members}
-                        tasks={tasks}
-                        refresh={refresh}
-                        onDragStart={onDragStart}
-                        onDragEnd={onDragEnd}
-                      />
-                    );
-                  })
-                )}
+                <div className="flex-1 space-y-2 overflow-y-auto min-h-0 max-h-[600px] pr-1">
+                  {tasksInCol.length === 0 ? (
+                    <div
+                      className={`flex flex-col items-center justify-center py-10 border border-dashed rounded-xl transition-colors duration-150 ${dragOverColumn === col.id ? "border-zinc-400 dark:border-zinc-600" : "border-zinc-200 dark:border-zinc-800"}`}
+                    >
+                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">
+                        {dragOverColumn === col.id ? "Drop here" : "Empty column"}
+                      </p>
+                    </div>
+                  ) : (
+                    tasksInCol.map((task) => {
+                      const assignee = memberById.get(task.assigneeId);
+                      const assigneeName = assignee?.name ?? task.assigneeId;
+                      const isBlocked = task.status === 'blocked' || task.status === 'blocked_by_failure' || task.status === 'failed' || task.status === 'cancelled';
+                      const depTask = task.dependsOnTaskId ? tasks.find((t) => t.id === task.dependsOnTaskId) : null;
+                      return (
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          depTask={depTask}
+                          isBlocked={isBlocked}
+                          assigneeName={assigneeName}
+                          activityText={task.status === "in_progress" ? activityTextByAgent.get(task.assigneeId) : undefined}
+                          actionLoading={actionLoading === task.id}
+                          members={members}
+                          tasks={tasks}
+                          refresh={refresh}
+                          onDragStart={onDragStart}
+                          onDragEnd={onDragEnd}
+                        />
+                      );
+                    })
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );

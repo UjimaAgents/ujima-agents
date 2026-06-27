@@ -35,7 +35,7 @@ import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
-import { OnboardingService } from './onboarding.js';
+import { DEFAULT_SKILL_URLS, OnboardingService } from './onboarding.js';
 import {
   drainPendingMemberAlertAfterRun,
   enqueuePendingMemberAlert,
@@ -116,6 +116,7 @@ export {
   toReadableEnglishTimestamp,
 } from './conversation-summary.js';
 export { OnboardingService } from './onboarding.js';
+export { DEFAULT_SKILL_URLS } from './onboarding.js';
 export type {
   OnboardingInlineTeam,
   OnboardingInput,
@@ -1029,6 +1030,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     onMemberAlerted: (input) => wakeMember(input),
     onMessagePublished: (msg) => handleMessagePublished?.(msg),
     summarizeConversation: (messages, mode) => summarizeConversation(messages, mode),
+    autoCompactConversations: true,
     contextWindowTokens: (organizationId) => {
       const team = context.teamStore.getTeam(organizationId);
       if (!team) return 128_000;
@@ -1481,7 +1483,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   const auth = new AuthService(context.repo);
   const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
-  const onboarding = new OnboardingService(context.repo, context.teamStore);
+  // pluginRegistry is constructed early so OnboardingService can reference it
+  // for default-skill seeding at org creation time.
+  const pluginRegistry = new PluginRegistryService(
+    context.repo,
+    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
+  );
+  const onboarding = new OnboardingService(context.repo, context.teamStore, pluginRegistry);
   // Single named dependency for the org-IDs source used by the
   // attachment-cleanup sweep. Declaring it as a typed local
   // function makes the contract explicit at the bootstrap
@@ -1499,6 +1507,33 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       'ApiServicesContext.repo.listOrganizations must return an array of organizations',
     );
   }
+
+  // Seed default skills for orgs missing any DEFAULT_SKILL_URLS entry.
+  // Checks each URL independently via getPluginInstallBySourceUrl so an
+  // org with one skill still gets the remaining defaults installed.
+  // Best-effort and fire-and-forget — a network error should never
+  // delay service startup.
+  void (async () => {
+    if (!pluginRegistry) return;
+    for (const orgId of probeIds) {
+      for (const url of DEFAULT_SKILL_URLS) {
+        try {
+          const existing =
+            context.repo.getPluginInstallBySourceUrl?.(orgId, url) ?? null;
+          if (existing) continue;
+          await pluginRegistry.installFromUrl({
+            organizationId: orgId,
+            createdBy: '__startup_sweep__',
+            sourceUrl: url,
+          });
+        } catch (err) {
+          console.warn(
+            `[startup] failed to seed default skill from ${url} for org ${orgId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+  })();
 
   // Bet 1c (Hermes review) — post-turn memory-review counter.
   // Counter ticks per completed run; threshold-hit spawns a
@@ -1758,10 +1793,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
 
   const tierCuration = createTierCurationService({ repo: context.repo });
   const governance = new GovernanceService(context.repo);
-  const pluginRegistry = new PluginRegistryService(
-    context.repo,
-    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
-  );
+  // pluginRegistry is already constructed above, near OnboardingService.
 
   // Bet 5 (Hermes review) — trajectory JSONL projection. One JSONL
   // line per completed run, gated by env var. Fire-and-forget, no

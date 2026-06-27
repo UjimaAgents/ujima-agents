@@ -21,7 +21,8 @@ export const DEFAULT_ROLE_TOOLS = [
   "schedule",
   "memory.write",
   "memory.recall",
-  "mcp"
+  "mcp",
+  "skill.read"
 ] as const;
 
 export const DEFAULT_ROLE_CHANNELS = [

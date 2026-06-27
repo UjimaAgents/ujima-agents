@@ -49,7 +49,7 @@ export const ChatTabs = memo(function ChatTabs({
   return (
     <div
       role="tablist"
-      className="flex shrink-0 border-b border-zinc-200 px-4 dark:border-zinc-800"
+      className="flex shrink-0 border-b border-zinc-200/50 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800/50 dark:bg-[#09090b]/80"
       onKeyDown={handleKeyDown}
     >
       {tabs.map((tab) => (

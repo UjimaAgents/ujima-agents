@@ -393,93 +393,88 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-zinc-50/50 to-transparent dark:from-white/[0.02]" />
 
       <div ref={headerMenuRef} className="relative z-30 px-4 pt-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="relative min-w-0 flex-1">
-            <button
-              onClick={() => setMenuOpen((value) => !value)}
-              className="flex w-full min-w-0 items-center gap-2 rounded-lg p-1.5 text-left transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
-            >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-[0_0_15px_rgba(124,58,237,0.3)]">
-                <Command className="h-5 w-5" />
-              </div>
-              <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                {bootstrap.organization?.name || "Ujima Agents"}
-              </span>
-              <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-zinc-400" />
-            </button>
-            {menuOpen && bootstrap.organizations.length >= 1 ? (
-              <div className="absolute left-11 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-zinc-800 dark:bg-[#09090b]">
-                <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-                  Workspaces
-                </p>
-                <div className="space-y-0.5 max-h-60 overflow-y-auto">
-                  {bootstrap.organizations.map((org) => {
-                    const active = org.id === bootstrap.organization?.id;
-                    const busy = switchingOrgId === org.id;
-                    return (
-                      <div key={org.id} className="group/workspace flex items-center gap-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900">
+        <div className="relative min-w-0 w-full">
+          <button
+            onClick={() => setMenuOpen((value) => !value)}
+            className="flex w-full min-w-0 items-center gap-2 rounded-lg p-1.5 text-left transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
+          >
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-[0_0_15px_rgba(124,58,237,0.3)]">
+              <Command className="h-5 w-5" />
+            </div>
+            <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+              {bootstrap.organization?.name || "Ujima Agents"}
+            </span>
+            <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-zinc-400" />
+          </button>
+          {menuOpen && bootstrap.organizations.length >= 1 ? (
+            <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-zinc-800 dark:bg-[#09090b]">
+              <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                Workspaces
+              </p>
+              <div className="space-y-0.5 max-h-60 overflow-y-auto">
+                {bootstrap.organizations.map((org) => {
+                  const active = org.id === bootstrap.organization?.id;
+                  const busy = switchingOrgId === org.id;
+                  return (
+                    <div key={org.id} className="group/workspace flex items-center gap-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                      <button
+                        type="button"
+                        disabled={Boolean(switchingOrgId)}
+                        onClick={() => {
+                          void (async () => {
+                            setMenuOpen(false);
+                            if (active || switchingOrgId) return;
+                            setSwitchingOrgId(org.id);
+                            try {
+                              await switchOrganization(org.id, "/workspace");
+                            } catch {
+                              setSwitchingOrgId(null);
+                            }
+                          })();
+                        }}
+                        className={`flex-1 flex items-center gap-2 px-2 py-2 text-left text-xs transition disabled:opacity-60 ${
+                          active ? listItemSelectedNeutral : listItemIdle
+                        }`}
+                      >
+                        {busy ? <Clock className="h-3.5 w-3.5 shrink-0 animate-pulse" /> : null}
+                        <span className="flex-1 truncate font-medium">{org.name}</span>
+                        {active ? <Check className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null}
+                      </button>
+                      {!active && (
                         <button
                           type="button"
-                          disabled={Boolean(switchingOrgId)}
-                          onClick={() => {
-                            void (async () => {
-                              setMenuOpen(false);
-                              if (active || switchingOrgId) return;
-                              setSwitchingOrgId(org.id);
-                              try {
-                                await switchOrganization(org.id, "/workspace");
-                              } catch {
-                                setSwitchingOrgId(null);
-                              }
-                            })();
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteError(null);
+                            setPendingDelete({
+                              workspaceId: orgWorkspaceId(org.id),
+                              name: org.name,
+                            });
                           }}
-                          className={`flex-1 flex items-center gap-2 px-2 py-2 text-left text-xs transition disabled:opacity-60 ${
-                            active ? listItemSelectedNeutral : listItemIdle
-                          }`}
+                          className="mr-1 rounded p-1 text-zinc-400 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                          title="Delete Workspace"
                         >
-                          {busy ? <Clock className="h-3.5 w-3.5 shrink-0 animate-pulse" /> : null}
-                          <span className="flex-1 truncate font-medium">{org.name}</span>
-                          {active ? <Check className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null}
+                          <Trash2 className="h-3.5 w-3.5" />
                         </button>
-                        {!active && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteError(null);
-                              setPendingDelete({
-                                workspaceId: orgWorkspaceId(org.id),
-                                name: org.name,
-                              });
-                            }}
-                            className="mr-1 rounded p-1 text-zinc-400 hover:bg-red-500/10 hover:text-red-500 transition-colors"
-                            title="Delete Workspace"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setIsCreateWorkspaceOpen(true);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-semibold text-violet-600 hover:bg-zinc-100 dark:text-violet-400 dark:hover:bg-zinc-900"
-                >
-                  <Plus className="h-3.5 w-3.5 shrink-0" />
-                  Add Workspace
-                </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 items-center gap-2 pt-1">
-            <ThemeToggle compact />
-          </div>
+              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setIsCreateWorkspaceOpen(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-semibold text-violet-600 hover:bg-zinc-100 dark:text-violet-400 dark:hover:bg-zinc-900"
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" />
+                Add Workspace
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -628,10 +623,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 
 
 
-      <div className={`${WORKSPACE_DOCK_ROW_CLASS} px-3`}>
+      <div className={`${WORKSPACE_DOCK_ROW_CLASS} px-3 flex items-center justify-between gap-2`}>
         <Link
           href="/settings/organization"
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
         >
           <div className="relative shrink-0">
             <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-500 shadow-[0_2px_10px_rgba(99,102,241,0.2)]" />
@@ -642,8 +637,17 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
               {bootstrap.auth.member?.name || "Admin"}
             </span>
           </div>
-          <Settings className="ml-auto h-4 w-4 text-zinc-400" />
         </Link>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <ThemeToggle compact />
+          <Link
+            href="/settings/organization"
+            className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100 transition-colors"
+            title="Settings"
+          >
+            <Settings className="h-4 w-4" />
+          </Link>
+        </div>
       </div>
 
       {/* Version label */}
@@ -733,12 +737,15 @@ export const SidebarItem = memo(function SidebarItem({
   const useRunner = active && goalMode && status === "working";
   return (
     <div
-      className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition ${
+      className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition relative ${
         active
           ? "bg-violet-600/10 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400"
           : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
       }`}
     >
+      {active && (
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] bg-violet-600 dark:bg-violet-500 rounded-r" />
+      )}
       <button
         type="button"
         onClick={onClick}
@@ -746,9 +753,21 @@ export const SidebarItem = memo(function SidebarItem({
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
         <div
-          className={`${active ? "text-violet-600 dark:text-violet-400" : "text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100"}`}
+          className={`relative shrink-0 ${active ? "text-violet-600 dark:text-violet-400" : "text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100"}`}
         >
           {icon}
+          {status && status !== "loading" && (
+            <div className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-white dark:border-[#09090b] ${
+              status === "working" ? "bg-violet-500 animate-pulse" :
+              status === "online" ? "bg-emerald-500" :
+              status === "idle" ? "bg-amber-500" :
+              status === "offline" ? "bg-zinc-300 dark:bg-zinc-700" :
+              status === "error" ? "bg-red-500" : ""
+            }`} />
+          )}
+          {status === "loading" && (
+            <div className="absolute -bottom-0.5 -right-0.5 h-2 w-2 animate-spin rounded-full border border-violet-500 border-t-transparent bg-white dark:bg-[#09090b]" />
+          )}
         </div>
         <span
           className={`flex-1 truncate ${active ? "font-semibold" : "font-medium"}`}
@@ -769,18 +788,6 @@ export const SidebarItem = memo(function SidebarItem({
       <div className="flex items-center gap-1.5">
         {useRunner ? (
           <RunningFigureIndicator />
-        ) : status === "loading" ? (
-          <div className="h-2 w-2 animate-spin rounded-full border border-violet-500 border-t-transparent" />
-        ) : status === "working" ? (
-          <div className="h-2 w-2 animate-pulse rounded-full bg-violet-500" />
-        ) : status === "online" ? (
-          <div className="h-2 w-2 rounded-full bg-emerald-500" />
-        ) : status === "idle" ? (
-          <div className="h-2 w-2 rounded-full bg-amber-500" />
-        ) : status === "offline" ? (
-          <div className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
-        ) : status === "error" ? (
-          <div className="h-2 w-2 rounded-full bg-red-500" />
         ) : null}
       </div>
     </div>
@@ -795,7 +802,7 @@ export const SidebarSectionHeader = memo(function SidebarSectionHeader({
   onAdd?: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between px-2">
+    <div className="group/section flex items-center justify-between px-2">
       <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
         {title}
       </h3>
@@ -803,7 +810,7 @@ export const SidebarSectionHeader = memo(function SidebarSectionHeader({
         <button
           type="button"
           onClick={onAdd}
-          className="rounded p-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+          className="opacity-0 group-hover/section:opacity-100 transition-opacity duration-200 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
         >
           <Plus className="h-3.5 w-3.5" />
         </button>

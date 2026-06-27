@@ -628,6 +628,10 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     const recipientRef = String(invocation.input.member_id);
     const recipientId =
       recipientRef === 'self' ? 'self' : resolveMemberId(repo, invocation.organizationId, recipientRef);
+    const runThreadId = repo.getRun?.(invocation.organizationId, invocation.runId)?.threadId;
+    const currentThreadId = invocation.threadId || runThreadId;
+    const caller = repo.getMember(invocation.organizationId, invocation.memberId);
+    const callerIsAgent = caller?.kind === AGENT_KIND;
 
     // Defense-in-depth: even though the decode-time schema drops the
     // roster for channel runs (buildDmSchemaForOrg), catch any path that
@@ -635,7 +639,7 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     // the run originates in a channel, agents must not open a private DM
     // to a teammate — they collaborate in-channel via `@`-mentions.
     // Self-notes (`self`) stay allowed everywhere.
-    if (recipientId !== 'self' && !isDirectMessageThread(invocation.threadId)) {
+    if (callerIsAgent && recipientId !== 'self' && !isDirectMessageThread(currentThreadId)) {
       return {
         status: 'dm_blocked_in_channel',
         message_sent: false,

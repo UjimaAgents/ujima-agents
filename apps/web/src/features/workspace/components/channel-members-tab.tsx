@@ -176,7 +176,7 @@ export function ChannelMembersTab({
   }, [channel.id, dirty, draftMemberIds, organizationId, onSaved, saving]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 pt-24">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">

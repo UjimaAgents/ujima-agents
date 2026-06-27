@@ -441,21 +441,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       const persistedRunSteps = spirit.runId ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? [] : [];
       const terminatingTool = detectedTerminatingTool ?? findTerminatingToolFromRunSteps(persistedRunSteps);
       turn.backfillTokens({ finalText, lastText, terminatingTool, usage: tokenUsage });
-      if (finalText && finalText !== lastText && !terminatingTool) {
-        const finalMessage = turn.publishMessage(
-          buildAgentMessage({
-            organizationId: input.organizationId,
-            threadId: session.channelId,
-            channelId: session.channelId,
-            senderId: member.id,
-            content: finalText,
-            metadata: { runId },
-          }),
-        );
-        lastMessageId = finalMessage.id;
-        lastText = finalText;
-        persistMessageTokens(this.repo, finalMessage, tokenUsage);
-      }
 
       // Prefer provider `totalTokens`; fall back to input+output sum
       // (handles providers that omit it or return non-numeric fields).

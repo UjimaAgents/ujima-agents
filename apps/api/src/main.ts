@@ -16,7 +16,9 @@ import {
   ConfigSyncService,
   createApiServices,
   createTeamStore,
+  DEFAULT_SKILL_URLS,
   migrateUnifiedWorkspaceOrg,
+  PluginRegistryService,
   type PermissionContextBuilder,
 } from '@ujima/orchestrator';
 import { createTransport } from './transport/server.js';
@@ -249,6 +251,10 @@ async function main(): Promise<void> {
   await transport.listen();
   transport.startBackgroundServices();
 
+  // Migrate existing orgs: seed any DEFAULT_SKILL_URLS not yet installed.
+  // Fire-and-forget so startup latency is not affected.
+  void seedDefaultSkillsForExistingOrgs({ repository, homeDir, logger });
+
   console.info(chalk.cyan(STARTUP_SPLASH));
   console.info(`   ${chalk.green('✓')} ${chalk.bold('System Ready')}`);
   const displayUrl = transport.url.replace('127.0.0.1', 'localhost');
@@ -337,6 +343,53 @@ function safeReadPid(path: string): number | undefined {
     return Number.isFinite(n) ? n : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * At startup, ensure every existing organisation has the default skills
+ * installed. Organisations that already have a given skill (matched by
+ * sourceUrl) are skipped — this is safe to run on every restart.
+ */
+async function seedDefaultSkillsForExistingOrgs({
+  repository,
+  homeDir,
+  logger,
+}: {
+  repository: Repository;
+  homeDir: string;
+  logger: ReturnType<typeof createJsonLogger>;
+}): Promise<void> {
+  const pluginRegistry = new PluginRegistryService(repository, homeDir);
+  const orgs = repository.listOrganizations();
+  for (const org of orgs) {
+    const existingUrls = new Set(
+      repository.listPluginInstalls(org.id).map((p) => p.sourceUrl),
+    );
+    for (const url of DEFAULT_SKILL_URLS) {
+      // Normalise: if the URL (or any URL starting with the same base)
+      // is already installed, skip. PluginRegistryService stores the
+      // exact sourceUrl used, so a substring check handles tree-URL
+      // variants vs. root-URL variants of the same repo.
+      const alreadyInstalled = [...existingUrls].some(
+        (u) => u === url || u.startsWith(url) || url.startsWith(u),
+      );
+      if (alreadyInstalled) continue;
+      try {
+        await pluginRegistry.installFromUrl({
+          organizationId: org.id,
+          createdBy: 'system:migration',
+          sourceUrl: url,
+        });
+        logger.info('migration: seeded default skill', { orgId: org.id, url });
+      } catch (err) {
+        logger.warn('migration: failed to seed default skill', {
+          orgId: org.id,
+          url,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 }
 

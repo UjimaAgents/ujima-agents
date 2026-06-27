@@ -99,6 +99,14 @@ describe('channel.* tools — toInvocation()', () => {
       ({
         getMember: (_orgId: string, id: string) => members[id] ?? null,
       }) as never;
+    const repoWithRun = (
+      members: Record<string, { id: string; name: string; kind: string }>,
+      threadId: string,
+    ) =>
+      ({
+        getMember: (_orgId: string, id: string) => members[id] ?? null,
+        getRun: () => ({ threadId }),
+      }) as never;
 
     it('allows an agent DMing another agent', async () => {
       let sent = false;
@@ -133,6 +141,33 @@ describe('channel.* tools — toInvocation()', () => {
           'agent-1': { id: 'agent-1', name: 'Layla', kind: 'agent' },
           'human-1': { id: 'human-1', name: 'Pat', kind: 'human' },
         }),
+        conversations: {
+          tryMirrorSuppress: () => false,
+          sendDirectMessage: () => {
+            sent = true;
+            return { id: 'm1' };
+          },
+        } as never,
+      });
+      expect(sent).toBe(true);
+    });
+
+    it('allows a DM run when the invocation omits threadId', async () => {
+      let sent = false;
+      await channelDmTool.execute({
+        invocation: {
+          ...baseInvocation('agent-1'),
+          threadId: undefined,
+          input: { member_id: 'agent-2', body: 'hi', mentions: [] },
+        } as never,
+        team: {} as never,
+        repo: repoWithRun(
+          {
+            'agent-1': { id: 'agent-1', name: 'Layla', kind: 'agent' },
+            'agent-2': { id: 'agent-2', name: 'Phoebe', kind: 'agent' },
+          },
+          'dm:agent-1:agent-2',
+        ),
         conversations: {
           tryMirrorSuppress: () => false,
           sendDirectMessage: () => {
@@ -384,6 +419,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'self.procedure.list',
         'self.procedure.remove',
         'self.procedure.view',
+        'skill.read',
         'view',
         'download',
         'edit',

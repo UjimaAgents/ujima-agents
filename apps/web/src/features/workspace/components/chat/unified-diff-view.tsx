@@ -6,12 +6,12 @@ const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)?\s+@@/;
 
 type PatchLineKind = "meta" | "hunk" | "add" | "del" | "ctx";
 
-export type UnifiedDiffRow = {
+export interface UnifiedDiffRow {
   text: string;
   kind: PatchLineKind;
   /** File line number for this row, or null for headers / meta lines. */
   gutter: number | null;
-};
+}
 
 function classifyPatchLine(line: string): PatchLineKind {
   if (
@@ -149,7 +149,7 @@ export function UnifiedDiffView({ text }: { text: string }) {
         return (
           <div
             key={i}
-            className={`grid grid-cols-[2rem_1fr] gap-x-0 border-b border-foreground/[0.04] last:border-b-0 sm:grid-cols-[2.25rem_1fr] ${rowClasses(row.kind)}`}
+            className={`grid grid-cols-[2rem_1fr] gap-x-0 sm:grid-cols-[2.25rem_1fr] ${rowClasses(row.kind)}`}
           >
             <span className="shrink-0 border-r border-foreground/[0.06] py-0.5 pr-1.5 pl-1 text-right tabular-nums text-foreground/35">
               {row.gutter ?? ""}

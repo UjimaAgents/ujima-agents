@@ -393,8 +393,9 @@ export function buildAgentSystemPrompt(
     buildCollaborationProtocol(conversationKind),
     '',
     formatAvailableSkills(sortedSkills, role.skills),
-    'If a skill is relevant, inspect its SKILL.md before acting.',
-    'Match your task to the appropriate skill proactively: before implementing code, use incremental-implementation or test-driven-development; before merging, use code-review-and-quality; when debugging, use debugging-and-error-recovery; when planning, use planning-and-task-breakdown or spec-driven-development. When in doubt about task scope, check the skill descriptions to find the best fit.',
+    sortedSkills && sortedSkills.length > 0
+      ? 'To use a skill: call `skill.read` with its `name` (exactly as shown in <available_skills>) to load the full instructions, then follow them. Match your task to the best skill proactively: before implementing code use incremental-implementation or test-driven-development; before merging use code-review-and-quality; when debugging use debugging-and-error-recovery; when planning use planning-and-task-breakdown or spec-driven-development; when a task is done use whats-next to decide the next move.'
+      : '',
     '',
     `Workspace root: ${workspaceRoot}`,
     `Allowed scopes: ${listScopes(role)}`,
