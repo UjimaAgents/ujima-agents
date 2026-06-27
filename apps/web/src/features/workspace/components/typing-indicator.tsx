@@ -60,7 +60,7 @@ export const TypingIndicator = memo(function TypingIndicator({
           <Avatar name={name} colorIndex={colorIndex} size="sm" />
         )}
       <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-medium text-violet-700 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
+        <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-violet-200/50 bg-violet-50/30 px-3 py-1.5 text-[11px] font-medium text-violet-700 backdrop-blur-sm dark:border-violet-500/20 dark:bg-violet-500/5 dark:text-violet-300">
           {activeStep ? (
             <span className="min-w-0 truncate">
               <span className="font-semibold">{formatTypingSubject(label)}</span>

@@ -348,7 +348,7 @@ export function ReasoningTracePanel({
                 });
               }
             }}
-            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-[10px] font-bold text-white shadow-xl shadow-violet-500/30 transition hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-bottom-4 duration-300"
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-zinc-200/50 bg-white/30 px-4 py-2 text-[10px] font-bold text-zinc-800 shadow-xl backdrop-blur-sm transition hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-bottom-4 duration-300 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
           >
             <ArrowDown className="h-3.5 w-3.5" />
             Back to bottom

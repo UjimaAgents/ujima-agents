@@ -86,24 +86,13 @@ export function AgentChatHeaderControls({
   };
 
   return (
-    <div className="flex min-w-0 flex-col items-end gap-1.5">
-      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-        {goalMode ? (
-          <span className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
-            Goal mode · Auto review
-          </span>
-        ) : (
-          <ShellApprovalMemberModeField
-            value={member.shellApprovalMode ?? "inherit"}
-            orgMode={orgShellApprovalMode}
-            disabled={saving}
-            onChange={(shellApprovalMode) => {
-              void patchPreferences({ shellApprovalMode });
-            }}
-          />
-        )}
-
-        {modelOptions.length > 0 ? (
+    <div className="flex flex-col gap-3.5 text-left">
+      {/* Model Option */}
+      {modelOptions.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="agent-model" className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+            Model Selection
+          </label>
           <Select
             id="agent-model"
             size="sm"
@@ -117,9 +106,33 @@ export function AgentChatHeaderControls({
             }}
             options={selectedModelOptions}
             placeholder="Select model"
-            className="w-[8.8rem] sm:w-40"
+            className="w-full"
           />
-        ) : null}
+        </div>
+      ) : null}
+
+      {/* Shell Approval Option */}
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+          Shell Execution Approvals
+        </span>
+        {goalMode ? (
+          <div className="flex pt-0.5">
+            <span className="inline-flex items-center rounded-full border border-amber-200/60 bg-amber-50/50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+              Goal mode · Auto review
+            </span>
+          </div>
+        ) : (
+          <ShellApprovalMemberModeField
+            value={member.shellApprovalMode ?? "inherit"}
+            orgMode={orgShellApprovalMode}
+            disabled={saving}
+            onChange={(shellApprovalMode) => {
+              void patchPreferences({ shellApprovalMode });
+            }}
+            className="w-full"
+          />
+        )}
       </div>
     </div>
   );

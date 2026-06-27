@@ -14,12 +14,15 @@ export function ChannelChatHeaderControls({
   const [saving, setSaving] = useState(false);
 
   return (
-    <div className="flex min-w-0 flex-col items-end gap-1.5">
+    <div className="flex flex-col gap-1 text-left w-full">
+      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+        Workspace Shell Approvals
+      </label>
       <ShellApprovalOrgModeSelect
         value={value}
         size="sm"
         disabled={saving}
-        className="w-[10.5rem] sm:w-52"
+        className="w-full"
         menuPlacement="down"
         onChange={(next) => {
           setSaving(true);

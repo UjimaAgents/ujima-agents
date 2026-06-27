@@ -37,7 +37,7 @@ export function ChatHeader({
   onToggleDetails,
 }: ChatHeaderProps) {
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
+    <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center justify-between border-b border-zinc-200/50 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800/50 dark:bg-[#09090b]/80 shadow-sm shadow-zinc-100/50 dark:shadow-none">
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {type === "channel" ? (

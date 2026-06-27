@@ -108,10 +108,27 @@ export interface TraceStepData {
   };
 }
 
-function getBasename(path?: string): string {
-  if (!path) return "file";
-  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return index >= 0 ? path.slice(index + 1) : path;
+
+function PathBreadcrumb({ path, className = "" }: { path: string; className?: string }) {
+  if (!path) return null;
+  const cleaned = path.replace(/.*\/Work\/[^\/]+\//, "").replace(/^\.\//, "");
+  const index = Math.max(cleaned.lastIndexOf("/"), cleaned.lastIndexOf("\\"));
+  if (index >= 0) {
+    const prefix = cleaned.slice(0, index + 1);
+    const file = cleaned.slice(index + 1);
+    return (
+      <span
+        className={`group/path inline-flex items-center cursor-help min-w-0 ${className}`}
+        title={path}
+      >
+        <span className="opacity-0 max-w-0 inline-block overflow-hidden transition-all duration-300 ease-out group-hover/path:opacity-100 group-hover/path:max-w-[24rem] group-hover/path:mr-1 font-normal select-none whitespace-nowrap text-xs text-foreground/70">
+          {prefix}
+        </span>
+        <span className="font-semibold text-foreground/80 group-hover/path:text-foreground">{file}</span>
+      </span>
+    );
+  }
+  return <span className={`font-semibold text-foreground/80 ${className}`}>{cleaned}</span>;
 }
 
 const Chevron = ({ open }: { open: boolean }) =>
@@ -134,10 +151,6 @@ function DiffBody({ op }: { op: AggregatedOperation }) {
   if (!op.body) return null;
   return (
     <div className={`mt-1.5 overflow-hidden ${TERMINAL_PANEL}`}>
-      <div className="flex border-b border-foreground/[0.06] bg-foreground/[0.015] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-foreground/60 justify-between">
-        <span>{getBasename(op.file)}</span>
-        <DiffStat additions={op.additions} deletions={op.deletions} />
-      </div>
       <div className="max-h-60 overflow-y-auto p-2.5 select-text">
         <UnifiedDiffView text={op.body} />
       </div>
@@ -272,11 +285,12 @@ function AggregatedRunPanel({
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}
                   header={
-                    <span className="break-words">
-                      {verb} <span className="font-semibold text-foreground/90">{getBasename(op.file)}</span>
+                    <span className="break-words flex items-center gap-1 min-w-0 max-w-[calc(100%-6rem)]">
+                      <span className="shrink-0">{verb}</span>
+                      <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
                     </span>
                   }
-                  trailing={!isExpanded ? <DiffStat additions={op.additions} deletions={op.deletions} /> : undefined}
+                  trailing={<DiffStat additions={op.additions} deletions={op.deletions} />}
                 >
                   <DiffBody op={op} />
                 </ExpandableRow>
@@ -285,19 +299,24 @@ function AggregatedRunPanel({
 
             if (op.type === "read") {
               return (
-                <div key={op.id} className="py-1 text-xs text-foreground/60 pl-2 truncate">
-                  Read <span className="font-semibold text-foreground/75">{getBasename(op.file)}</span>{" "}
-                  {op.lines ? <span className="inline-block ml-1 text-foreground/40 font-medium">(lines {op.lines})</span> : null}
+                <div key={op.id} className="py-1 text-xs text-foreground/60 pl-2 truncate flex items-center gap-1">
+                  <span className="shrink-0">Read</span>
+                  <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
+                  {op.lines ? <span className="inline-block ml-1 text-foreground/40 font-medium shrink-0">(lines {op.lines})</span> : null}
                 </div>
               );
             }
 
             if (op.type === "search") {
               return (
-                <div key={op.id} className="py-1 text-xs text-foreground/70 pl-2 truncate">
-                  Searched for <span className="font-mono text-[11px] text-foreground/80">&ldquo;{op.query}&rdquo;</span>
+                <div key={op.id} className="py-1 text-xs text-foreground/70 pl-2 truncate flex items-center gap-1">
+                  <span className="shrink-0">Searched for</span>
+                  <span className="font-mono text-[11px] text-foreground/80 truncate max-w-[8rem]">&ldquo;{op.query}&rdquo;</span>
                   {op.file ? (
-                    <> in <span className="font-semibold text-foreground/75">{getBasename(op.file)}</span></>
+                    <>
+                      <span className="shrink-0">in</span>
+                      <PathBreadcrumb path={op.file} className="min-w-0 truncate" />
+                    </>
                   ) : null}
                 </div>
               );
