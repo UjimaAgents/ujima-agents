@@ -221,7 +221,7 @@ function OrganizationSettingsContent({
           />
         )}
         {activeTab === "culture" && (
-          <CultureTab organizationId={orgId} channelId={null} />
+          <CultureTab organizationId={orgId} channelId={null} members={members} />
         )}
         {activeTab === "agents" && (
           <AgentsTab

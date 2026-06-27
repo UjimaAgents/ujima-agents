@@ -79,6 +79,14 @@ interface CodexTextItem {
   id: string;
   text: string;
 }
+interface CodexThreadSession {
+  threadId: string;
+  baseInstructions: string;
+  toolSignature: string;
+}
+interface CodexThreadSessionRef {
+  value?: CodexThreadSession;
+}
 
 const CODEX_DEVELOPER_INSTRUCTIONS = [
   'Use Ujima dynamic tools for workspace actions. Do not use Codex native shell, fs, or file-change tools when a Ujima tool is available.',
@@ -99,12 +107,13 @@ export function setCodexAppServerSpawn(spawnImpl: SpawnCodexAppServer | undefine
 
 export function createCodexAppServerModel(options: CodexAppServerModelOptions): LanguageModelV3 {
   const rpc = getCodexRpc(options);
+  const session: CodexThreadSessionRef = {};
   return {
     specificationVersion: 'v3',
     provider: 'openai-codex',
     modelId: options.modelId,
     supportedUrls: {},
-    doGenerate: (callOptions) => generateWithCodex(options, rpc, callOptions),
+    doGenerate: (callOptions) => generateWithCodex(options, rpc, callOptions, undefined, session),
     doStream: async (callOptions) => ({
       stream: new ReadableStream<LanguageModelV3StreamPart>({
         async start(controller) {
@@ -130,7 +139,7 @@ export function createCodexAppServerModel(options: CodexAppServerModelOptions): 
               onToolResult(result) {
                 controller.enqueue(result);
               },
-            });
+            }, session);
             if (textId) controller.enqueue({ type: 'text-end', id: textId, providerMetadata: codexTextMetadata(textId) });
             controller.enqueue({
               type: 'finish',
@@ -152,31 +161,53 @@ async function generateWithCodex(
   rpcPromise: Promise<CodexRpc>,
   callOptions: LanguageModelV3CallOptions,
   handlers?: CodexStreamHandlers,
+  sessionRef?: CodexThreadSessionRef,
 ): Promise<LanguageModelV3GenerateResult> {
   const rpc = await rpcPromise;
   const allTools = functionTools(callOptions.tools);
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
   const toolNames = new Map(allTools.map((tool) => [codexToolName(tool.name), tool.name]));
   const prompt = splitPrompt(callOptions.prompt);
-  const thread = await rpc.request<{ thread: { id: string } }>('thread/start', {
-    model: options.modelId,
-    cwd: options.cwd ?? process.cwd(),
-    ephemeral: true,
-    serviceName: 'ujima',
-    approvalPolicy: 'untrusted',
-    approvalsReviewer: 'user',
-    sandbox: 'read-only',
-    baseInstructions: prompt.baseInstructions,
-    developerInstructions: CODEX_DEVELOPER_INSTRUCTIONS,
-    dynamicTools: allTools.map((tool) => ({
-      name: codexToolName(tool.name),
-      description: tool.description ?? '',
-      inputSchema: tool.inputSchema,
-    })),
-  });
-  const threadId = thread.thread.id;
-  if (prompt.historyItems.length > 0) {
-    await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
+  const toolSignature = stringifyJson(allTools.map((tool) => ({
+    name: codexToolName(tool.name),
+    description: tool.description ?? '',
+    inputSchema: tool.inputSchema,
+  })));
+  const session = sessionRef?.value;
+  const shouldReuseThread =
+    !!session &&
+    prompt.historyItems.length > 0 &&
+    session.baseInstructions === prompt.baseInstructions &&
+    session.toolSignature === toolSignature;
+  let threadId = session?.threadId;
+  if (!shouldReuseThread) {
+    const thread = await rpc.request<{ thread: { id: string } }>('thread/start', {
+      model: options.modelId,
+      cwd: options.cwd ?? process.cwd(),
+      ephemeral: true,
+      serviceName: 'ujima',
+      approvalPolicy: 'untrusted',
+      approvalsReviewer: 'user',
+      sandbox: 'read-only',
+      baseInstructions: prompt.baseInstructions,
+      developerInstructions: CODEX_DEVELOPER_INSTRUCTIONS,
+      dynamicTools: allTools.map((tool) => ({
+        name: codexToolName(tool.name),
+        description: tool.description ?? '',
+        inputSchema: tool.inputSchema,
+      })),
+    });
+    threadId = thread.thread.id;
+    if (sessionRef) {
+      sessionRef.value = {
+        threadId,
+        baseInstructions: prompt.baseInstructions,
+        toolSignature,
+      };
+    }
+    if (prompt.historyItems.length > 0) {
+      await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
+    }
   }
   const state = {
     startedItems: new Map<string, any>(),

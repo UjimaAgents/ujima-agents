@@ -375,6 +375,37 @@ describe('selectLanguageModel', () => {
     expect(turnStart.params.input).toEqual([{ type: 'text', text: 'new question', text_elements: [] }]);
   });
 
+  it('keeps one Codex thread alive for later turns on the same model instance', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    const first = await model.doGenerate({
+      prompt: [
+        { role: 'user', content: [{ type: 'text', text: 'seed question' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'seed answer' }] },
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      ],
+    });
+    const firstText = first.content.find((part: { type?: string; text?: string }) => part.type === 'text' && part.text)?.text ?? '';
+
+    await model.doGenerate({
+      prompt: [
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: firstText }] },
+        { role: 'user', content: [{ type: 'text', text: 'follow up' }] },
+      ],
+    });
+
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'thread/start')).toHaveLength(1);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'thread/inject_items')).toHaveLength(1);
+    expect(child.requests.filter((req) => (req as { method?: string }).method === 'turn/start')).toHaveLength(2);
+  });
+
   it('responds to Codex dynamic tools with app-server content item casing', async () => {
     const child = createFakeAppServer();
     setCodexAppServerSpawn(vi.fn(() => child) as never);

@@ -35,7 +35,7 @@ import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 import { createTierCurationService, type TierCurationService } from './tier-curation.js';
 import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
-import { OnboardingService } from './onboarding.js';
+import { DEFAULT_SKILL_URLS, OnboardingService } from './onboarding.js';
 import {
   drainPendingMemberAlertAfterRun,
   enqueuePendingMemberAlert,
@@ -1030,6 +1030,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     onMemberAlerted: (input) => wakeMember(input),
     onMessagePublished: (msg) => handleMessagePublished?.(msg),
     summarizeConversation: (messages, mode) => summarizeConversation(messages, mode),
+    autoCompactConversations: true,
     contextWindowTokens: (organizationId) => {
       const team = context.teamStore.getTeam(organizationId);
       if (!team) return 128_000;
@@ -1507,16 +1508,30 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     );
   }
 
-  // Seed default skills for orgs that have none installed yet.
-  // This is a one-time startup sweep for existing orgs created before
-  // the default-skill seeding was added to OnboardingService.
+  // Seed default skills for orgs missing any DEFAULT_SKILL_URLS entry.
+  // Checks each URL independently via getPluginInstallBySourceUrl so an
+  // org with one skill still gets the remaining defaults installed.
   // Best-effort and fire-and-forget — a network error should never
   // delay service startup.
   void (async () => {
+    if (!pluginRegistry) return;
     for (const orgId of probeIds) {
-      const installed = context.repo.listOrganizationSkillInstalls?.(orgId) ?? [];
-      if (installed.length > 0) continue;
-      await onboarding.seedDefaultSkills(orgId, '__startup_sweep__');
+      for (const url of DEFAULT_SKILL_URLS) {
+        try {
+          const existing =
+            context.repo.getPluginInstallBySourceUrl?.(orgId, url) ?? null;
+          if (existing) continue;
+          await pluginRegistry.installFromUrl({
+            organizationId: orgId,
+            createdBy: '__startup_sweep__',
+            sourceUrl: url,
+          });
+        } catch (err) {
+          console.warn(
+            `[startup] failed to seed default skill from ${url} for org ${orgId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
     }
   })();
 

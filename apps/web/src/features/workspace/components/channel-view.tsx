@@ -1097,12 +1097,12 @@ export function ChannelView({
             <TabEmpty context="tasks" label="No organization context available." />
           )
         ) : activeTab === "culture" ? (
-          conversation.type === "channel" && organizationId ? (
+          (conversation.type === "channel" || conversation.type === "dm") && organizationId ? (
             <TabPanel>
-              <CultureTab organizationId={organizationId} channelId={conversation.id} />
+              <CultureTab organizationId={organizationId} channelId={conversation.id} members={traceMembers} />
             </TabPanel>
           ) : (
-            <TabEmpty context="generic" label="Channel culture is only available in channels." />
+            <TabEmpty context="generic" label="Culture is only available in channels and DMs." />
           )
         ) : activeTab === "files" ? (
           feed.loading ? (

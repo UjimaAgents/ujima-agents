@@ -46,11 +46,25 @@ async function downloadNode(stagingDir: string, nodeTriple: string) {
   if (isWin) {
     await $`unzip -o ${archive} -d ${stagingDir}`.nothrow();
     if (existsSync(e)) {
+      const binDir = join(d, "bin");
+      mkdirSync(binDir, { recursive: true });
       if (existsSync(join(e, "node.exe"))) {
-        const binDir = join(d, "bin");
-        mkdirSync(binDir, { recursive: true });
         cpSync(join(e, "node.exe"), join(binDir, "node.exe"));
       }
+      // Copy npm/npx wrapper scripts so the CLI launchers work.
+      for (const script of ["npm", "npm.cmd", "npx", "npx.cmd"]) {
+        const s = join(e, script);
+        if (existsSync(s)) cpSync(s, join(binDir, script));
+      }
+      // Windows Node.js zip has a flat layout: node_modules/ at the root
+      // (no lib/ prefix like the Unix tarball).  Copy into lib/ so that
+      // installNative() can find npm at lib/node_modules/npm/bin/npm-cli.js.
+      const nm = join(e, "node_modules");
+      if (existsSync(nm)) {
+        const libDir = join(d, "lib");
+        cpSync(nm, join(libDir, "node_modules"), { recursive: true });
+      }
+      chmodSync(join(binDir, "node.exe"), 0o755);
       rmSync(e, { recursive: true, force: true });
     }
   } else {
