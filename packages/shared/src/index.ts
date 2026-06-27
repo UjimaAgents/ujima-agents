@@ -74,6 +74,7 @@ export {
   SHARED_AGENT_SYSTEM_PROMPT,
   buildEnvironmentContext,
   buildEnvironmentTimestamp,
+  buildEnvironmentTimezone,
   COLLABORATION_PROTOCOL,
   buildCollaborationProtocol,
   buildSharedAgentSystemPrompt,

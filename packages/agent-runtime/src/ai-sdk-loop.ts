@@ -33,6 +33,9 @@ export interface AiSdkLoopInputs {
   audit: AuditLog;
   systemPrompt: string;
   userPrompt: string;
+  /** Per-wake context messages (Zone 2). Prepended before the user prompt
+   * so the system prompt stays cache-stable. */
+  contextMessages?: ModelMessage[];
   maxIterations: number;
   maxToolResultChars?: number;
   abortSignal?: AbortSignal;
@@ -464,7 +467,10 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     mcpTools.map((t) => [t.name, wrapMcpTool(t)]),
   ) as ToolSet;
 
-  const messages: ModelMessage[] = [{ role: 'user', content: userPrompt }];
+  const messages: ModelMessage[] = [
+    ...(input.contextMessages ?? []),
+    { role: 'user', content: userPrompt },
+  ];
 
   stream('agent_turn_started', { iteration: 1 });
 

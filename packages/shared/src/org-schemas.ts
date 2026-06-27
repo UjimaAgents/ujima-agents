@@ -316,6 +316,14 @@ export const MessageMetadataSchema = z.object({
   stoppedTrace: z.boolean().optional(),
   traceOnly: z.boolean().optional(),
   compactedInto: IdSchema.optional(),
+  /**
+   * Set on system messages that carry stable wake context (timezone,
+   * anti-mirror scaffold). These messages are persisted in the thread,
+   * loaded on every wake, and converted to `role:'system'` in the
+   * AI-SDK messages array so the model sees them as standing context
+   * rather than user speech.
+   */
+  wakeContext: z.boolean().optional(),
 }).optional();
 export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 

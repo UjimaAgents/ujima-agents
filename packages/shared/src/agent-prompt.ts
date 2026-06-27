@@ -88,20 +88,19 @@ export function buildSharedAgentSystemPrompt(
 // ---------------------------------------------------------------------------
 
 /**
- * Build a markdown block with environment context: timezone, OS, working
- * directory, and (optionally) the system user.
+ * Build a markdown block with environment context: OS, working directory,
+ * and (optionally) the system user.
  *
- * NOTE: the current date/time is deliberately excluded from this block so the
- * system prompt stays cache-stable across wakes. The timestamp is emitted
- * separately as a per-wake user message via {@link buildEnvironmentTimestamp}.
+ * NOTE: timezone and current date/time are deliberately excluded from this
+ * block so the system prompt stays cache-stable across wakes. They are
+ * emitted separately as per-wake user messages via
+ * {@link buildEnvironmentTimezone} and {@link buildEnvironmentTimestamp}.
  *
  * Both prompt systems call this so the grounding is identical.
  */
 export function buildEnvironmentContext(): string {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const lines = [
     "## Environment",
-    `- Timezone: ${tz}`,
     `- OS: ${process.platform}`,
     `- Working Directory: ${process.cwd()}`,
   ];
@@ -109,6 +108,18 @@ export function buildEnvironmentContext(): string {
     lines.push(`- System User: ${process.env.USER}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Returns a single-line string with the system timezone for use as a
+ * per-wake user message. Split from {@link buildEnvironmentContext} so the
+ * system prompt stays cache-stable — the timezone can change across sessions
+ * and would invalidate the prompt cache.
+ *
+ * Intended to be placed AFTER the cache breakpoint in the messages array.
+ */
+export function buildEnvironmentTimezone(): string {
+  return `- Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
 }
 
 /**
