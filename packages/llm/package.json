@@ -1,6 +1,6 @@
 {
   "name": "@ujima/llm",
-  "version": "0.0.51",
+  "version": "0.0.52",
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -40,6 +40,10 @@
     "@ai-sdk/openai": "^3.0.53",
     "@ai-sdk/provider": "^3.0.8",
     "@ujima/shared": "workspace:*",
-    "ai": "^6.0.168"
+    "ai": "^6.0.168",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

@@ -60,7 +60,7 @@ import { buildThreadStateBlock } from '../utils/thread-state.js';
 import { buildWorkspaceStateBlock } from '../utils/workspace-state.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
-import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
+import { normalizeTokenUsage } from './token-usage.js';
 import { pendingApprovalRunSummary } from './approval-summary.js';
 import { findTerminatingTool, findTerminatingToolFromRunSteps } from './run-reply-guard.js';
 import { prepareAgentStepPublication } from './agent-step-publish.js';

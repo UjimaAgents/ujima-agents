@@ -1,6 +1,7 @@
 import type { ActivityEvent, RunState } from "@ujima/shared/browser";
 
 const LIVE_RUN_STATUSES = new Set(["queued", "running", "waiting_for_approval", "waiting_for_input"]);
+const MAX_ACTIVITY_LOOKBACK = 160;
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
@@ -33,7 +34,8 @@ function toolCallId(payload: Record<string, unknown> | undefined): string | unde
 
 function findToolName(activity: readonly ActivityEvent[], runId: string, callId: string | undefined, before: number): string | undefined {
   if (!callId) return undefined;
-  for (let i = before; i >= 0; i -= 1) {
+  const start = Math.max(0, before - MAX_ACTIVITY_LOOKBACK);
+  for (let i = before; i >= start; i -= 1) {
     const event = activity[i];
     if (event.type !== "tool_called" || eventRunId(event) !== runId) continue;
     const payload = objectValue(event.payload);
@@ -71,7 +73,8 @@ function textForEvent(event: ActivityEvent, activity: readonly ActivityEvent[], 
 }
 
 export function liveActivityTextForRun(run: RunState, activity: readonly ActivityEvent[]): string {
-  for (let i = activity.length - 1; i >= 0; i -= 1) {
+  const start = Math.max(0, activity.length - MAX_ACTIVITY_LOOKBACK);
+  for (let i = activity.length - 1; i >= start; i -= 1) {
     const event = activity[i];
     if (eventRunId(event) !== run.id) continue;
     return textForEvent(event, activity, i, run.id) ?? runFallback(run);

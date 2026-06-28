@@ -607,7 +607,12 @@ export const channelReplyTool: OrchestratorTool<typeof ChannelReplySchema> = {
     if (messageId) {
       pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
     }
-    return message;
+    return {
+      status: 'sent',
+      message_sent: true,
+      message_id: messageId ?? null,
+      thread_id: message.threadId,
+    };
   },
 };
 
@@ -701,7 +706,13 @@ export const channelDmTool: OrchestratorTool<typeof ChannelDmSchema> = {
     if (messageId) {
       pinResolvedAttachments(ctx, resolveResult.materializations, messageId);
     }
-    return message;
+    return {
+      status: 'sent',
+      message_sent: true,
+      message_id: messageId ?? null,
+      thread_id: message.threadId,
+      recipient_id: recipientId,
+    };
   },
 };
 
