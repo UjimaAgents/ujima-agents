@@ -590,6 +590,12 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         };
       }
       const message = errorMessage(err);
+      console.error('[spirit-agent-run] run failed', {
+        organizationId: input.organizationId,
+        memberId: input.memberId,
+        runId: spirit.runId,
+        error: err instanceof Error ? err.stack ?? err.message : String(err),
+      });
       const failed: Spirit = SpiritSchema.parse({
         ...running,
         status: 'failed',
@@ -608,6 +614,22 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         : [];
       const failedTerminatingTool = findTerminatingToolFromRunSteps(failedRunSteps);
       if (spirit.runId) {
+        this.repo.saveRunStep?.({
+          id: crypto.randomUUID(),
+          organizationId: input.organizationId,
+          runId: spirit.runId,
+          threadId: session.channelId,
+          agentId: input.memberId,
+          toolCallId: `run-error-${spirit.runId}`,
+          toolId: 'agent.run',
+          action: 'execute',
+          resourceType: 'message',
+          resourcePath: '',
+          input: {},
+          output: { error: message },
+          status: 'error',
+          createdAt: new Date().toISOString(),
+        });
         const run = this.repo.getRun(input.organizationId, spirit.runId);
         if (run) {
           this.saveRunAndEmit(SocketEventNames.runCompleted, {

@@ -24,7 +24,7 @@ import { filterVisibleMessages } from './message-visibility.js';
 import { toModelToolName } from '../tools/names.js';
 import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop-result.js';
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
-import { messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
+import { isPendingToolResult, messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
 import { resolveOpenAIAccessToken } from './codex-auth.js';
 
 export function isWakeContextMessage(message: Message): boolean {
@@ -69,7 +69,7 @@ function messageToModelMessages(message: Message, selfId?: string, includeReason
 
   if (role === 'assistant' && message.toolCalls.length > 0) {
     const completedToolCalls = message.toolCalls.filter(
-      (call) => call.result !== undefined && !isPendingResult(call.result),
+      (call) => call.result !== undefined && !isPendingToolResult(call.result),
     );
     if (completedToolCalls.length === 0) {
       return message.content.trim().length > 0 ? [{ role: 'assistant', content: message.content }] : [];
@@ -175,14 +175,6 @@ interface AttachmentLike {
   storagePath: string;
   filename: string;
   mimeType: string;
-}
-
-function isPendingResult(result: unknown): boolean {
-  if (result && typeof result === 'object') {
-    const r = result as { status?: string };
-    return r.status === 'waiting_for_approval' || r.status === 'waiting_for_input';
-  }
-  return false;
 }
 
 function resolveHomeDir(): string {
@@ -384,6 +376,18 @@ export async function resolveSpiritModel(params: {
   const preferred = buildForProvider(preferredProviderName, false);
   if (preferred) return preferred.model;
 
+  const preferredKey = normalizeProviderKey(preferredProviderName);
+  if (preferredKey === 'openai' && params.team.getProvider('openai-codex')) {
+    const codex = buildForProvider('openai-codex', false);
+    if (codex) {
+      console.warn(
+        `[model-resolver] member "${params.memberId}" preferred "openai" has no API key; ` +
+          `using configured "openai-codex" (${codex.modelId}).`,
+      );
+      return codex.model;
+    }
+  }
+
   // 2. Fallback — pick the first OTHER configured provider that BUILDS
   //    and PROBES OK. Probing is what makes this correct: it skips a
   //    provider that's down (Ollama not running) or a model the provider
@@ -391,7 +395,6 @@ export async function resolveSpiritModel(params: {
   //    Candidates are ordered so providers other agents actually use come
   //    first (demonstrably wired up + give us a known-good model), then
   //    alphabetical for stability.
-  const preferredKey = normalizeProviderKey(preferredProviderName);
   const configured = params.listConfiguredProviders?.() ?? {};
   const inUseCount = (name: string): number =>
     params.listProviderModelsInUse?.(name)?.length ?? 0;
@@ -495,7 +498,7 @@ export function defaultResolveModelId(
 // `additionalProperties: false`.
 const GenericToolInvocationSchema = z.object({
   action: z.enum(['read', 'write', 'execute', 'mcp', 'message']),
-  resourceType: z.enum(['file', 'folder', 'shell', 'mcp', 'message']),
+  resourceType: z.enum(['file', 'folder', 'shell', 'mcp', 'message', 'skill']),
   path: z.string().min(1).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
 });

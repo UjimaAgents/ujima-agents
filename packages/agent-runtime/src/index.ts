@@ -24,18 +24,10 @@ export type { ConcurrentRunInputs, ConcurrentRunHandle } from './concurrent';
 export { createAgentWatchdog } from './watchdog';
 export type { AgentWatchdog, WatchdogOptions } from './watchdog';
 
-export { spawnAgentProcess } from './spawn';
-export type { SpawnProcessOptions, AgentProcessHandle } from './spawn';
-export { runInRunner } from './runner';
-export type { RunnerConfig } from './runner';
-
 export type {
   AgentRunInputs,
   AgentRunResult,
   HydrationBundle,
   SpawnReason,
   ExitReason,
-  GateRequest,
-  GateDecision,
-  GateResolver,
 } from './types';

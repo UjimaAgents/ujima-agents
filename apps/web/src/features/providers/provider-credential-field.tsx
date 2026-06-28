@@ -157,18 +157,17 @@ export function ProviderCredentialField({
   if (isOpenAI) {
     return (
       <div className={className ?? "min-w-0 flex-1 space-y-3"}>
-        {/* Auth mode picker */}
         {onAuthModeChange && !isCodex ? (
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900">
             <button
               type="button"
               onClick={() => {
                 onAuthModeChange("apikey");
               }}
-              className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
                 effectiveMode === "apikey"
-                  ? "border-violet-500 bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500"
-                  : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                  ? "bg-white text-zinc-950 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
               }`}
             >
               API key
@@ -178,18 +177,17 @@ export function ProviderCredentialField({
               onClick={() => {
                 onAuthModeChange("codex");
               }}
-              className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
                 effectiveMode === "codex"
-                  ? "border-violet-500 bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500"
-                  : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                  ? "bg-white text-zinc-950 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
               }`}
             >
-              ChatGPT subscription
+              Codex
             </button>
           </div>
         ) : null}
 
-        {/* Credential input based on mode */}
         {effectiveMode === "apikey" ? (
           <TextInput
             type="password"
@@ -200,57 +198,48 @@ export function ProviderCredentialField({
         ) : (
           <div className="space-y-3">
             {loginState === "checking" && (
-              <div className="flex items-center gap-2 text-xs text-zinc-500 py-2">
-                <Loader2 className="h-4 w-4 animate-spin text-violet-500" />
-                Checking login status...
+              <div className="flex items-center gap-2 py-2 text-xs text-zinc-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Checking Codex login...
               </div>
             )}
 
             {loginState === "idle" && (
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50">
-                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  ChatGPT Subscription Login
-                </p>
-                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  Connect your ChatGPT Plus or Pro subscription to use OpenAI models without consumption limits or API billing.
-                </p>
+              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900">
+                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Use local Codex login</p>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">ChatGPT Plus/Pro, no API key.</p>
                 <button
                   type="button"
                   onClick={handleStartLogin}
-                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-violet-700 active:bg-violet-800"
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-zinc-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200"
                 >
-                  Connect subscription
+                  Connect Codex
                 </button>
               </div>
             )}
 
             {loginState === "starting" && (
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50 flex flex-col items-center justify-center py-6 text-center">
-                <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
-                <p className="mt-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  Starting ChatGPT device login...
-                </p>
+              <div className="flex items-center gap-2 rounded-lg bg-zinc-50 p-3 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Starting login...
               </div>
             )}
 
             {loginState === "authorizing" && (
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50 space-y-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-violet-700 dark:text-violet-400">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-500"></span>
-                  </span>
-                  Waiting for authorization...
+              <div className="space-y-3 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900">
+                <div className="flex items-center gap-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Waiting for OpenAI
                 </div>
 
-                <div className="bg-white border border-zinc-100 rounded-lg p-3 dark:bg-zinc-950 dark:border-zinc-900 flex items-center justify-between">
-                  <div className="font-mono text-lg font-bold tracking-wider text-zinc-800 dark:text-zinc-200 select-all">
+                <div className="flex items-center justify-between gap-3 rounded-lg bg-white p-3 dark:bg-zinc-950">
+                  <div className="select-all font-mono text-lg font-bold tracking-wider text-zinc-900 dark:text-zinc-100">
                     {userCode}
                   </div>
                   <button
                     type="button"
                     onClick={handleCopyCode}
-                    className="text-xs font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 flex items-center gap-1.5 border border-zinc-200 rounded px-2 py-1 dark:border-zinc-800 transition bg-zinc-50 dark:bg-zinc-900"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
                   >
                     {copied ? (
                       <>
@@ -266,61 +255,51 @@ export function ProviderCredentialField({
                   </button>
                 </div>
 
-                <div className="space-y-2 text-xs text-zinc-600 dark:text-zinc-400">
-                  <p>1. Open the OpenAI device page:</p>
+                <div className="text-xs text-zinc-500 dark:text-zinc-400">
                   <a
                     href={verificationUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 font-semibold text-violet-600 underline hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300"
+                    className="inline-flex items-center gap-1 font-semibold text-zinc-900 underline hover:text-zinc-600 dark:text-zinc-100 dark:hover:text-zinc-300"
                   >
-                    {verificationUrl}
+                    Open device page
                     <ExternalLink className="h-3 w-3" />
                   </a>
-                  <p className="mt-2">2. Paste the code above to authorize this application.</p>
+                  <span className="ml-2">Paste code above.</span>
                 </div>
               </div>
             )}
 
             {loginState === "completed" && (
-              <div className="rounded-xl border border-green-200 bg-green-50/50 p-4 dark:border-green-950 dark:bg-green-950/20 flex items-start gap-3">
-                <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 shrink-0 mt-0.5" />
+              <div className="flex items-start gap-3 rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/20">
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-green-800 dark:text-green-300">
-                    ChatGPT subscription connected
-                  </p>
-                  <p className="mt-1 text-xs text-green-700/80 dark:text-green-400/80">
-                    Ujima is connected to your ChatGPT session and will use your subscription quota.
-                  </p>
+                  <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">Codex connected</p>
                   <button
                     type="button"
                     onClick={handleStartLogin}
-                    className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-green-700 underline hover:text-green-950 dark:text-green-400 dark:hover:text-green-200 animate-fade-in"
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 underline hover:text-emerald-950 dark:text-emerald-400 dark:hover:text-emerald-200"
                   >
                     <RefreshCw className="h-3 w-3" />
-                    Reconnect subscription
+                    Reconnect
                   </button>
                 </div>
               </div>
             )}
 
             {loginState === "failed" && (
-              <div className="rounded-xl border border-red-200 bg-red-50/50 p-4 dark:border-red-950 dark:bg-red-950/20">
+              <div className="rounded-lg bg-red-50 p-3 dark:bg-red-950/20">
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-red-800 dark:text-red-300">
-                      Connection failed
-                    </p>
-                    <p className="mt-1 text-xs text-red-700/80 dark:text-red-400/80">
-                      {errorMsg}
-                    </p>
+                    <p className="text-sm font-semibold text-red-800 dark:text-red-300">Login failed</p>
+                    <p className="mt-1 text-xs text-red-700/80 dark:text-red-400/80">{errorMsg}</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={handleStartLogin}
-                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-700 active:bg-red-800"
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-700"
                 >
                   Try again
                 </button>

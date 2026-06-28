@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
+    "@ujima/framework": "workspace:*",
     "@playwright/test": "^1.46.0",
     "@tailwindcss/postcss": "4",
     "@ujima/mcp-client": "workspace:*",

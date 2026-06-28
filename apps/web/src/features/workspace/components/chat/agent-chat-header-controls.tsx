@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Check, ChevronDown, Cpu, Shield } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { Member } from "@ujima/shared";
 import {
@@ -10,16 +11,24 @@ import {
   parseConfiguredProviderModelValue,
   resolveMemberModelSelection,
 } from "@ujima/shared/browser";
-import { ShellApprovalMemberModeField } from "@/features/providers/shell-approval-mode-field";
-import { Select } from "@/components/ui/select";
 
-const PROVIDER_LABELS: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", google: "Google" };
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: "OpenAI",
+  "openai-codex": "OpenAI Codex",
+  anthropic: "Anthropic",
+  google: "Google",
+};
+const APPROVAL_OPTIONS: { value: MemberShellApprovalMode; label: string }[] = [
+  { value: "inherit", label: "Use org default" },
+  { value: "always_review", label: "Ask for approval" },
+  { value: "auto_review", label: "Approve for me" },
+  { value: "allow_all", label: "Full access" },
+];
 
 export function AgentChatHeaderControls({
   orgId,
   member,
   providers,
-  orgShellApprovalMode,
   goalMode,
   onMemberUpdated,
 }: {
@@ -31,6 +40,8 @@ export function AgentChatHeaderControls({
   onMemberUpdated: (member: Member) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(false);
 
   const modelOptions = useMemo(
     () =>
@@ -41,7 +52,19 @@ export function AgentChatHeaderControls({
     [providers],
   );
 
-  const selectedModelValue = resolveMemberModelSelection(member);
+  const rawSelectedModelValue = resolveMemberModelSelection(member);
+  const selectedModelValue = useMemo(() => {
+    const parsed = parseConfiguredProviderModelValue(rawSelectedModelValue);
+    if (
+      parsed?.provider === "openai" &&
+      !providers.some((provider) => provider.name === "openai" && provider.hasKey) &&
+      providers.some((provider) => provider.name === "openai-codex" && provider.hasKey)
+    ) {
+      const codexValue = `openai-codex::${parsed.model}`;
+      if (modelOptions.some((option) => option.value === codexValue)) return codexValue;
+    }
+    return rawSelectedModelValue;
+  }, [modelOptions, providers, rawSelectedModelValue]);
   const selectedModelOptions = useMemo(() => {
     if (!selectedModelValue || modelOptions.some((option) => option.value === selectedModelValue)) {
       return modelOptions;
@@ -52,6 +75,7 @@ export function AgentChatHeaderControls({
       {
         value: selectedModelValue,
         label: parsed ? `${providerLabel} · ${parsed.model}` : selectedModelValue,
+        selectedLabel: parsed ? `${providerLabel} · ${parsed.model}` : selectedModelValue,
       },
       ...modelOptions,
     ];
@@ -86,51 +110,90 @@ export function AgentChatHeaderControls({
   };
 
   return (
-    <div className="flex flex-col gap-3.5 text-left">
-      {/* Model Option */}
+    <div className="flex flex-col gap-3 text-left">
       {modelOptions.length > 0 ? (
-        <div className="flex flex-col gap-1">
-          <label htmlFor="agent-model" className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-            Model Selection
-          </label>
-          <Select
-            id="agent-model"
-            size="sm"
-            value={selectedModelValue}
+        <div className="flex flex-col">
+          <button
+            type="button"
             disabled={saving}
-            ariaLabel="Agent model"
-            onChange={(event) => {
-              const parsed = parseConfiguredProviderModelValue(event.target.value);
-              if (!parsed) return;
-              void patchPreferences({ llm: parsed.provider, model: parsed.model });
-            }}
-            options={selectedModelOptions}
-            placeholder="Select model"
-            className="w-full"
-          />
+            onClick={() => setModelOpen((open) => !open)}
+            className="grid w-full grid-cols-[1.25rem_minmax(4.5rem,1fr)_minmax(0,12rem)_1rem] items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[15px] font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            aria-expanded={modelOpen}
+          >
+            <Cpu className="h-5 w-5 text-zinc-500 dark:text-zinc-300" />
+            <span className="min-w-0 truncate">Model</span>
+            <span className="min-w-0 truncate text-right text-sm text-zinc-400">
+              {selectedModelOptions.find((option) => option.value === selectedModelValue)?.selectedLabel ?? "Select model"}
+            </span>
+            <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${modelOpen ? "rotate-180" : ""}`} />
+          </button>
+          {modelOpen ? (
+            <div className="mt-1 flex max-h-64 flex-col overflow-y-auto pl-10">
+              {selectedModelOptions.map((option) => {
+                const parsed = parseConfiguredProviderModelValue(option.value);
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={saving || !parsed}
+                    onClick={() => {
+                      if (!parsed) return;
+                      void patchPreferences({ llm: parsed.provider, model: parsed.model });
+                    }}
+                    className="flex items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[16px] font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-60 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{option.selectedLabel}</span>
+                    {option.value === selectedModelValue ? <Check className="ml-auto h-4 w-4 text-zinc-900 dark:text-white" /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
-      {/* Shell Approval Option */}
-      <div className="flex flex-col gap-1">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-          Shell Execution Approvals
-        </span>
+      <div className="flex flex-col">
         {goalMode ? (
-          <div className="flex pt-0.5">
-            <span className="inline-flex items-center rounded-full border border-amber-200/60 bg-amber-50/50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+          <div className="grid grid-cols-[1.25rem_minmax(4.5rem,1fr)_minmax(0,12rem)] items-center gap-3 rounded-lg px-2.5 py-2 text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
+            <Shield className="h-5 w-5 text-zinc-500 dark:text-zinc-300" />
+            <span className="min-w-0 truncate">Shell approvals</span>
+            <span className="min-w-0 truncate text-right text-sm text-amber-300">
               Goal mode · Auto review
             </span>
           </div>
         ) : (
-          <ShellApprovalMemberModeField
-            value={member.shellApprovalMode ?? "inherit"}
-            orgMode={orgShellApprovalMode}
-            disabled={saving}
-            onChange={(shellApprovalMode) => {
-              void patchPreferences({ shellApprovalMode });
-            }}
-          />
+          <>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => setApprovalOpen((open) => !open)}
+              className="grid w-full grid-cols-[1.25rem_minmax(7rem,1fr)_minmax(0,10rem)_1rem] items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[15px] font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              aria-expanded={approvalOpen}
+            >
+              <Shield className="h-5 w-5 text-zinc-500 dark:text-zinc-300" />
+              <span className="min-w-0 truncate">Shell approvals</span>
+              <span className="min-w-0 truncate text-right text-sm text-zinc-400">
+                {APPROVAL_OPTIONS.find((option) => option.value === (member.shellApprovalMode ?? "inherit"))?.label}
+              </span>
+              <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${approvalOpen ? "rotate-180" : ""}`} />
+            </button>
+            {approvalOpen ? (
+              <div className="mt-1 flex flex-col pl-10">
+                {APPROVAL_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void patchPreferences({ shellApprovalMode: option.value })}
+                    className="flex items-center rounded-lg px-2.5 py-2 text-left text-[16px] font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-60 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                  >
+                    {option.label}
+                    {option.value === (member.shellApprovalMode ?? "inherit") ? <Check className="ml-auto h-4 w-4 text-zinc-900 dark:text-white" /> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </div>

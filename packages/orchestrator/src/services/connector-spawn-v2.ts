@@ -56,6 +56,7 @@ import {
   toModelToolErrorOutput,
   toModelToolOutput,
 } from './tool-loop-result.js';
+import { wrapAttachmentCapture } from '../utils/tool-output.js';
 import type { SpiritMcpPool } from './spirit-types.js';
 import { buildConnectorMetaTools } from '../tools/connector-meta-tools.js';
 import {
@@ -434,20 +435,7 @@ export async function buildMcpToolDefinitionsV2(
                 toolResult: result.output,
               });
               if (capture.attachmentRefs.length > 0) {
-                const existing = result.output;
-                const wrapped: Record<string, unknown> =
-                  existing && typeof existing === 'object' && !Array.isArray(existing)
-                    ? { ...(existing as Record<string, unknown>) }
-                    : { value: existing };
-                wrapped.attachment_refs = capture.attachmentRefs;
-                // Top-level prose hint — the schema-level description
-                // alone wasn't enough to steer the model.
-                wrapped._attachment_capture_note =
-                  `${capture.attachmentRefs.length} attachment(s) from this tool result ` +
-                  `have been captured and are ready to attach to a chat message. ` +
-                  `Use the refs in \`attachment_refs\` with channel.reply / channel.post / ` +
-                  `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
-                  `Do NOT save these bytes to disk first.`;
+                const wrapped = wrapAttachmentCapture(result.output, capture.attachmentRefs);
                 result = { ...result, output: wrapped };
               }
             } catch (err) {

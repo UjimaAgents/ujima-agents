@@ -46,9 +46,7 @@ function ProviderFormModalActive({
   initialName?: string;
   initialBaseUrl?: string;
 }) {
-  // UI dropdown shows "openai" for both openai and openai-codex
   const [uiProvider, setUiProvider] = useState(resolveUiProviderToken(initialName));
-  // Auth mode defaults based on the initial name (e.g. editing an existing openai-codex provider)
   const [authMode, setAuthMode] = useState<OpenAIAuthMode>(
     resolveAuthMode(initialName) ?? "apikey",
   );
@@ -60,7 +58,6 @@ function ProviderFormModalActive({
 
   const isUpdate = mode === "update";
 
-  // The internal token we'll actually save
   const internalToken = resolveInternalProviderToken(uiProvider, authMode);
   const isCodexMode = internalToken === "openai-codex";
   const canSave = Boolean(
@@ -83,13 +80,10 @@ function ProviderFormModalActive({
     }
   };
 
-  // In "add" mode, exclude providers already in use.
-  // For "openai": hide if BOTH "openai" and "openai-codex" are already used.
   const availableOptions = isUpdate
     ? PROVIDER_OPTIONS.filter((opt) => opt.token === resolveUiProviderToken(uiProvider))
     : PROVIDER_OPTIONS.filter((opt) => {
         if (opt.token === "openai") {
-          // Show "OpenAI" if neither openai nor openai-codex is used yet
           return !usedProviderNames.has("openai") || !usedProviderNames.has("openai-codex");
         }
         return !usedProviderNames.has(opt.token);
@@ -100,14 +94,12 @@ function ProviderFormModalActive({
     setApiKey("");
     setBaseUrl("");
     setCodexConnected(false);
-    // Reset auth mode when switching away from OpenAI
     if (!isOpenAIProvider(next)) setAuthMode("apikey");
   };
 
   const handleAuthModeChange = (mode: OpenAIAuthMode) => {
     setAuthMode(mode);
     setCodexConnected(false);
-    // Base URL is hidden under Codex auth; clear so it isn't persisted invisibly.
     if (mode === "codex") setBaseUrl("");
   };
 
@@ -115,7 +107,7 @@ function ProviderFormModalActive({
     <Modal
       isOpen
       onClose={handleClose}
-      title={isUpdate ? `Update ${providerLabelFromToken(uiProvider)}` : "Add provider"}
+      title={isUpdate ? providerLabelFromToken(normalizeProviderKey(initialName)) : "Add provider"}
     >
       <div className="space-y-4">
         <div>
@@ -160,8 +152,7 @@ function ProviderFormModalActive({
               Base URL <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
             </label>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              For self-hosted or OpenAI-compatible endpoints (vLLM, LM Studio, custom Ollama host).
-              Leave blank to use the provider&apos;s default.
+              Custom endpoint. Leave blank for default.
             </p>
             <div className="mt-2">
               <TextInput

@@ -15,6 +15,7 @@
         "@types/node": "^20.14.10",
         "@typescript-eslint/eslint-plugin": "^8.0.0",
         "@typescript-eslint/parser": "^8.0.0",
+        "@ujima/framework": "workspace:*",
         "@ujima/mcp-client": "workspace:*",
         "esbuild": "^0.28.0",
         "eslint": "^9.9.0",
@@ -28,7 +29,7 @@
     },
     "apps/api": {
       "name": "@ujima/api",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "bin": {
         "ujima-runtime": "./dist/main.js",
       },
@@ -65,7 +66,7 @@
     },
     "apps/landing": {
       "name": "landing",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "lucide-react": "^1.8.0",
         "next": "16.2.4",
@@ -86,7 +87,7 @@
     },
     "apps/vscode-extension": {
       "name": "ujima-vscode-extension",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ai-sdk/provider": "^3.0.8",
         "@ujima/agent-runtime": "workspace:*",
@@ -112,7 +113,7 @@
     },
     "apps/web": {
       "name": "web",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ai-sdk/react": "^3.0.170",
         "@tanstack/react-virtual": "^3.13.24",
@@ -143,14 +144,14 @@
     },
     "packages/agent-core": {
       "name": "@ujima/agent-core",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "ai": "^6.0.168",
       },
     },
     "packages/agent-runtime": {
       "name": "@ujima/agent-runtime",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/agent-core": "workspace:*",
         "@ujima/context-store": "workspace:*",
@@ -168,7 +169,7 @@
     },
     "packages/api-schema": {
       "name": "@ujima/api-schema",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/framework": "workspace:*",
         "@ujima/shared": "workspace:*",
@@ -177,7 +178,7 @@
     },
     "packages/cli": {
       "name": "ujima",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "bin": {
         "ujima": "./dist/cli.js",
       },
@@ -197,7 +198,7 @@
     },
     "packages/client-sdk": {
       "name": "@ujima/client-sdk",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/api-schema": "workspace:*",
         "socket.io-client": "^4.7.5",
@@ -205,7 +206,7 @@
     },
     "packages/context-store": {
       "name": "@ujima/context-store",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/shared": "workspace:*",
         "better-sqlite3": "^12.9.0",
@@ -216,7 +217,7 @@
     },
     "packages/distribution": {
       "name": "@ujima/agents",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "bin": {
         "ujima": "./dist/cli.js",
       },
@@ -226,7 +227,7 @@
     },
     "packages/event-bus": {
       "name": "@ujima/event-bus",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/context-store": "workspace:*",
         "@ujima/shared": "workspace:*",
@@ -234,11 +235,11 @@
     },
     "packages/license": {
       "name": "@ujima/license",
-      "version": "0.0.51",
+      "version": "0.0.52",
     },
     "packages/llm": {
       "name": "@ujima/llm",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ai-sdk/anthropic": "^3.0.71",
         "@ai-sdk/deepseek": "^1.0.15",
@@ -255,7 +256,7 @@
     },
     "packages/mcp-client": {
       "name": "@ujima/mcp-client",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.0.0",
         "@ujima/permissions": "workspace:*",
@@ -267,7 +268,7 @@
     },
     "packages/orchestrator": {
       "name": "@ujima/orchestrator",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ai-sdk/anthropic": "^3.0.71",
         "@ai-sdk/google": "^3.0.64",
@@ -291,7 +292,7 @@
     },
     "packages/permissions": {
       "name": "@ujima/permissions",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/context-store": "workspace:*",
         "@ujima/event-bus": "workspace:*",
@@ -300,7 +301,7 @@
     },
     "packages/runtime-core": {
       "name": "@ujima/runtime-core",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/agent-runtime": "workspace:*",
         "@ujima/context-store": "workspace:*",
@@ -317,14 +318,14 @@
     },
     "packages/shared": {
       "name": "@ujima/shared",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "zod": "^3.23.8",
       },
     },
     "packages/ujima": {
       "name": "@ujima/framework",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/shared": "workspace:*",
         "zod": "^3.23.8",
@@ -332,7 +333,7 @@
     },
     "packages/webview": {
       "name": "@ujima/webview",
-      "version": "0.0.51",
+      "version": "0.0.52",
       "dependencies": {
         "@ujima/shared": "workspace:*",
         "react": "^18.3.1",

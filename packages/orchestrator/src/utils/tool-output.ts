@@ -97,3 +97,21 @@ export function formatReadableToolOutput(value: unknown): string | undefined {
 
   return formatRecord(value);
 }
+
+export function wrapAttachmentCapture(
+  output: unknown,
+  attachmentRefs: string[],
+): Record<string, unknown> {
+  const wrapped: Record<string, unknown> =
+    output && typeof output === 'object' && !Array.isArray(output)
+      ? { ...(output as Record<string, unknown>) }
+      : { value: output };
+  wrapped.attachment_refs = attachmentRefs;
+  wrapped._attachment_capture_note =
+    `${attachmentRefs.length} attachment(s) from this tool result ` +
+    `have been captured and are ready to attach to a chat message. ` +
+    `Use the refs in \`attachment_refs\` with channel.reply / channel.post / ` +
+    `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
+    `Do NOT save these bytes to disk first.`;
+  return wrapped;
+}

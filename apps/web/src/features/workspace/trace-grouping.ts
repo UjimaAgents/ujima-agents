@@ -143,6 +143,9 @@ export function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
     }
 
     if (step.title.startsWith("Run ·")) {
+      if (step.status === "success") {
+        continue;
+      }
       currentGroup = {
         id: `aggregated-run-${step.id}`,
         title: `${step.actorName} · ${step.status}`,

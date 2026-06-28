@@ -402,6 +402,7 @@ describe('SpiritService run path', () => {
     };
     const calls: string[] = [];
     let generateCalls = 0;
+    let replayedStep = pendingStep;
     let resumeAfterApproval: (organizationId: string, runId: string) => Promise<unknown> =
       async () => undefined;
     const repo = {
@@ -424,7 +425,11 @@ describe('SpiritService run path', () => {
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
-      listRunSteps: () => [pendingStep],
+      listRunSteps: () => [replayedStep],
+      saveRunStep: (step: any) => {
+        replayedStep = step;
+        return step;
+      },
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
 
@@ -514,6 +519,7 @@ describe('SpiritService run path', () => {
     };
     let toolInvoked = false;
     let generateCalls = 0;
+    let replayedStep = pendingStep;
 
     const repo = {
       getMember: () => ({
@@ -535,7 +541,11 @@ describe('SpiritService run path', () => {
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
-      listRunSteps: () => [pendingStep],
+      listRunSteps: () => [replayedStep],
+      saveRunStep: (step: any) => {
+        replayedStep = step;
+        return step;
+      },
       getThread: () => ({ channelId: 'channel-1' }),
     } as never;
 

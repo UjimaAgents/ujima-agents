@@ -12,6 +12,7 @@ import {
   type MCPDef,
   type Message,
   type RunState,
+  type RunStep,
   type Spirit,
   AGENT_KIND,
   isDirectMessageThread,
@@ -25,6 +26,7 @@ import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { AsyncMutex } from '../utils/async-mutex.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
+import { isPendingToolResult } from '../utils/run-transcript.js';
 import type { ConversationService } from './conversation.js';
 import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -36,6 +38,7 @@ import { isLiveSpiritStatus } from './live-status.js';
 import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
 import { normalizeStepTokenUsage } from './token-usage.js';
+import { wrapAttachmentCapture } from '../utils/tool-output.js';
 import { materializeMcpDef } from './mcp-runtime.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import type { SpawnSpiritInput } from './spirit-types.js';
@@ -50,6 +53,16 @@ import type {
 
 export const DEFAULT_SUPERVISOR_DEBOUNCE_MS = 2_000;
 export const DEFAULT_SUPERVISOR_TURN_CAP_PER_SESSION = 10;
+
+function mcpReplayTarget(invocation: ToolInvocationInput): { serverId: string; toolName: string } | null {
+  if (invocation.toolId !== 'mcp') return null;
+  const input = invocation.input ?? {};
+  const serverId =
+    invocation.permissionMcpId ??
+    (typeof input.mcpServerId === 'string' ? input.mcpServerId : undefined);
+  const toolName = typeof input.toolName === 'string' ? input.toolName : undefined;
+  return serverId && toolName ? { serverId, toolName } : null;
+}
 
 export class SpiritServiceBase {
   protected readonly maxIterationsPerRun: number;
@@ -347,9 +360,6 @@ export class SpiritServiceBase {
     runId: string,
     context: Pick<ToolInvocationInput, 'taskSessionId' | 'spiritRole' | 'wakeReason'>,
   ): Promise<void> {
-    // §12 audit emitter shared across replays in this loop. Built once
-    // per replay batch rather than per-call so the writer can pool any
-    // future per-org state (redaction policy lookup, etc.).
     const audit = createConnectorAuditWriter({ repo: this.repo });
     for (const step of this.listStepsAwaitingApprovedReplay(organizationId, runId)) {
       const invocation: ToolInvocationInput = {
@@ -375,79 +385,83 @@ export class SpiritServiceBase {
         // ToolService persists failures; continue replay so a single
         // bad step doesn't strand sibling approvals on the same run.
       }
-      // §12 connector_invocation_completed for the replayed MCP call.
-      // The original meta-tool / native-wrap path emitted `_requested`
-      // when the model first called the tool; it then SKIPPED
-      // `_completed` because the result was waiting_for_approval.
-      // When the user approves and we replay here, no upstream wrapper
-      // runs — only the inner ToolServiceImpl — so without this emit
-      // the §12 audit chain shows requested-without-completed
-      // indefinitely, and PR 9's curation analysis sees the connector
-      // as "always pending" rather than as a successful invocation.
-      if (invocation.toolId === 'mcp') {
-        const inputRecord = (invocation.input ?? {}) as Record<string, unknown>;
-        const serverId =
-          invocation.permissionMcpId ??
-          (typeof inputRecord.mcpServerId === 'string' ? inputRecord.mcpServerId : undefined);
-        const toolName =
-          typeof inputRecord.toolName === 'string' ? inputRecord.toolName : undefined;
-        if (serverId && toolName) {
-          const success = !!result && result.ok === true;
-          audit.invocationCompleted({
-            organizationId: invocation.organizationId,
-            actorMemberId: invocation.memberId,
-            runId: invocation.runId,
-            serverId,
-            toolName,
-            success,
-            errorMessage: success
-              ? undefined
-              : replayError instanceof Error
-                ? replayError.message
-                : typeof result?.error === 'string'
-                  ? result.error
-                  : 'replay invocation failed',
-          });
-          // Approval-gated MCP calls bypass the V2 execute closure
-          // (which already runs capture), so the replay invokes
-          // ToolService directly. Capture here too so resumed
-          // turns see `attachment_refs` like non-gated turns.
-          if (success && result && this.attachmentCapture) {
-            try {
-              const capture = this.attachmentCapture({
-                organizationId: invocation.organizationId,
-                runId: invocation.runId,
-                memberId: invocation.memberId,
-                serverId,
-                toolName,
-                toolCallId: invocation.toolCallId,
-                toolResult: result.output,
-              });
-              if (capture.attachmentRefs.length > 0) {
-                const existing = result.output;
-                const wrapped: Record<string, unknown> =
-                  existing && typeof existing === 'object' && !Array.isArray(existing)
-                    ? { ...(existing as Record<string, unknown>) }
-                    : { value: existing };
-                wrapped.attachment_refs = capture.attachmentRefs;
-                wrapped._attachment_capture_note =
-                  `${capture.attachmentRefs.length} attachment(s) from this tool result ` +
-                  `have been captured and are ready to attach to a chat message. ` +
-                  `Use the refs in \`attachment_refs\` with channel.reply / channel.post / ` +
-                  `channel.dm via { refType: "tool_call", value: "<ref>" }. ` +
-                  `Do NOT save these bytes to disk first.`;
-                result.output = wrapped;
-              }
-            } catch (err) {
-              console.warn(
-                '[spirit-service-base] replay capture threw',
-                err,
-              );
-            }
-          }
-        }
-      }
+      this.completeMcpReplay(invocation, result, replayError, audit);
+      this.persistReplayResultIfMissing(step, invocation, result, replayError);
     }
+  }
+
+  private completeMcpReplay(
+    invocation: ToolInvocationInput,
+    result: ToolInvocationResult | undefined,
+    replayError: unknown,
+    audit: ReturnType<typeof createConnectorAuditWriter>,
+  ): void {
+    const target = mcpReplayTarget(invocation);
+    if (!target) return;
+    const success = result?.ok === true;
+    audit.invocationCompleted({
+      organizationId: invocation.organizationId,
+      actorMemberId: invocation.memberId,
+      runId: invocation.runId,
+      serverId: target.serverId,
+      toolName: target.toolName,
+      success,
+      errorMessage: success
+        ? undefined
+        : replayError instanceof Error
+          ? replayError.message
+          : typeof result?.error === 'string'
+            ? result.error
+            : 'replay invocation failed',
+    });
+    if (success && result) {
+      this.captureMcpReplayAttachments(invocation, target, result);
+    }
+  }
+
+  private captureMcpReplayAttachments(
+    invocation: ToolInvocationInput,
+    target: { serverId: string; toolName: string },
+    result: ToolInvocationResult,
+  ): void {
+    if (!this.attachmentCapture) return;
+    try {
+      const capture = this.attachmentCapture({
+        organizationId: invocation.organizationId,
+        runId: invocation.runId,
+        memberId: invocation.memberId,
+        serverId: target.serverId,
+        toolName: target.toolName,
+        toolCallId: invocation.toolCallId,
+        toolResult: result.output,
+      });
+      if (capture.attachmentRefs.length === 0) return;
+      result.output = wrapAttachmentCapture(result.output, capture.attachmentRefs);
+    } catch (err) {
+      console.warn('[spirit-service-base] replay capture threw', err);
+    }
+  }
+
+  private persistReplayResultIfMissing(
+    step: RunStep,
+    invocation: ToolInvocationInput,
+    result: ToolInvocationResult | undefined,
+    replayError: unknown,
+  ): void {
+    const current = this.repo
+      .listRunSteps(invocation.organizationId, invocation.runId)
+      .find((item) => item.toolCallId === invocation.toolCallId);
+    if (current?.output !== undefined && !isPendingToolResult(current.output)) return;
+
+    this.repo.saveRunStep({
+      ...step,
+      threadId: step.threadId ?? invocation.threadId,
+      output: result?.output ?? {
+        status: 'blocked',
+        error: replayError instanceof Error ? replayError.message : 'Tool replay failed',
+      },
+      status: result?.ok ? 'ok' : 'error',
+    });
   }
 
   protected detectRunPauseForHuman(organizationId: string, runId: string): HumanPause | null {

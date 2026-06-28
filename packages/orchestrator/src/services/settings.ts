@@ -342,8 +342,7 @@ export class SettingsService {
     const normalizedName = normalizeProviderKey(providerName);
     const config = team.toJSON();
     if (config.providers[normalizedName]) {
-      delete config.providers[normalizedName].authMode;
-      delete config.providers[normalizedName].baseUrl;
+      delete config.providers[normalizedName];
       const updated = AgentTeam(config);
       this.teamStore.setTeam(updated, organizationId);
       persistTeamConfig(this.repo, organizationId, updated);

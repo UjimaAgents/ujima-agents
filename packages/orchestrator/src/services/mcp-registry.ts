@@ -30,6 +30,8 @@ import { materializeMcpDef } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
 import { errorMessage } from '../utils/error-message.js';
+import { writeSecretMap, readSecretMap, deleteSecretIfPresent } from '../utils/mcp-secrets.js';
+import { validateMcpConnectivity } from '../utils/mcp-validation.js';
 
 type McpConnector = (def: MCPDef) => Promise<ConnectResult>;
 
@@ -190,11 +192,11 @@ export class McpRegistryService {
     if (this.repo.getMcpServerByName(input.organizationId, name)) {
       throw new Error(`MCP server "${name}" already exists in this organisation`);
     }
-    this.validateConnectivity(input);
+    validateMcpConnectivity(input);
 
     const now = new Date().toISOString();
-    const envKeyRef = this.writeSecretMap(input.env);
-    const headersKeyRef = this.writeSecretMap(input.headers);
+    const envKeyRef = writeSecretMap(this.repo, input.env);
+    const headersKeyRef = writeSecretMap(this.repo, input.headers);
 
     const server = McpServerSchema.parse({
       id: randomUUID(),
@@ -217,8 +219,8 @@ export class McpRegistryService {
     try {
       this.repo.saveMcpServer(server);
     } catch (err) {
-      this.deleteSecretIfPresent(envKeyRef);
-      this.deleteSecretIfPresent(headersKeyRef);
+      deleteSecretIfPresent(this.repo, envKeyRef);
+      deleteSecretIfPresent(this.repo, headersKeyRef);
       throw err;
     }
     return this.toPublic(server);
@@ -238,13 +240,13 @@ export class McpRegistryService {
     let envKeyRef = existing.envKeyRef;
     let nextEnvKeyRef: string | undefined;
     if (input.env !== undefined) {
-      nextEnvKeyRef = this.writeSecretMap(input.env);
+      nextEnvKeyRef = writeSecretMap(this.repo, input.env);
       envKeyRef = nextEnvKeyRef;
     }
     let headersKeyRef = existing.headersKeyRef;
     let nextHeadersKeyRef: string | undefined;
     if (input.headers !== undefined) {
-      nextHeadersKeyRef = this.writeSecretMap(input.headers);
+      nextHeadersKeyRef = writeSecretMap(this.repo, input.headers);
       headersKeyRef = nextHeadersKeyRef;
     }
 
@@ -265,15 +267,15 @@ export class McpRegistryService {
     try {
       this.repo.saveMcpServer(updated);
     } catch (err) {
-      this.deleteSecretIfPresent(nextEnvKeyRef);
-      this.deleteSecretIfPresent(nextHeadersKeyRef);
+      deleteSecretIfPresent(this.repo, nextEnvKeyRef);
+      deleteSecretIfPresent(this.repo, nextHeadersKeyRef);
       throw err;
     }
     if (input.env !== undefined && existing.envKeyRef !== envKeyRef) {
-      this.deleteSecretIfPresent(existing.envKeyRef);
+      deleteSecretIfPresent(this.repo, existing.envKeyRef);
     }
     if (input.headers !== undefined && existing.headersKeyRef !== headersKeyRef) {
-      this.deleteSecretIfPresent(existing.headersKeyRef);
+      deleteSecretIfPresent(this.repo, existing.headersKeyRef);
     }
     return this.toPublic(updated);
   }
@@ -329,7 +331,7 @@ export class McpRegistryService {
         continue;
       }
       try {
-        this.validateConnectivity(def);
+        validateMcpConnectivity(def);
       } catch (err) {
         skipped.push({
           name,
@@ -344,8 +346,9 @@ export class McpRegistryService {
         });
         continue;
       }
-      const envKeyRef = this.writeSecretMap(Object.keys(def.env).length > 0 ? def.env : undefined);
-      const headersKeyRef = this.writeSecretMap(
+      const envKeyRef = writeSecretMap(this.repo, Object.keys(def.env).length > 0 ? def.env : undefined);
+      const headersKeyRef = writeSecretMap(
+        this.repo,
         def.headers && Object.keys(def.headers).length > 0 ? def.headers : undefined,
       );
       const server = McpServerSchema.parse({
@@ -369,8 +372,8 @@ export class McpRegistryService {
       try {
         this.repo.saveMcpServer(server);
       } catch (err) {
-        this.deleteSecretIfPresent(envKeyRef);
-        this.deleteSecretIfPresent(headersKeyRef);
+        deleteSecretIfPresent(this.repo, envKeyRef);
+        deleteSecretIfPresent(this.repo, headersKeyRef);
         throw err;
       }
       imported.push(this.toPublic(server));
@@ -1219,8 +1222,8 @@ export class McpRegistryService {
    * indicators without ever exposing secret material.
    */
   private toPublic(server: McpServer): McpServerPublic {
-    const env = this.readSecretMap(server.envKeyRef);
-    const headers = this.readSecretMap(server.headersKeyRef);
+    const env = readSecretMap(this.repo, server.envKeyRef);
+    const headers = readSecretMap(this.repo, server.headersKeyRef);
     return McpServerPublicSchema.parse({
       id: server.id,
       organizationId: server.organizationId,
@@ -1245,48 +1248,7 @@ export class McpRegistryService {
     });
   }
 
-  private writeSecretMap(map: Record<string, string> | undefined): string | undefined {
-    if (!map || Object.keys(map).length === 0) return undefined;
-    return this.repo.writeSecret(JSON.stringify(map));
-  }
 
-  private deleteSecretIfPresent(keyRef: string | undefined): void {
-    if (keyRef) this.repo.deleteSecret(keyRef);
-  }
-
-  private readSecretMap(keyRef: string | undefined): Record<string, string> {
-    if (!keyRef) return {};
-    const raw = this.repo.readSecret(keyRef);
-    if (!raw) return {};
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const out: Record<string, string> = {};
-        for (const [key, value] of Object.entries(parsed)) {
-          if (typeof key === 'string' && typeof value === 'string') {
-            out[key] = value;
-          }
-        }
-        return out;
-      }
-    } catch {
-      // Corrupt secret blob — return empty rather than throwing so the
-      // settings page can still render and the operator can fix it.
-    }
-    return {};
-  }
-
-  private validateConnectivity(input: Pick<CreateMcpServerInput, 'transport' | 'command' | 'url'>): void {
-    if (input.transport === 'stdio') {
-      if (!input.command || input.command.trim().length === 0) {
-        throw new Error('stdio MCP servers require a command');
-      }
-    } else {
-      if (!input.url || input.url.trim().length === 0) {
-        throw new Error(`${input.transport} MCP servers require a url`);
-      }
-    }
-  }
 
   private requireOrganization(organizationId: string): void {
     if (!this.repo.getOrganization(organizationId)) {

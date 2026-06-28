@@ -23,9 +23,7 @@ export function appendMissingRunStepMessages(
 ): void {
   if (!steps.length) return;
   const knownIds = extractToolCallIdsFromMessages(threadMessages);
-  const missing = sortByCreatedAt(
-    steps.filter((step) => !knownIds.has(step.toolCallId)),
-  );
+  const missing = completedRunSteps(steps).filter((step) => !knownIds.has(step.toolCallId));
   if (!missing.length) return;
   messages.push(...runStepsToModelMessages(missing));
 }
@@ -34,7 +32,7 @@ export function extractToolCallIdsFromMessages(messages: readonly Message[]): Se
   const ids = new Set<string>();
   for (const message of messages) {
     for (const call of message.toolCalls) {
-      if (call.toolCallId && call.result !== undefined && !isPendingResult(call.result)) {
+      if (call.toolCallId && call.result !== undefined && !isPendingToolResult(call.result)) {
         ids.add(call.toolCallId);
       }
     }
@@ -42,7 +40,7 @@ export function extractToolCallIdsFromMessages(messages: readonly Message[]): Se
   return ids;
 }
 
-function isPendingResult(result: unknown): boolean {
+export function isPendingToolResult(result: unknown): boolean {
   if (result && typeof result === 'object') {
     const r = result as { status?: string };
     return r.status === 'waiting_for_approval' || r.status === 'waiting_for_input';
@@ -50,8 +48,17 @@ function isPendingResult(result: unknown): boolean {
   return false;
 }
 
+export function completedRunSteps(steps: readonly RunStep[]): RunStep[] {
+  const byCall = new Map<string, RunStep>();
+  for (const step of sortByCreatedAt(steps)) {
+    if (step.output === undefined || isPendingToolResult(step.output)) continue;
+    byCall.set(step.toolCallId, step);
+  }
+  return sortByCreatedAt([...byCall.values()]);
+}
+
 export function runStepsToModelMessages(steps: readonly RunStep[]): ModelMessage[] {
-  return steps.filter((step) => step.output !== undefined).flatMap((step) => {
+  return completedRunSteps(steps).flatMap((step) => {
     const call: ToolRoundCall = {
       toolCallId: step.toolCallId,
       toolName: toModelToolName(step.toolId),

@@ -471,7 +471,7 @@ export function ChannelView({
   const composerReasoningEffort =
     useWorkspaceStore((state) =>
       currentThreadId ? state.composerReasoningEffortByThread[currentThreadId] : undefined,
-    ) ?? "none";
+    ) ?? "medium";
   const setComposerReasoningEffort = useWorkspaceStore((state) => state.setComposerReasoningEffort);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
   const [stopError, setStopError] = useState<string | undefined>(undefined);
