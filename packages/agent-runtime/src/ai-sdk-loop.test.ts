@@ -265,7 +265,6 @@ describe('runAiSdkLoop', () => {
       ]),
     );
 
-    let gateCalls = 0;
     const outcome = await runAiSdkLoop({
       agent,
       taskId: 'task-3',
@@ -278,15 +277,8 @@ describe('runAiSdkLoop', () => {
       systemPrompt: 'You are a backend engineer.',
       userPrompt: 'Write src/index.ts.',
       maxIterations: 3,
-      gateResolver: {
-        awaitDecision: async () => {
-          gateCalls++;
-          return { kind: 'reject', reason: 'not yet' };
-        },
-      },
     });
 
-    expect(gateCalls).toBe(1);
     expect(outcome.exitReason).toBe('completed');
     expect(outcome.finalText).toContain('rejected');
   });

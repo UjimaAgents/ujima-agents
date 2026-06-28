@@ -107,7 +107,7 @@ export class ToolServiceImpl implements ToolService {
 
   async invoke(invocation: ToolInvocationInput): Promise<ToolInvocationResult> {
     const run = this.repo.getRun(invocation.organizationId, invocation.runId);
-    if (run && (run.status === "failed" || run.status === "cancelled")) {
+    if (run && (run.status === "cancelled" || (run.status === "failed" && !invocation.bypassPermission))) {
       return {
         ok: false,
         error: "Run is no longer active",
@@ -412,30 +412,7 @@ export class ToolServiceImpl implements ToolService {
     }
   }
 
-  private shouldRequireApproval(
-    team: AgentTeamHandle,
-    invocation: ToolInvocationInput,
-    policyRequiresApproval: boolean,
-  ): boolean {
-    if (!policyRequiresApproval) return false;
 
-    const policies = team.config.policies ?? {};
-    const writesApprovalEnabled = policies.requireApprovalForWrites !== false;
-    const shellApprovalEnabled = policies.requireApprovalForShell !== false;
-
-    if (
-      invocation.toolId === "shell" ||
-      (invocation.resourceType === "shell" && invocation.action === "execute")
-    ) {
-      return shellApprovalEnabled;
-    }
-
-    if (invocation.action === "write") {
-      return writesApprovalEnabled;
-    }
-
-    return policyRequiresApproval;
-  }
 
   private finishPathEscapeFailure(
     invocation: ToolInvocationInput,

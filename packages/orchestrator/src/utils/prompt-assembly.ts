@@ -2,7 +2,7 @@ import type { ModelMessage } from 'ai';
 import type { Message, RunStep } from '@ujima/shared';
 import { sortByCreatedAt } from './message-sort.js';
 import { toModelMessages } from './to-model-messages.js';
-import { extractToolCallIdsFromMessages, runStepsToModelMessages } from './run-transcript.js';
+import { completedRunSteps, extractToolCallIdsFromMessages, runStepsToModelMessages } from './run-transcript.js';
 
 export function buildPromptMessages(input: {
   historyMessages: readonly Message[];
@@ -23,8 +23,8 @@ export function buildPromptMessages(input: {
       }),
     })),
     ...sortByCreatedAt(
-      (input.runSteps ?? [])
-        .filter((step) => step.output !== undefined && !knownToolCallIds.has(step.toolCallId))
+      completedRunSteps(input.runSteps ?? [])
+        .filter((step) => !knownToolCallIds.has(step.toolCallId))
         .map((step) => ({
           createdAt: step.createdAt,
           id: step.id,

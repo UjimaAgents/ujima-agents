@@ -13,7 +13,6 @@ import type { AuditLog } from '@ujima/context-store';
 import type { MCPConnection, ToolInfo } from '@ujima/mcp-client';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import { matchesEscalation } from './escalation';
-import type { GateDecision, GateResolver } from './types';
 
 /**
  * Agent-runtime host wrapper. Tool execution stays local here, while the model
@@ -41,7 +40,6 @@ export interface AiSdkLoopInputs {
   abortSignal?: AbortSignal;
   emitEvent?: (event: UjimaEvent) => Promise<void> | void;
   onStream?: (event: UjimaEvent) => void;
-  gateResolver?: GateResolver;
   /** Optional max tokens cap per turn; defaults to the provider's own cap. */
   maxOutputTokens?: number;
   /** Temperature override; defaults to 0.2 (matches AiService). */
@@ -175,7 +173,6 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     abortSignal,
     emitEvent,
     onStream,
-    gateResolver,
     maxOutputTokens,
     temperature = DEFAULT_SPIRIT_TEMPERATURE,
   } = input;
@@ -240,116 +237,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
             throw new LoopExit({ exitReason: 'token_cap_exceeded' });
           }
 
-          const isGate =
-            decision.code === 'requires_approval' || decision.code === 'requires_input';
-
-          if (isGate && gateResolver) {
-            if (emitEvent) {
-              await emitEvent({
-                event_id: genEventId('evt'),
-                type: 'policy_gate_triggered',
-                publisher: agent.id,
-                timestamp: new Date().toISOString(),
-                task_id: taskId,
-                session_id: sessionId,
-                payload: {
-                  gate: decision.gate,
-                  code: decision.code,
-                  reason: decision.reason,
-                  tool_name: info.name,
-                  tool_call_id: toolCallId,
-                  tool_input: args,
-                  mcp_id: mcp.id,
-                  rule: decision.rule,
-                },
-              });
-            }
-
-            let gateDecision: GateDecision;
-            try {
-              gateDecision = await raceWithAbortSignal(
-                gateResolver.awaitDecision({
-                  agentId: agent.id,
-                  taskId,
-                  sessionId,
-                  toolCallId,
-                  toolName: info.name,
-                  mcpId: mcp.id,
-                  mcpName: mcp.def.name,
-                  args,
-                  gate:
-                    decision.gate ??
-                    (decision.code === 'requires_input' ? 'input' : 'approval'),
-                  code: decision.code as 'requires_approval' | 'requires_input',
-                  reason: decision.reason,
-                  abortSignal,
-                }),
-                abortSignal,
-              );
-            } catch (err) {
-              if (isAbortError(err)) {
-                throw new LoopExit({ exitReason: 'killed' });
-              }
-              const message = err instanceof Error ? err.message : String(err);
-              stream('agent_tool_result', {
-                id: toolCallId,
-                name: info.name,
-                content: `Gate resolver error: ${message}`,
-                isError: true,
-              });
-              return { error: `gate_resolver_error: ${message}` };
-            }
-
-            if (emitEvent) {
-              await emitEvent({
-                event_id: genEventId('evt'),
-                type: 'policy_gate_resolved',
-                publisher: agent.id,
-                timestamp: new Date().toISOString(),
-                task_id: taskId,
-                session_id: sessionId,
-                payload: {
-                  tool_call_id: toolCallId,
-                  tool_name: info.name,
-                  mcp_id: mcp.id,
-                  outcome: gateDecision.kind,
-                  decided_by: gateDecision.decidedBy,
-                  reason: gateDecision.reason,
-                },
-              });
-            }
-
-            if (gateDecision.kind === 'reject') {
-              const rejectMsg = gateDecision.reason
-                ? `Tool "${info.name}" was rejected by a human reviewer: ${gateDecision.reason}`
-                : `Tool "${info.name}" was rejected by a human reviewer.`;
-              await audit.write({
-                event_id: genEventId('tc'),
-                event_type: 'tool_call',
-                agent_id: agent.id,
-                task_id: taskId,
-                session_id: sessionId,
-                tool_name: info.name,
-                tool_input: args,
-                allowed: false,
-                block_reason: `gate_rejected: ${gateDecision.reason ?? 'no reason provided'}`,
-              });
-              stream('agent_tool_result', {
-                id: toolCallId,
-                name: info.name,
-                content: rejectMsg,
-                isError: true,
-                gateResolved: 'reject',
-              });
-              return { error: rejectMsg };
-            }
-
-            // Approved — fall through with possibly edited args.
-            const approvedArgs = gateDecision.args ?? args;
-            return invokeMcpTool(info.name, approvedArgs, /* gated */ true, decision.code);
-          }
-
-          // Denied, no gate resolver — return structured error to the model.
+          // Denied/Requires approval/input, no gate resolver — return structured error to the model.
           await audit.write({
             event_id: genEventId('tc'),
             event_type: 'tool_call',

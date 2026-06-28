@@ -11,6 +11,7 @@ const CODEX_DUMMY_API_KEY = 'ujima-codex-oauth';
 const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const OPENAI_AUTH_ISSUER = 'https://auth.openai.com';
 const RESPONSES_WS_PROTOCOL = 'responses_websockets=2026-02-06';
+const CODEX_WS_OPEN_RETRIES = 2;
 let refreshPromise: Promise<StoredCodexToken | null> | null = null;
 
 interface CodexResponsesOptions {
@@ -106,10 +107,7 @@ async function fetchCodex(
   const body = JSON.parse(init.body) as { stream?: unknown };
   if (body.stream !== true) return fetch(request, init);
 
-  const socket = await openSocket(url, init.headers, pool);
-  return streamSocket(socket, body, init.signal ?? undefined, pool.itemCache, () => {
-    pool.setSocket(null);
-  });
+  return streamSocket(url, init.headers, pool, body, init.signal ?? undefined);
 }
 
 async function openSocket(
@@ -148,25 +146,30 @@ async function openSocket(
 }
 
 function streamSocket(
-  socket: WebSocket,
+  url: URL,
+  headers: FetchHeaders | undefined,
+  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void; itemCache: Map<string, unknown> },
   body: Record<string, unknown>,
   signal: AbortSignal | undefined,
-  itemCache: Map<string, unknown>,
-  invalidate: () => void,
 ): Response {
   const encoder = new TextEncoder();
   let done = false;
+  let socket: WebSocket | null = null;
 
   return new Response(new ReadableStream<Uint8Array>({
     start(controller) {
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      let frameCount = 0;
+      let attempts = 0;
+      let resend: (() => void) | undefined;
       const cleanup = () => {
         if (idleTimer) clearTimeout(idleTimer);
-        socket.off('message', onMessage);
-        socket.off('error', onError);
-        socket.off('close', onClose);
+        socket?.off('message', onMessage);
+        socket?.off('error', onError);
+        socket?.off('close', onClose);
         signal?.removeEventListener('abort', onAbort);
       };
+      const invalidate = () => pool.setSocket(null);
       const resetIdle = () => {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => fail(new Error('Codex WebSocket idle timeout')), 60_000);
@@ -180,10 +183,17 @@ function streamSocket(
       };
       const fail = (error: Error) => {
         if (done) return;
+        if (frameCount === 0 && attempts <= CODEX_WS_OPEN_RETRIES && resend) {
+          cleanup();
+          invalidate();
+          socket?.terminate();
+          resend();
+          return;
+        }
         done = true;
         cleanup();
         invalidate();
-        socket.terminate();
+        socket?.terminate();
         controller.error(error);
       };
       const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {
@@ -192,11 +202,12 @@ function streamSocket(
           return;
         }
         const text = data.toString();
+        frameCount += 1;
         resetIdle();
         controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, '\ndata: ')}\n\n`));
         const event = safeJson(text);
         if (!event) return;
-        rememberCachedItems(event, itemCache);
+        rememberCachedItems(event, pool.itemCache);
         if (event.type === 'response.completed' || event.type === 'response.done') finish();
         if (event.type === 'response.failed' || event.type === 'response.incomplete' || event.type === 'error') finish();
       };
@@ -206,20 +217,39 @@ function streamSocket(
       };
       const onAbort = () => fail(new DOMException('Aborted', 'AbortError'));
 
-      socket.on('message', onMessage);
-      socket.once('error', onError);
-      socket.once('close', onClose);
-      signal?.addEventListener('abort', onAbort, { once: true });
-
       const { stream: _stream, background: _background, ...payload } = body;
-      resetIdle();
-      socket.send(JSON.stringify({ type: 'response.create', ...payload }), (error?: Error) => {
-        if (error) fail(error);
-      });
+      const send = async () => {
+        let lastError: Error | undefined;
+        for (; attempts <= CODEX_WS_OPEN_RETRIES; attempts += 1) {
+          try {
+            socket = await openSocket(url, headers, pool);
+            socket.on('message', onMessage);
+            socket.once('error', onError);
+            socket.once('close', onClose);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            resetIdle();
+            socket.send(JSON.stringify({ type: 'response.create', ...payload }), (error?: Error) => {
+              if (error) fail(error);
+            });
+            return;
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            invalidate();
+            if (frameCount > 0 || attempts === CODEX_WS_OPEN_RETRIES) break;
+          }
+        }
+        fail(lastError ?? new Error('Codex WebSocket connect failed'));
+      };
+
+      resend = () => {
+        attempts += 1;
+        void send();
+      };
+      void send();
     },
     cancel() {
-      invalidate();
-      socket.terminate();
+      pool.setSocket(null);
+      socket?.terminate();
     },
   }), {
     status: 200,

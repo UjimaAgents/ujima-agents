@@ -13,7 +13,6 @@ import { createMockProvider, textTurn, toolTurn } from '@ujima/llm/legacy';
 import { runAgent } from './shell';
 import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
 import { makeFakeMCPConnection } from './test-helpers';
-import type { GateDecision, GateResolver } from './types';
 
 // Runtime enforces the (classification × risk_defaults) decision before
 // any MCP callTool happens.
@@ -86,14 +85,6 @@ describe('runtime enforces classification + risk_defaults', () => {
       }),
     });
 
-    const seenGates: unknown[] = [];
-    const resolver: GateResolver = {
-      async awaitDecision(req) {
-        seenGates.push(req);
-        return { kind: 'approve', decidedBy: 'tester' } satisfies GateDecision;
-      },
-    };
-
     const handle = runAgent({
       agent,
       task,
@@ -106,19 +97,17 @@ describe('runtime enforces classification + risk_defaults', () => {
       context: db.context,
       audit: db.audit,
       agentState: db.agentState,
-      gateResolver: resolver,
     });
 
     const result = await handle.result;
     expect(result.exitReason).toBe('completed');
     expect(onCall).toHaveBeenCalledTimes(1);
-    expect(seenGates).toHaveLength(0);
   });
 
-  it('destructive tool pops a gate even with no explicit rule', async () => {
+  it('destructive tool gets blocked when require_approval is triggered without a resolver', async () => {
     const onCall = vi.fn();
     const provider = createMockProvider({
-      script: [toolTurn('t1', 'delete_thing', {}), textTurn('done')],
+      script: [toolTurn('t1', 'delete_thing', {}), textTurn('denied, stopped')],
     });
     const mcp = makeFakeMCPConnection({ id: 'fs', tools: stubTools, onCall });
     const policy = setRiskDefaults(emptyGovernancePolicy(), {
@@ -133,14 +122,6 @@ describe('runtime enforces classification + risk_defaults', () => {
       }),
     });
 
-    const seenGates: { toolName: string; code: string }[] = [];
-    const resolver: GateResolver = {
-      async awaitDecision(req) {
-        seenGates.push({ toolName: req.toolName, code: req.code });
-        return { kind: 'approve', decidedBy: 'tester' } satisfies GateDecision;
-      },
-    };
-
     const handle = runAgent({
       agent,
       task,
@@ -153,15 +134,13 @@ describe('runtime enforces classification + risk_defaults', () => {
       context: db.context,
       audit: db.audit,
       agentState: db.agentState,
-      gateResolver: resolver,
     });
 
     const result = await handle.result;
     expect(result.exitReason).toBe('completed');
-    expect(seenGates).toHaveLength(1);
-    expect(seenGates[0]).toEqual({ toolName: 'delete_thing', code: 'requires_approval' });
-    // Approval was granted → MCP was called.
-    expect(onCall).toHaveBeenCalledTimes(1);
+    expect(result.finalText).toContain('denied');
+    // Approval required -> not granted -> MCP not called.
+    expect(onCall).not.toHaveBeenCalled();
   });
 
   it('agent rule overrides risk_default — explicit allow lets a destructive tool through', async () => {
@@ -184,14 +163,6 @@ describe('runtime enforces classification + risk_defaults', () => {
       classificationLookup: classMap({ delete_thing: 'destructive' }),
     });
 
-    const seenGates: unknown[] = [];
-    const resolver: GateResolver = {
-      async awaitDecision(req) {
-        seenGates.push(req);
-        return { kind: 'approve', decidedBy: 'tester' };
-      },
-    };
-
     const handle = runAgent({
       agent,
       task,
@@ -204,12 +175,10 @@ describe('runtime enforces classification + risk_defaults', () => {
       context: db.context,
       audit: db.audit,
       agentState: db.agentState,
-      gateResolver: resolver,
     });
 
     const result = await handle.result;
     expect(result.exitReason).toBe('completed');
-    expect(seenGates).toHaveLength(0);
     expect(onCall).toHaveBeenCalledTimes(1);
   });
 

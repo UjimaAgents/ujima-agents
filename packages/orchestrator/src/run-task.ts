@@ -512,7 +512,6 @@ async function spawnAgentRun(input: {
       taskState: input.deps.taskState,
       abortSignal: ctrl.signal,
       onStream: input.deps.onStream,
-      gateResolver: input.deps.gateResolver,
     };
     return { ok: true, member };
   } catch (err) {

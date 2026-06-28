@@ -81,6 +81,7 @@ export async function runAgentWithRetry(
   config: RunAgentExecutionConfig,
 ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
   let currentTools = config.tools;
+  const temperature = supportsTemperature(config.model) ? config.temperature : undefined;
 
   return runAgentLoopWithRetry(
     () => ({
@@ -90,7 +91,7 @@ export async function runAgentWithRetry(
       tools: currentTools,
       stopWhen: config.stopWhen,
       maxOutputTokens: config.maxOutputTokens,
-      temperature: config.temperature,
+      temperature,
       toolChoice: config.toolChoice,
       abortSignal: config.abortSignal,
       onChunk: config.onChunk,
@@ -113,4 +114,9 @@ export async function runAgentWithRetry(
       },
     },
   );
+}
+
+function supportsTemperature(model: LanguageModel): boolean {
+  const meta = model as { provider?: string; modelId?: string };
+  return !(meta.provider === 'openai.responses' && /^gpt-5(?:\.|$|-)/.test(meta.modelId ?? ''));
 }

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolveSpiritModel, defaultResolveProviderName, defaultResolveModelId } from './to-model-messages.js';
 
 vi.mock('@ujima/llm', () => ({
@@ -75,6 +78,46 @@ describe('resolveSpiritModel', () => {
     expect(getKey).toHaveBeenCalledWith('org-1', 'deepseek');
     // Preferred is used as-is — the probe is fallback-only.
     expect(probe).not.toHaveBeenCalled();
+  });
+
+  it('uses openai-codex when stale member preference says openai without an API key', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'ujima-codex-auth-'));
+    try {
+      await writeFile(
+        join(homeDir, 'auth.json'),
+        JSON.stringify({
+          auth_mode: 'chatgpt',
+          tokens: { access_token: 'token' },
+        }),
+      );
+      vi.stubEnv('CODEX_HOME', homeDir);
+
+      const team = buildTeam({
+        agentName: 'agent-1',
+        roleName: 'engineer',
+        rolePreferredProvider: 'openai',
+        providers: {
+          openai: { kind: 'openai', defaultModel: 'gpt-5.4-mini' },
+          'openai-codex': { kind: 'openai-codex', defaultModel: 'gpt-5.4-mini' },
+        },
+      });
+      const result = (await resolveSpiritModel({
+        organizationId: 'org-1',
+        memberId: 'agent-1',
+        role: 'worker',
+        member: { id: 'agent-1', name: 'agent-1', llm: 'openai', model: 'gpt-5.4-mini' },
+        team,
+        getProviderCredential: () => null,
+        resolveProviderName: defaultResolveProviderName,
+        resolveModelId: defaultResolveModelId,
+        probeFallbackModel: probeOnly(),
+      })) as unknown as { input: { kind: string; modelId: string } };
+
+      expect(result.input.kind).toBe('openai-codex');
+      expect(result.input.modelId).toBe('gpt-5.4-mini');
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
   });
 
   it('throws when neither the preferred nor any fallback is usable', async () => {

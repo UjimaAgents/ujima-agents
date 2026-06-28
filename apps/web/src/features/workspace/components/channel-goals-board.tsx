@@ -748,28 +748,15 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
     const isPlanning = selectedGoal.status === "planning";
     return (
       <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 bg-white px-3 py-3 pt-24 dark:bg-[#09090b] gap-4">
-        <div className="flex flex-col gap-1 border-b border-zinc-100 pb-4 dark:border-zinc-800/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <KanbanSquare className="h-5 w-5 text-violet-500" />
-              <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-50">
-                Channel Goals & Tasks
-              </h2>
-            </div>
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Orchestrate agent goals, review pending questions, and track tasks to completion.
-            </p>
-          </div>
-          <div className="shrink-0 mt-3 sm:mt-0">
-            <GoalSwitcherDropdown
-              goals={sortedGoals}
-              selectedGoalId={selectedGoalId}
-              goalTaskCounts={goalTaskCounts}
-              onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
-              onImplement={handleImplement}
-              actionLoading={actionLoading}
-            />
-          </div>
+        <div className="flex justify-end border-b border-zinc-100 pb-4 dark:border-zinc-800/60">
+          <GoalSwitcherDropdown
+            goals={sortedGoals}
+            selectedGoalId={selectedGoalId}
+            goalTaskCounts={goalTaskCounts}
+            onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
+            onImplement={handleImplement}
+            actionLoading={actionLoading}
+          />
         </div>
         <div className="flex-1 flex flex-col items-center justify-center text-center">
           <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
@@ -802,28 +789,15 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
 
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 space-y-4 bg-white px-3 py-3 pt-24 dark:bg-[#09090b]">
-      <div className="flex flex-col gap-1 border-b border-zinc-100 pb-4 dark:border-zinc-800/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <KanbanSquare className="h-5 w-5 text-violet-500" />
-            <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-50">
-              Channel Goals & Tasks
-            </h2>
-          </div>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Orchestrate agent goals, review pending questions, and track tasks to completion.
-          </p>
-        </div>
-        <div className="shrink-0 mt-3 sm:mt-0">
-          <GoalSwitcherDropdown
-            goals={sortedGoals}
-            selectedGoalId={selectedGoalId}
-            goalTaskCounts={goalTaskCounts}
-            onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
-            onImplement={handleImplement}
-            actionLoading={actionLoading}
-          />
-        </div>
+      <div className="flex justify-end border-b border-zinc-100 pb-4 dark:border-zinc-800/60">
+        <GoalSwitcherDropdown
+          goals={sortedGoals}
+          selectedGoalId={selectedGoalId}
+          goalTaskCounts={goalTaskCounts}
+          onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
+          onImplement={handleImplement}
+          actionLoading={actionLoading}
+        />
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pb-4 pr-1">

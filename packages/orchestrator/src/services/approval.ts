@@ -400,7 +400,9 @@ export class ApprovalService {
       }
       const run = this.repo.getRun(input.organizationId, approval.runId);
       if (run) {
-        await this.resumeRun(approval.organizationId, approval.runId, false);
+        void Promise.resolve(this.resumeRun(approval.organizationId, approval.runId, false)).catch((error) => {
+          console.error('[approval] resume after reject failed', error);
+        });
       }
     }
 
@@ -420,12 +422,14 @@ export class ApprovalService {
         });
       }
 
-      await this.resumeRun(
+      void Promise.resolve(this.resumeRun(
         approval.organizationId,
         approval.runId,
         true,
         resumeApprovalScope,
-      );
+      )).catch((error) => {
+        console.error('[approval] resume after approve failed', error);
+      });
     }
 
     return approval;

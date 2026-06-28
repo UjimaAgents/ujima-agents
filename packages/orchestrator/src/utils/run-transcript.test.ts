@@ -84,6 +84,53 @@ describe('runStepsToModelMessages', () => {
       },
     ]);
   });
+
+  it('skips approval wait placeholders and keeps final replay output', () => {
+    const steps: RunStep[] = [
+      {
+        id: 'step-pending',
+        organizationId: 'org-1',
+        runId: 'run-1',
+        agentId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'shell',
+        action: 'execute',
+        resourceType: 'shell',
+        resourcePath: '',
+        input: { command: 'pwd' },
+        output: { status: 'waiting_for_approval', approvalId: 'approval-1' },
+        status: 'ok',
+        createdAt: '2026-06-07T00:00:00.000Z',
+      },
+      {
+        id: 'step-final',
+        organizationId: 'org-1',
+        runId: 'run-1',
+        agentId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'shell',
+        action: 'execute',
+        resourceType: 'shell',
+        resourcePath: '',
+        input: { command: 'pwd' },
+        output: { stdout: '/tmp\n' },
+        status: 'ok',
+        createdAt: '2026-06-07T00:00:01.000Z',
+      },
+    ];
+
+    expect(runStepsToModelMessages(steps)).toMatchObject([
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'call-1' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: 'call-1' }],
+      },
+    ]);
+    expect(JSON.stringify(runStepsToModelMessages(steps))).not.toContain('waiting_for_approval');
+  });
 });
 
 describe('appendMissingRunStepMessages', () => {

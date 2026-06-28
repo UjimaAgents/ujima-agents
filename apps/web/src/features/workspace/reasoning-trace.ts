@@ -1063,7 +1063,7 @@ function formatStructuredToolDetail(
   } else if (name.includes("memory.forget")) {
     const key = nestedInput.key;
     if (key) {
-      parts.push(`Forgot memory: ${cleanVal(key)}`);
+      parts.push(`Key: ${cleanVal(key)}`);
     }
   } else if (name.startsWith("self.procedure.add")) {
     const procName = nestedInput.name;
@@ -1077,7 +1077,7 @@ function formatStructuredToolDetail(
   } else if (name.startsWith("self.procedure.remove")) {
     const procName = nestedInput.name;
     if (procName) {
-      parts.push(`Removed procedure: ${cleanVal(procName)}`);
+      parts.push(`Name: ${cleanVal(procName)}`);
     }
   } else if (name === "goal.start") {
     const title = nestedInput.title;
@@ -1098,10 +1098,22 @@ function formatStructuredToolDetail(
       parts.push(`Options:\n${options.map(opt => `- ${cleanVal(opt)}`).join("\n")}`);
     }
   } else if (name === "goal.task.update") {
-    const status = nestedInput.status;
+    const taskTitle = nestedInput.title ?? resultRecord.title ?? resultRecord.taskTitle;
+    const taskId = nestedInput.task_id ?? resultRecord.id ?? resultRecord.taskId;
+    const previousStatus = resultRecord.previousStatus ?? resultRecord.previous_status;
+    const status = nestedInput.status ?? resultRecord.status;
     const summary = nestedInput.handover_summary ?? nestedInput.handoverSummary;
+    if (taskTitle) {
+      parts.push(`Task: ${cleanVal(taskTitle)}`);
+    } else if (taskId) {
+      parts.push(`Task ID: ${cleanVal(taskId)}`);
+    }
     if (status) {
-      parts.push(`Updated status to: ${cleanVal(status)}`);
+      if (previousStatus && previousStatus !== status) {
+        parts.push(`Status: ${cleanVal(previousStatus)} -> ${cleanVal(status)}`);
+      } else {
+        parts.push(`Status: ${cleanVal(status)}`);
+      }
     }
     if (summary) {
       parts.push(`Handover Summary:\n${cleanVal(summary)}`);
@@ -1160,21 +1172,31 @@ function formatStructuredToolDetail(
       parts.push(cleanVal(message));
     }
   } else {
+    const filteredInput = { ...nestedInput };
+    delete filteredInput.bypassPermission;
+    delete filteredInput.resourceType;
+    delete filteredInput.action;
+    delete filteredInput.organizationId;
+    delete filteredInput.organization_id;
+    delete filteredInput.memberId;
+    delete filteredInput.member_id;
+    delete filteredInput.callerMemberId;
+    delete filteredInput.caller_member_id;
+    delete filteredInput.runId;
+    delete filteredInput.run_id;
+    delete filteredInput.goalId;
+    delete filteredInput.goal_id;
+
     const textVal =
-      nestedInput.value ??
-      nestedInput.content ??
-      nestedInput.text ??
-      nestedInput.body ??
-      nestedInput.message;
+      filteredInput.value ??
+      filteredInput.content ??
+      filteredInput.text ??
+      filteredInput.body ??
+      filteredInput.message;
 
     if (textVal) {
       parts.push(cleanVal(textVal));
     } else {
-      const filteredInput = { ...nestedInput };
-      delete filteredInput.bypassPermission;
-      delete filteredInput.resourceType;
-      delete filteredInput.action;
-
       const formattedInput = formatHumanFriendlyObject(filteredInput);
       if (formattedInput.trim()) {
         parts.push(`Arguments:\n${formattedInput}`);
@@ -1189,7 +1211,31 @@ function formatStructuredToolDetail(
         if (typeof mainText === "string" && mainText.trim()) {
           parts.push(mainText.trim());
         } else {
-          const formattedOutput = formatHumanFriendlyObject(outputVal);
+          const filteredResult = { ...recObj };
+          delete filteredResult.organizationId;
+          delete filteredResult.organization_id;
+          delete filteredResult.memberId;
+          delete filteredResult.member_id;
+          delete filteredResult.runId;
+          delete filteredResult.run_id;
+          delete filteredResult.goalId;
+          delete filteredResult.goal_id;
+
+          if (filteredResult.ok === true) {
+            delete filteredResult.ok;
+          }
+          if (filteredResult.success === true) {
+            delete filteredResult.success;
+          }
+
+          // Remove fields from result that are already present in arguments
+          for (const [k, v] of Object.entries(filteredInput)) {
+            if (filteredResult[k] === v) {
+              delete filteredResult[k];
+            }
+          }
+
+          const formattedOutput = formatHumanFriendlyObject(filteredResult);
           if (formattedOutput.trim()) {
             parts.push(`Result:\n${formattedOutput}`);
           }

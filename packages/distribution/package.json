@@ -36,7 +36,10 @@
     "ujima": "./dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/cli.js",
+    "dist/manifest.json",
+    "dist/runtime/api",
+    "dist/runtime/web",
     "assets",
     "LICENSE",
     "README.md"

@@ -10,7 +10,7 @@ import type { EventBus } from '@ujima/event-bus';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import type { MCPConnection } from '@ujima/mcp-client';
 import type { LanguageModel } from 'ai';
-import type { AgentRunResult, GateResolver } from '@ujima/agent-runtime';
+import type { AgentRunResult } from '@ujima/agent-runtime';
 
 export interface OrchestratorDeps {
   resolveAgent: (agentId: string) => Promise<AgentDef | undefined> | AgentDef | undefined;
@@ -27,7 +27,6 @@ export interface OrchestratorDeps {
   approvals: ApprovalTracker;
   taskState?: TaskStateStore;
   onStream?: (event: UjimaEvent) => void;
-  gateResolver?: GateResolver;
 }
 
 export type TaskStatus = 'running' | 'completed' | 'paused' | 'failed';

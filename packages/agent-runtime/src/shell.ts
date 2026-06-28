@@ -58,7 +58,6 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
     heartbeatIntervalMs = DEFAULT_HEARTBEAT_MS,
     onEvent,
     onStream,
-    gateResolver,
   } = inputs;
 
   if (!model) {
@@ -146,7 +145,6 @@ async function execute(inputs: AgentRunInputs, controller: AbortController): Pro
       abortSignal: controller.signal,
       emitEvent: emit,
       onStream,
-      gateResolver,
     });
 
     agentLogger.setOutcome(outcome);

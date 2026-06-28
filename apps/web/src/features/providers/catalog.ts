@@ -63,7 +63,7 @@ const PROVIDER_LABELS = new Map(
   PROVIDER_OPTIONS.map((option) => [option.token, option.label]),
 );
 // Internal-only tokens that are not in PROVIDER_OPTIONS but still need labels.
-PROVIDER_LABELS.set("openai-codex", "OpenAI");
+PROVIDER_LABELS.set("openai-codex", "OpenAI Codex");
 
 export function normalizeProviderToken(value: string) {
   return value

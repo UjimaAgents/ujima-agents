@@ -505,7 +505,7 @@ function ChatInputComponent({
   readOnly = false,
   reasoningProvider,
   reasoningModelValue,
-  reasoningEffort: reasoningEffortProp = "none",
+  reasoningEffort: reasoningEffortProp = "medium",
   onReasoningEffortChange,
 }: {
   placeholder?: string;

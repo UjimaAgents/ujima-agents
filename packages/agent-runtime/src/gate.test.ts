@@ -8,7 +8,6 @@ import { createMockProvider, textTurn, toolTurn } from '@ujima/llm/legacy';
 import { runAgent } from './shell';
 import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
 import { makeFakeMCPConnection } from './test-helpers';
-import type { GateDecision, GateRequest, GateResolver } from './types';
 
 const agent: AgentDef = {
   id: 'writer',
@@ -70,31 +69,18 @@ describe('runToolLoop — gate pause/resume', () => {
     await db.close();
   });
 
-  it('pauses on require_approval, invokes MCP on approve', async () => {
+  it('blocks tool call when require_approval is triggered, returning block to LLM', async () => {
     const onCall = vi.fn();
     const _provider = createMockProvider({
       script: [
         toolTurn('t1', 'write_file', { path: '/x.md', body: 'hi' }),
-        textTurn('saved'),
+        textTurn('permission denied, stopped'),
       ],
     });
     const mcp = makeFakeMCPConnection({ id: 'fs', tools: fsWriteTool(), onCall });
     const permissions = createPermissionMiddleware({
       audit: db.audit,
       governancePolicy: approvalPolicy(),
-    });
-
-    const seen: GateRequest[] = [];
-    const resolver: GateResolver = {
-      async awaitDecision(req) {
-        seen.push(req);
-        return { kind: 'approve', decidedBy: 'tester' } satisfies GateDecision;
-      },
-    };
-
-    const events: UjimaEvent[] = [];
-    bus.subscribe('docs', (e) => {
-      events.push(e);
     });
 
     const handle = runAgent({
@@ -109,64 +95,15 @@ describe('runToolLoop — gate pause/resume', () => {
       context: db.context,
       audit: db.audit,
       agentState: db.agentState,
-      gateResolver: resolver,
     });
 
     const result = await handle.result;
     expect(result.exitReason).toBe('completed');
-    expect(result.finalText).toContain('saved');
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.toolName).toBe('write_file');
-    expect(seen[0]?.code).toBe('requires_approval');
-    expect(onCall).toHaveBeenCalledTimes(1);
-
-    expect(events.some((e) => e.type === 'policy_gate_triggered')).toBe(true);
-    const resolved = events.find((e) => e.type === 'policy_gate_resolved');
-    expect(resolved?.payload).toMatchObject({ outcome: 'approve', decided_by: 'tester' });
-  });
-
-  it('rejects without calling MCP; LLM sees rejection tool_result', async () => {
-    const onCall = vi.fn();
-    const _provider = createMockProvider({
-      script: [
-        toolTurn('t1', 'write_file', { path: '/x.md' }),
-        textTurn('ok, stopped'),
-      ],
-    });
-    const mcp = makeFakeMCPConnection({ id: 'fs', tools: fsWriteTool(), onCall });
-    const permissions = createPermissionMiddleware({
-      audit: db.audit,
-      governancePolicy: approvalPolicy(),
-    });
-
-    const resolver: GateResolver = {
-      async awaitDecision(): Promise<GateDecision> {
-        return { kind: 'reject', reason: 'looks risky' };
-      },
-    };
-
-    const handle = runAgent({
-      agent,
-      task,
-      sessionId: 's1',
-      spawnReason: 'initial',
-      model: createLanguageModelFromLegacyProvider(_provider, 'mock'),
-      mcp,
-      permissions,
-      eventBus: bus,
-      context: db.context,
-      audit: db.audit,
-      agentState: db.agentState,
-      gateResolver: resolver,
-    });
-
-    const result = await handle.result;
-    expect(result.exitReason).toBe('completed');
+    expect(result.finalText).toContain('permission denied');
     expect(onCall).not.toHaveBeenCalled();
 
     const toolCalls = await db.audit.query({ eventType: 'tool_call' });
     const rejected = toolCalls.find((r) => !r.allowed);
-    expect(rejected?.block_reason).toContain('gate_rejected');
+    expect(rejected?.block_reason).toContain('requires human approval before running');
   });
-
 });

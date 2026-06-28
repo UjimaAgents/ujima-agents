@@ -3,7 +3,6 @@
 import { BookOpen, ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Markdown } from "../markdown";
-import { TERMINAL_PANEL, TERMINAL_SECTION } from "./terminal-chrome";
 
 interface SkillReadPaneProps {
   skillName: string;
@@ -31,7 +30,7 @@ function parseLoadedSkillBlock(raw: string): {
   }
 
   const extract = (tag: string) => {
-    const match = raw.match(new RegExp(`<${tag}>([\s\S]*?)<\/${tag}>`));
+    const match = raw.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
     return match?.[1]?.trim() ?? undefined;
   };
 
@@ -41,6 +40,41 @@ function parseLoadedSkillBlock(raw: string): {
     description: extract("description"),
     instructions,
   };
+}
+
+const Chevron = ({ open }: { open: boolean }) =>
+  open ? (
+    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+  ) : (
+    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+  );
+
+const ROW_BUTTON_CLASS =
+  "flex w-full flex-wrap items-center gap-2 text-xs text-foreground/70 hover:text-foreground/90 text-left transition-colors";
+
+function ExpandableRow({
+  expanded,
+  onToggle,
+  header,
+  trailing,
+  children,
+}: {
+  expanded: boolean;
+  onToggle: (e: React.MouseEvent) => void;
+  header: React.ReactNode;
+  trailing?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="py-1 animate-in fade-in duration-200">
+      <button onClick={onToggle} className={ROW_BUTTON_CLASS}>
+        <span className="flex-1 min-w-0 truncate text-left">{header}</span>
+        {trailing && <span className="shrink-0 ml-auto mr-1.5">{trailing}</span>}
+        <Chevron open={expanded} />
+      </button>
+      {expanded ? children : null}
+    </div>
+  );
 }
 
 export function SkillReadPane({
@@ -55,88 +89,58 @@ export function SkillReadPane({
   const hasInstructions = !!parsed.instructions;
   const isError = status === "failed" || !!parsed.error;
 
-  const accentClass = isError
-    ? "bg-red-500/[0.08] text-red-700 dark:text-red-300"
-    : "bg-violet-500/[0.07] text-violet-700 dark:text-violet-300";
-
-  const badgeClass = isError
-    ? "bg-red-500/[0.1] text-red-700 dark:text-red-300"
-    : "bg-violet-500/[0.1] text-violet-800 dark:text-violet-200";
+  const statusBadge = isError ? (
+    <span className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded font-mono">Failed</span>
+  ) : status === "running" ? (
+    <span className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 px-1.5 py-0.5 rounded font-mono animate-pulse">Running</span>
+  ) : null;
 
   return (
-    <div className={TERMINAL_PANEL}>
-      {/* Header row */}
-      <div
-        className={`${TERMINAL_SECTION} flex items-center gap-2.5 px-3 py-2.5`}
+    <div className="mt-2 pl-2">
+      <ExpandableRow
+        expanded={open}
+        onToggle={(e) => {
+          e.stopPropagation();
+          setOpen(!open);
+        }}
+        header={<span className="font-semibold text-xs text-foreground/85 leading-none">Read skill "{parsed.name ?? skillName}"</span>}
+        trailing={statusBadge}
       >
-        <BookOpen
-          className={`h-3.5 w-3.5 shrink-0 ${isError ? "text-red-400" : "text-violet-500"}`}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${badgeClass}`}
-            >
-              skill.read
-            </span>
-            <span className="truncate font-mono text-[11px] font-semibold text-foreground/85">
-              {parsed.name ?? skillName}
-            </span>
-            {pluginName && (
-              <span className="text-[10px] text-foreground/45 shrink-0">
-                from {pluginName}
-              </span>
-            )}
-          </div>
-          {(parsed.description ?? description) && (
-            <p className="mt-0.5 text-[10px] leading-snug text-foreground/50 line-clamp-2">
-              {parsed.description ?? description}
-            </p>
+        <div className="mt-2 space-y-3">
+          {pluginName && (
+            <div className="flex gap-x-1.5 text-[11px] py-0.5">
+              <span className="text-[10px] font-medium text-foreground/45 select-none">Plugin:</span>
+              <code className="font-mono text-[10px] text-violet-750 dark:text-violet-300 bg-violet-500/[0.04] dark:bg-white/5 px-1.5 py-0.5 rounded">{pluginName}</code>
+            </div>
           )}
-        </div>
-      </div>
-
-      {/* Error state */}
-      {parsed.error && (
-        <div className="px-3 pb-2.5 pt-0">
-          <p className="text-[10px] leading-snug text-red-600 dark:text-red-400">
-            {parsed.error}
-          </p>
-        </div>
-      )}
-
-      {/* Instructions expandable */}
-      {hasInstructions && (
-        <div className="border-t border-foreground/[0.06]">
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-foreground/[0.02] transition-colors"
-            aria-expanded={open}
-          >
-            {open ? (
-              <ChevronDown className="h-3 w-3 shrink-0 text-foreground/45" />
-            ) : (
-              <ChevronRight className="h-3 w-3 shrink-0 text-foreground/45" />
-            )}
-            <span className="text-[10px] font-semibold text-foreground/55 uppercase tracking-wide">
-              Instructions
-            </span>
-            <span className={`ml-auto inline-block rounded px-1.5 py-0.5 text-[9px] font-medium ${accentClass}`}>
-              loaded
-            </span>
-          </button>
-
-          {open && parsed.instructions && (
-            <div className="border-t border-foreground/[0.06] px-3 py-3">
-              <Markdown
-                content={parsed.instructions}
-                className="!text-[11px] !leading-relaxed !text-foreground/70 [&_p]:!my-2 [&_ul]:!my-2 [&_ol]:!my-2 [&_h1]:!text-[11px] [&_h2]:!text-[11px] [&_h3]:!text-[11px] [&_code]:text-[10px]"
-              />
+          {(parsed.description ?? description) && (
+            <div className="flex gap-x-1.5 text-[11px] py-0.5">
+              <span className="text-[10px] font-medium text-foreground/45 select-none">Description:</span>
+              <span className="text-foreground/75 font-mono">{parsed.description ?? description}</span>
+            </div>
+          )}
+          {parsed.instructions && (
+            <div className="space-y-1.5 select-text">
+              <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-foreground/40 select-none mb-1">
+                <BookOpen className="h-3 w-3 shrink-0 text-violet-500/60 dark:text-violet-400/60" />
+                <span>Instructions</span>
+              </div>
+              <div className="pl-2">
+                <Markdown
+                  content={parsed.instructions}
+                  className="!text-[11px] !leading-relaxed !text-foreground/75 [&_p]:!my-0 [&_code]:text-[10px] whitespace-pre-wrap font-mono"
+                />
+              </div>
+            </div>
+          )}
+          {parsed.error && (
+            <div className="flex gap-x-1.5 text-[11px] py-0.5">
+              <span className="text-[10px] font-medium text-foreground/45 select-none">Error:</span>
+              <span className="text-red-600 dark:text-red-400 font-mono">{parsed.error}</span>
             </div>
           )}
         </div>
-      )}
+      </ExpandableRow>
     </div>
   );
 }
