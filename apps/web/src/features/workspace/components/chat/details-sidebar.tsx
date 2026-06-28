@@ -111,7 +111,7 @@ export interface TraceStepData {
 
 function PathBreadcrumb({ path, className = "" }: { path: string; className?: string }) {
   if (!path) return null;
-  const cleaned = path.replace(/.*\/Work\/[^\/]+\//, "").replace(/^\.\//, "");
+  const cleaned = path.replace(/.*\/Work\/[^/]+\//, "").replace(/^\.\//, "");
   const index = Math.max(cleaned.lastIndexOf("/"), cleaned.lastIndexOf("\\"));
   if (index >= 0) {
     const prefix = cleaned.slice(0, index + 1);
@@ -290,7 +290,7 @@ function AggregatedRunPanel({
                       <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
                     </span>
                   }
-                  trailing={<DiffStat additions={op.additions} deletions={op.deletions} />}
+                  trailing={!isExpanded ? <DiffStat additions={op.additions} deletions={op.deletions} /> : null}
                 >
                   <DiffBody op={op} />
                 </ExpandableRow>

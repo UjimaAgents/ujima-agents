@@ -199,7 +199,7 @@ export function buildStableWakeContext(input: WakeContextInput): string {
  * Returns an empty array when no per-wake content applies — caller
  * appends as-is to its messages array.
  */
-export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[] {
+export function buildWakeContextMessages(_input: WakeContextInput): ModelMessage[] {
   return [
     {
       role: 'user',

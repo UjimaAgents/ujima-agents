@@ -228,7 +228,7 @@ export function ProviderCredentialField({
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50 flex flex-col items-center justify-center py-6 text-center">
                 <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
                 <p className="mt-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  Contacting Codex App Server...
+                  Starting ChatGPT device login...
                 </p>
               </div>
             )}

@@ -129,7 +129,12 @@ describe('channel.* tools — toInvocation()', () => {
       });
       expect(sent).toBe(true);
       expect(recipientId).toBe('agent-2');
-      expect(result).toMatchObject({ id: 'm1' });
+      expect(result).toMatchObject({
+        status: 'sent',
+        message_sent: true,
+        message_id: 'm1',
+        recipient_id: 'agent-2',
+      });
     });
 
     it('allows an agent DMing a human', async () => {

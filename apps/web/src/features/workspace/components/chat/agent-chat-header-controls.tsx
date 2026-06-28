@@ -130,7 +130,6 @@ export function AgentChatHeaderControls({
             onChange={(shellApprovalMode) => {
               void patchPreferences({ shellApprovalMode });
             }}
-            className="w-full"
           />
         )}
       </div>

@@ -180,6 +180,97 @@ interface ReasoningTraceParams {
   organizationId?: string;
 }
 
+function FloatingStatusRail({
+  channels,
+  members,
+  currentThreadId,
+  activeTerminals,
+  onOpenChat,
+  onOpenTerminal,
+}: {
+  channels: BootstrapResponse["channels"];
+  members: BootstrapResponse["members"];
+  currentThreadId?: string;
+  activeTerminals: ActiveJob[];
+  onOpenChat: (threadId: string, name: string) => void;
+  onOpenTerminal: () => void;
+}) {
+  const { globalActiveRuns, approvals, activity } = useWorkspaceStore(
+    useShallow((state) => ({
+      globalActiveRuns: state.globalActiveRuns,
+      approvals: state.approvals,
+      activity: state.activity,
+    })),
+  );
+  const activeAgentChats = useMemo(
+    () => selectActiveAgentChats({
+      channels,
+      members,
+      globalActiveRuns,
+      approvals,
+      activity,
+    }, currentThreadId),
+    [activity, approvals, channels, currentThreadId, globalActiveRuns, members],
+  );
+
+  if (activeAgentChats.length === 0 && activeTerminals.length === 0) return null;
+
+  return (
+    <div className="relative z-20 flex shrink-0 flex-wrap gap-2 px-3 pb-1.5 pt-1 animate-in slide-in-from-bottom-2 duration-300">
+      {activeAgentChats.map((chat) => (
+        <button
+          key={chat.threadId}
+          type="button"
+          onClick={() => onOpenChat(chat.threadId, chat.name)}
+          className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate font-medium">
+              {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
+            </span>
+            {chat.activityText ? (
+              <span className="live-activity-shimmer block truncate text-[10px] leading-tight">
+                {chat.activityText}
+              </span>
+            ) : null}
+          </span>
+          {chat.pendingApprovals > 0 ? (
+            <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950">
+              {chat.pendingApprovals} approval{chat.pendingApprovals === 1 ? "" : "s"}
+            </span>
+          ) : null}
+        </button>
+      ))}
+      {activeTerminals.length > 0 ? (
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={onOpenTerminal}
+            className="flex items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
+          >
+            <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500 dark:text-zinc-400" />
+            <span>
+              {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenTerminal}
+            className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-zinc-200/50 bg-white/30 text-zinc-500 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-400"
+            aria-label="More terminal details"
+          >
+            <span className="text-xs font-semibold">...</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function useReasoningTrace({
   currentThreadId,
   reasoningTraceVisible,
@@ -376,12 +467,6 @@ export function ChannelView({
   }, [currentChannel?.memberIds]);
 
   const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
-  const globalApprovals = useWorkspaceStore((state) => state.approvals);
-  const globalActivity = useWorkspaceStore((state) => state.activity);
-  const activeAgentChats = useMemo(
-    () => selectActiveAgentChats({ channels: bootstrap.channels, members, globalActiveRuns, approvals: globalApprovals, activity: globalActivity }, currentThreadId),
-    [bootstrap.channels, currentThreadId, globalActiveRuns, globalApprovals, globalActivity, members],
-  );
   const activeTerminals = useWorkspaceStore(selectActiveTerminals);
   const composerReasoningEffort =
     useWorkspaceStore((state) =>
@@ -789,6 +874,14 @@ export function ChannelView({
     },
     [setActiveTab],
   );
+  const openAgentChat = useCallback((threadId: string, name: string) => {
+    handleTabChange("conversation");
+    onSelectConversation?.({
+      type: "channel",
+      id: threadId,
+      name,
+    });
+  }, [handleTabChange, onSelectConversation]);
 
   const handleOpenTasksTab = useCallback(() => {
     handleTabChange("tasks");
@@ -1157,68 +1250,14 @@ export function ChannelView({
             <TabEmpty context="activity" label="No activity." />
           )
         )}
-        {(activeAgentChats.length > 0 || activeTerminals.length > 0) && (
-          <div className="relative z-20 flex shrink-0 flex-wrap gap-2 px-3 pb-1.5 pt-1 animate-in slide-in-from-bottom-2 duration-300">
-            {activeAgentChats.map((chat) => (
-              <button
-                key={chat.threadId}
-                type="button"
-                onClick={() => {
-                  handleTabChange("conversation");
-                  onSelectConversation?.({
-                    type: "channel",
-                    id: chat.threadId,
-                    name: chat.name,
-                  });
-                }}
-                className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
-              >
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">
-                    {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
-                  </span>
-                  {chat.activityText ? (
-                    <span className="live-activity-shimmer block truncate text-[10px] leading-tight">
-                      {chat.activityText}
-                    </span>
-                  ) : null}
-                </span>
-                {chat.pendingApprovals > 0 ? (
-                  <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950">
-                    {chat.pendingApprovals} approval{chat.pendingApprovals === 1 ? "" : "s"}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-
-            {activeTerminals.length > 0 && (
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsTerminalDrawerOpen(true)}
-                  className="flex items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
-                >
-                  <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500 dark:text-zinc-400" />
-                  <span>
-                    {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsTerminalDrawerOpen(true)}
-                  className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-zinc-200/50 bg-white/30 text-zinc-500 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-400"
-                  aria-label="More terminal details"
-                >
-                  <span className="text-xs font-semibold">...</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        <FloatingStatusRail
+          channels={bootstrap.channels}
+          members={members}
+          currentThreadId={currentThreadId}
+          activeTerminals={activeTerminals}
+          onOpenChat={openAgentChat}
+          onOpenTerminal={() => setIsTerminalDrawerOpen(true)}
+        />
         {showNewMessages ? (
           <div className="shrink-0 px-3 pb-2">
             <div className="flex justify-center">

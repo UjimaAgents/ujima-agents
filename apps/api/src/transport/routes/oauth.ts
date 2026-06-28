@@ -1,161 +1,175 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
 interface CodexLoginSession {
-  child: ReturnType<typeof spawn>;
   loginId: string;
+  deviceAuthId: string;
   verificationUrl: string;
   userCode: string;
   status: 'pending' | 'completed' | 'failed' | 'timeout';
   error?: string;
   lastUpdated: number;
+  expiresAt: number;
+  intervalMs: number;
 }
 
+const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+const OPENAI_AUTH_ISSUER = 'https://auth.openai.com';
+const DEVICE_VERIFICATION_URL = `${OPENAI_AUTH_ISSUER}/codex/device`;
+const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000;
 const activeLoginSessions = new Map<string, CodexLoginSession>();
+
+function resolveCodexHome(): string {
+  return process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+}
 
 // Cleanup interval to avoid leaking processes
 setInterval(() => {
   const now = Date.now();
   for (const [loginId, session] of activeLoginSessions.entries()) {
-    if (now - session.lastUpdated > 5 * 60 * 1000) {
-      try {
-        session.child.kill('SIGKILL');
-      } catch (error) {
-        void error;
-      }
+    if (now > session.expiresAt || now - session.lastUpdated > 10 * 60 * 1000) {
+      session.status = 'timeout';
       activeLoginSessions.delete(loginId);
     }
   }
 }, 60 * 1000);
 
-function startCodexLogin(): Promise<{ loginId: string; verificationUrl: string; userCode: string }> {
-  return new Promise((resolve, reject) => {
-    const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
-    const child = spawn('codex', ['app-server', '--stdio'], {
-      env: { ...process.env, CODEX_HOME: home },
-    });
-
-    let resolved = false;
-    let stdoutBuffer = '';
-    let loginIdRef = '';
-
-    const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        try { child.kill('SIGKILL'); } catch (error) { void error; }
-        reject(new Error('Timeout starting Codex login flow'));
-      }
-    }, 15000);
-
-    child.on('error', (err) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timeout);
-        reject(err);
-      }
-    });
-
-    child.on('close', (code) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timeout);
-        reject(new Error(`Codex App Server closed unexpectedly with code ${code}`));
-      } else if (loginIdRef) {
-        const session = activeLoginSessions.get(loginIdRef);
-        if (session && session.status === 'pending') {
-          session.status = 'failed';
-          session.error = `Codex App Server closed with code ${code}`;
-        }
-      }
-    });
-
-    child.stdout?.on('data', (chunk) => {
-      stdoutBuffer += chunk.toString();
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const msg = JSON.parse(line);
-
-          // 1. Check response to account/login/start
-          if (msg.id === 2) {
-            if (resolved) continue;
-            resolved = true;
-            clearTimeout(timeout);
-            if (msg.error) {
-              try { child.kill('SIGTERM'); } catch (error) { void error; }
-              reject(new Error(msg.error.message || 'Failed to start login'));
-            } else {
-              const { loginId, verificationUrl, userCode } = msg.result || {};
-              if (!loginId || !verificationUrl || !userCode) {
-                try { child.kill('SIGTERM'); } catch (error) { void error; }
-                reject(new Error('Invalid response from Codex App Server'));
-              } else {
-                loginIdRef = loginId;
-                const session: CodexLoginSession = {
-                  child,
-                  loginId,
-                  verificationUrl,
-                  userCode,
-                  status: 'pending',
-                  lastUpdated: Date.now(),
-                };
-                activeLoginSessions.set(loginId, session);
-                resolve({ loginId, verificationUrl, userCode });
-              }
-            }
-          }
-
-          // 2. Check for notifications
-          if (msg.method === 'account/login/completed') {
-            const { success, error, loginId } = msg.params || {};
-            const targetId = loginId || loginIdRef;
-            if (targetId) {
-              const session = activeLoginSessions.get(targetId);
-              if (session) {
-                session.status = success ? 'completed' : 'failed';
-                if (error) session.error = error;
-                session.lastUpdated = Date.now();
-                try { child.kill('SIGTERM'); } catch (error) { void error; }
-              }
-            }
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-    });
-
-    // Write initialize request
-    child.stdin?.write(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'initialize',
-        id: 1,
-        params: {
-          clientInfo: { name: 'ujima', version: '0.0.1' },
-        },
-      }) + '\n'
-    );
-
-    // Write login start request
-    child.stdin?.write(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'account/login/start',
-        id: 2,
-        params: {
-          type: 'chatgptDeviceCode',
-        },
-      }) + '\n'
-    );
+async function startCodexLogin(): Promise<{ loginId: string; verificationUrl: string; userCode: string }> {
+  const response = await fetch(`${OPENAI_AUTH_ISSUER}/api/accounts/deviceauth/usercode`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'ujima/0.0.1',
+    },
+    body: JSON.stringify({ client_id: CODEX_CLIENT_ID }),
   });
+  if (!response.ok) throw new Error(`Failed to start ChatGPT device login: ${response.status}`);
+
+  const body = await response.json() as {
+    device_auth_id?: string;
+    user_code?: string;
+    interval?: string | number;
+    expires_in?: number;
+  };
+  if (!body.device_auth_id || !body.user_code) throw new Error('Invalid ChatGPT device login response');
+
+  const loginId = randomUUID();
+  const session: CodexLoginSession = {
+    loginId,
+    deviceAuthId: body.device_auth_id,
+    verificationUrl: DEVICE_VERIFICATION_URL,
+    userCode: body.user_code,
+    status: 'pending',
+    lastUpdated: Date.now(),
+    expiresAt: Date.now() + (body.expires_in ?? 600) * 1000,
+    intervalMs: Math.max(Number(body.interval) || 5, 1) * 1000,
+  };
+  activeLoginSessions.set(loginId, session);
+  void pollCodexLogin(session);
+  return { loginId, verificationUrl: session.verificationUrl, userCode: session.userCode };
+}
+
+async function pollCodexLogin(session: CodexLoginSession): Promise<void> {
+  while (session.status === 'pending' && Date.now() < session.expiresAt) {
+    await new Promise((resolve) => setTimeout(resolve, session.intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS));
+    if (session.status !== 'pending') return;
+    try {
+      const response = await fetch(`${OPENAI_AUTH_ISSUER}/api/accounts/deviceauth/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'ujima/0.0.1',
+        },
+        body: JSON.stringify({
+          device_auth_id: session.deviceAuthId,
+          user_code: session.userCode,
+        }),
+      });
+
+      if (response.status === 403 || response.status === 404) continue;
+      if (!response.ok) throw new Error(`Device authorization failed: ${response.status}`);
+
+      const device = await response.json() as { authorization_code?: string; code_verifier?: string };
+      if (!device.authorization_code || !device.code_verifier) throw new Error('Invalid ChatGPT authorization response');
+
+      const tokens = await exchangeCodexTokens(device.authorization_code, device.code_verifier);
+      writeCodexAuth(tokens);
+      session.status = 'completed';
+      session.lastUpdated = Date.now();
+      return;
+    } catch (error) {
+      session.status = 'failed';
+      session.error = error instanceof Error ? error.message : String(error);
+      session.lastUpdated = Date.now();
+      return;
+    }
+  }
+  if (session.status === 'pending') session.status = 'timeout';
+}
+
+async function exchangeCodexTokens(code: string, codeVerifier: string): Promise<CodexTokenResponse> {
+  const response = await fetch(`${OPENAI_AUTH_ISSUER}/oauth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: `${OPENAI_AUTH_ISSUER}/deviceauth/callback`,
+      client_id: CODEX_CLIENT_ID,
+      code_verifier: codeVerifier,
+    }).toString(),
+  });
+  if (!response.ok) throw new Error(`Token exchange failed: ${response.status}`);
+  return response.json() as Promise<CodexTokenResponse>;
+}
+
+interface CodexTokenResponse {
+  id_token?: string;
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+}
+
+function writeCodexAuth(tokens: CodexTokenResponse): void {
+  const path = join(resolveCodexHome(), 'auth.json');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({
+    auth_mode: 'chatgpt',
+    tokens: {
+      id_token: tokens.id_token,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+      account_id: extractAccountId(tokens),
+    },
+  }, null, 2), { mode: 0o600 });
+}
+
+function extractAccountId(tokens: CodexTokenResponse): string | undefined {
+  return extractAccountIdFromJwt(tokens.id_token) ?? extractAccountIdFromJwt(tokens.access_token);
+}
+
+function extractAccountIdFromJwt(token: string | undefined): string | undefined {
+  if (!token) return undefined;
+  const parts = token.split('.');
+  if (parts.length !== 3) return undefined;
+  const payload = parts[1];
+  if (!payload) return undefined;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString()) as {
+      chatgpt_account_id?: string;
+      organizations?: { id?: string }[];
+      'https://api.openai.com/auth'?: { chatgpt_account_id?: string };
+    };
+    return claims.chatgpt_account_id ?? claims['https://api.openai.com/auth']?.chatgpt_account_id ?? claims.organizations?.[0]?.id;
+  } catch {
+    return undefined;
+  }
 }
 
 export function registerOauthRoutes(_app: FastifyInstance): void {
@@ -214,11 +228,7 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
     const { loginId } = req.query;
 
     if (hasCodexAccessToken()) {
-      const session = activeLoginSessions.get(loginId);
-      if (session) {
-        try { session.child.kill('SIGTERM'); } catch (error) { void error; }
-        activeLoginSessions.delete(loginId);
-      }
+      activeLoginSessions.delete(loginId);
       return { status: 'completed' as const };
     }
 
@@ -239,9 +249,8 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
 }
 
 function hasCodexAccessToken(): boolean {
-  const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
   try {
-    const auth = JSON.parse(readFileSync(join(home, 'auth.json'), 'utf8')) as {
+    const auth = JSON.parse(readFileSync(join(resolveCodexHome(), 'auth.json'), 'utf8')) as {
       tokens?: { access_token?: unknown };
       OPENAI_API_KEY?: unknown;
     };

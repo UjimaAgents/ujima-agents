@@ -1,6 +1,6 @@
 {
   "name": "@ujima/agent-core",
-  "version": "0.0.51",
+  "version": "0.0.52",
   "private": true,
   "main": "./dist/index.js",
   "types": "./src/index.ts",

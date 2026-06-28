@@ -7,6 +7,7 @@ import { defaultSettingsMiddleware, wrapLanguageModel, type LanguageModel } from
 import type { ReasoningEffort } from '@ujima/shared';
 import { clampReasoningEffortForProvider } from '@ujima/shared';
 import { createCodexAppServerModel } from './codex-app-server.js';
+import { createCodexResponsesModel } from './codex-responses.js';
 import { LLMError, PROVIDER_KINDS, type ProviderKind } from './types.js';
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
@@ -222,11 +223,29 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
   }
 
   if (input.kind === 'openai-codex') {
-    return createCodexAppServerModel({
-      modelId: input.modelId,
-      cwd: input.cwd,
-      reasoningEffort: input.reasoningEffort,
-    });
+    if (process.env.UJIMA_CODEX_TRANSPORT === 'app-server') {
+      return createCodexAppServerModel({
+        modelId: input.modelId,
+        cwd: input.cwd,
+        reasoningEffort: input.reasoningEffort,
+      });
+    }
+
+    const accessToken = input.apiKey ?? process.env.UJIMA_CODEX_ACCESS_TOKEN ?? process.env.CHATGPT_ACCESS_TOKEN;
+    if (!accessToken) {
+      throw new LLMError('not_configured', 'openai-codex responses transport requires apiKey or UJIMA_CODEX_ACCESS_TOKEN');
+    }
+
+    return withReasoning(
+      createCodexResponsesModel({
+        modelId: input.modelId,
+        accessToken,
+        baseUrl: input.baseUrl,
+      }),
+      input.kind,
+      input.reasoningEffort,
+      input.modelId,
+    );
   }
 
   const exhaustive: never = input.kind;

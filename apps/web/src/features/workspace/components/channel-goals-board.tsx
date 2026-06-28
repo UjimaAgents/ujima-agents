@@ -228,13 +228,33 @@ interface TaskCardProps {
   depTask: GoalTask | null | undefined;
   isBlocked: boolean;
   assigneeName: string;
-  activityText?: string;
   actionLoading: boolean;
   members: BootstrapResponse["members"];
-  tasks: GoalTask[];
   refresh: () => Promise<void>;
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
+}
+
+function TaskActivityLine({ assigneeId }: { assigneeId: string }) {
+  const activeRuns = useWorkspaceStore((state) => state.globalActiveRuns);
+  const activity = useWorkspaceStore((state) => state.activity);
+  const text = useMemo(() => {
+    let latest: (typeof activeRuns)[number] | undefined;
+    for (const run of activeRuns) {
+      if (!isLiveRun(run) || run.agentId !== assigneeId) continue;
+      if (!latest || Date.parse(run.startedAt) > Date.parse(latest.startedAt)) latest = run;
+    }
+    return latest ? liveActivityTextForRun(latest, activity) : undefined;
+  }, [activeRuns, activity, assigneeId]);
+
+  if (!text) return null;
+
+  return (
+    <div className="mb-2 flex min-w-0 items-center gap-1.5 text-[10px] font-medium">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
+      <span className="live-activity-shimmer truncate">{text}</span>
+    </div>
+  );
 }
 
 function TaskCard({
@@ -242,7 +262,6 @@ function TaskCard({
   depTask,
   isBlocked,
   assigneeName,
-  activityText,
   actionLoading,
   members,
   refresh,
@@ -344,12 +363,7 @@ function TaskCard({
             {task.title}
           </h4>
 
-          {activityText ? (
-            <div className="mb-2 flex min-w-0 items-center gap-1.5 text-[10px] font-medium">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="live-activity-shimmer truncate">{activityText}</span>
-            </div>
-          ) : null}
+          {task.status === "in_progress" ? <TaskActivityLine assigneeId={task.assigneeId} /> : null}
 
           {/* Blocked indicator */}
           {isBlocked && depTask && (
@@ -420,19 +434,6 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
     () => new Map(members.map((m) => [m.id, m])),
     [members]
   );
-  const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
-  const globalActivity = useWorkspaceStore((state) => state.activity);
-  const activityTextByAgent = useMemo(() => {
-    const latestByAgent = new Map<string, (typeof globalActiveRuns)[number]>();
-    for (const run of globalActiveRuns) {
-      if (!isLiveRun(run)) continue;
-      const previous = latestByAgent.get(run.agentId);
-      if (!previous || Date.parse(run.startedAt) > Date.parse(previous.startedAt)) {
-        latestByAgent.set(run.agentId, run);
-      }
-    }
-    return new Map([...latestByAgent].map(([agentId, run]) => [agentId, liveActivityTextForRun(run, globalActivity)]));
-  }, [globalActiveRuns, globalActivity]);
   const storageKey = `goalSwitcher:${channelId ?? "__workspace__"}`;
 
   const {goals, tasks, questions} = board;
@@ -883,10 +884,8 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
                           depTask={depTask}
                           isBlocked={isBlocked}
                           assigneeName={assigneeName}
-                          activityText={task.status === "in_progress" ? activityTextByAgent.get(task.assigneeId) : undefined}
                           actionLoading={actionLoading === task.id}
                           members={members}
-                          tasks={tasks}
                           refresh={refresh}
                           onDragStart={onDragStart}
                           onDragEnd={onDragEnd}

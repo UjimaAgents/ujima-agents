@@ -532,48 +532,37 @@ async function loadHistory(
   signal: AbortSignal,
 ): Promise<Message[]> {
   const messages: Message[] = [];
-  let cursor: string | undefined;
+  const params = new URLSearchParams({
+    organizationId,
+    threadId,
+    limit: "500",
+  });
 
-  for (;;) {
-    const params = new URLSearchParams({
-      organizationId,
-      threadId,
-      limit: "500",
-    });
-    if (cursor) params.set("cursor", cursor);
+  const response = await fetch(`/api/conversations/history?${params.toString()}`, {
+    signal,
+  });
+  const body = await response.json().catch(() => null);
 
-    const response = await fetch(`/api/conversations/history?${params.toString()}`, {
-      signal,
-    });
-    const body = await response.json().catch(() => null);
+  if (response.status === 404) return messages;
 
-    if (response.status === 404) {
-      return messages;
-    }
-
-    if (!response.ok) {
-      const message =
-        body && typeof body === "object" && "message" in body && typeof body.message === "string"
-          ? body.message
-          : "Unable to load conversation history.";
-      throw new Error(message);
-    }
-
-    if (body && Array.isArray(body.data)) {
-      messages.push(
-        ...body.data.flatMap((item: unknown) => {
-          const parsed = MessageSchema.safeParse(item);
-          return parsed.success ? [parsed.data] : [];
-        }),
-      );
-    }
-
-    if (!body?.hasMore || typeof body.nextCursor !== "string" || body.nextCursor === cursor) {
-      return messages;
-    }
-
-    cursor = body.nextCursor;
+  if (!response.ok) {
+    const message =
+      body && typeof body === "object" && "message" in body && typeof body.message === "string"
+        ? body.message
+        : "Unable to load conversation history.";
+    throw new Error(message);
   }
+
+  if (body && Array.isArray(body.data)) {
+    messages.push(
+      ...body.data.flatMap((item: unknown) => {
+        const parsed = MessageSchema.safeParse(item);
+        return parsed.success ? [parsed.data] : [];
+      }),
+    );
+  }
+
+  return messages;
 }
 
 async function loadBootstrap(signal: AbortSignal): Promise<BootstrapResponse | null> {

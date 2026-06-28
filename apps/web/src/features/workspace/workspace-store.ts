@@ -120,6 +120,7 @@ const DETAILS_AUTO_OPEN_DISMISSED_KEY = "ujima.workspace.detailsAutoOpenDismisse
 const CHAT_FONT_SIZE_KEY = "ujima.workspace.chatFontSize";
 const COMPOSER_REASONING_EFFORT_KEY = "ujima.workspace.composerReasoningEffortByThread";
 const CHAT_FONT_SIZE_DEFAULT: ChatFontSize = "normal";
+const MAX_ACTIVITY_EVENTS = 1500;
 
 // SSR-safe defaults. Persisted values from localStorage are applied post-mount
 // via hydrateClientPersisted() to avoid a Next.js hydration mismatch.
@@ -287,9 +288,13 @@ function appendSequencedEvents(
     order: state.activitySequence + index,
   })).filter((event) => !seen.has(event.event_id));
   if (stamped.length === 0) return state;
-  // Incrementally update the tracking set.
-  const nextActivity = [...state.activity, ...stamped];
+  // Incrementally update the tracking set while keeping the live feed bounded.
+  let nextActivity = [...state.activity, ...stamped];
   for (const event of stamped) seen.add(event.event_id);
+  if (nextActivity.length > MAX_ACTIVITY_EVENTS) {
+    nextActivity = nextActivity.slice(-MAX_ACTIVITY_EVENTS);
+    _activityEventIds = new Set(nextActivity.map((event) => event.event_id));
+  }
   _activityForIds = nextActivity;
   return {
     activitySequence: state.activitySequence + stamped.length,

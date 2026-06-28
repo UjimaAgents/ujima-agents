@@ -91,6 +91,48 @@ interface CodexThreadSession {
   threadId: string;
   baseInstructions: string;
   toolSignature: string;
+  injectedItemKeys: Set<string>;
+}
+
+function abortSignal(callOptions: LanguageModelV3CallOptions): AbortSignal | undefined {
+  return (callOptions as { abortSignal?: AbortSignal }).abortSignal;
+}
+
+function abortError(): Error {
+  const error = new Error('Codex turn aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined, onAbort?: () => void): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    onAbort?.();
+    return Promise.reject(abortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbortSignal = () => {
+      signal.removeEventListener('abort', onAbortSignal);
+      onAbort?.();
+      reject(abortError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbortSignal);
+    signal.addEventListener('abort', onAbortSignal, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 const CODEX_DEVELOPER_INSTRUCTIONS = [
@@ -167,7 +209,10 @@ async function generateWithCodex(
   callOptions: LanguageModelV3CallOptions,
   handlers?: CodexStreamHandlers,
 ): Promise<LanguageModelV3GenerateResult> {
+  const signal = abortSignal(callOptions);
+  throwIfAborted(signal);
   const rpc = await rpcPromise;
+  throwIfAborted(signal);
   const cwd = options.cwd ?? process.cwd();
   const allTools = functionTools(callOptions.tools);
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
@@ -186,8 +231,16 @@ async function generateWithCodex(
     session.baseInstructions === prompt.baseInstructions &&
     session.toolSignature === toolSignature;
   let threadId = session?.threadId;
+  const injectItems = async (items: CodexResponseItem[]) => {
+    if (!items.length) return;
+    await raceAbort(rpc.request('thread/inject_items', { threadId, items }), signal);
+    for (const item of items) {
+      sessionForThread.injectedItemKeys.add(codexItemKey(item));
+    }
+  };
+  let sessionForThread: CodexThreadSession;
   if (!shouldReuseThread) {
-    const thread = await rpc.request<{ thread: { id: string } }>('thread/start', {
+    const thread = await raceAbort(rpc.request<{ thread: { id: string } }>('thread/start', {
       model: options.modelId,
       cwd,
       ephemeral: true,
@@ -202,16 +255,22 @@ async function generateWithCodex(
         description: tool.description ?? '',
         inputSchema: tool.inputSchema,
       })),
-    });
+    }), signal);
     threadId = thread.thread.id;
-    sharedSessions.set(sessionKey, {
+    sessionForThread = {
       threadId,
       baseInstructions: prompt.baseInstructions,
       toolSignature,
-    });
-    if (prompt.historyItems.length > 0) {
-      await rpc.request('thread/inject_items', { threadId, items: prompt.historyItems });
-    }
+      injectedItemKeys: new Set<string>(),
+    };
+    sharedSessions.set(sessionKey, sessionForThread);
+    await injectItems(prompt.historyItems);
+  } else {
+    if (!session) throw new Error('Codex session missing for reused thread');
+    sessionForThread = session;
+    await injectItems(prompt.historyItems.filter((item) =>
+      item.type === 'function_call_output' && !sessionForThread.injectedItemKeys.has(codexItemKey(item)),
+    ));
   }
   const state = {
     startedItems: new Map<string, CodexStartedItem>(),
@@ -437,15 +496,15 @@ async function generateWithCodex(
     }
   });
   try {
-    const started = await rpc.request<{ turn: { id: string } }>('turn/start', {
+    const started = await raceAbort(rpc.request<{ turn: { id: string } }>('turn/start', {
       threadId,
       input: prompt.input,
       cwd,
       effort: codexReasoningEffort(options.reasoningEffort),
-    });
+    }), signal);
     state.responseId = started.turn.id;
 
-    await rpc.waitFor(() => state.done);
+    await raceAbort(rpc.waitFor(() => state.done), signal, () => interrupt(started.turn.id));
     if (state.error) throw state.error;
 
     const textContent = state.textItems
@@ -1088,6 +1147,10 @@ function textResponseItem(role: string, text: string): CodexResponseItem[] {
   return text ? [{ type: 'message', role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }] }] : [];
 }
 
+function codexItemKey(item: CodexResponseItem): string {
+  return stringifyJson(item);
+}
+
 function messageToInput(message: LanguageModelV3Message, tailContext: LanguageModelV3Message[] = []): CodexUserInput[] {
   const text = compactText([contentText(message), messagesText(tailContext)].join('\n\n'));
   return text ? textInput(text) : [];
@@ -1187,7 +1250,7 @@ function connectCodexAppServer(child: CodexChildProcess) {
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let closed = false;
   const rl = createInterface({ input: child.stdout });
-  const closeListeners = new Set<() => void>();
+  const closeListeners = new Set<(error?: Error) => void>();
 
   const notify = (message: JsonRpcMessage) => {
     for (const listener of listeners) listener(message);
@@ -1218,16 +1281,21 @@ function connectCodexAppServer(child: CodexChildProcess) {
     }
   });
 
-  child.on('close', () => {
+  const fail = (error: Error) => {
+    if (closed) return;
     closed = true;
-    for (const waiter of pending.values()) waiter.reject(new Error('Codex app-server exited'));
+    for (const waiter of pending.values()) waiter.reject(error);
     pending.clear();
-    for (const listener of closeListeners) listener();
+    for (const listener of closeListeners) listener(error);
+    closeListeners.clear();
+  };
+
+  child.on('close', () => {
+    fail(new Error('Codex app-server exited'));
   });
 
   child.on('error', (error) => {
-    for (const waiter of pending.values()) waiter.reject(error instanceof Error ? error : new Error(String(error)));
-    pending.clear();
+    fail(error instanceof Error ? error : new Error(String(error)));
   });
 
   return {
@@ -1262,18 +1330,28 @@ function connectCodexAppServer(child: CodexChildProcess) {
     },
     waitFor(predicate: () => boolean): Promise<void> {
       if (predicate()) return Promise.resolve();
-      return new Promise((resolve) => {
+      if (closed) return Promise.reject(new Error('Codex app-server already closed'));
+      return new Promise((resolve, reject) => {
+        const cleanup = () => {
+          listeners.delete(listener);
+          closeListeners.delete(onClose);
+        };
         const listener = () => {
           if (predicate()) {
-            listeners.delete(listener);
+            cleanup();
             resolve();
           }
         };
+        const onClose = (error?: Error) => {
+          cleanup();
+          reject(error ?? new Error('Codex app-server exited'));
+        };
         listeners.add(listener);
+        closeListeners.add(onClose);
       });
     },
     close(): void {
-      closed = true;
+      fail(new Error('Codex app-server closed'));
       rl.close();
       try {
         child.kill('SIGTERM');

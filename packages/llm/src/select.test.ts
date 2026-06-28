@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { jsonSchema, stepCountIs, streamText } from 'ai';
 import { setCodexAppServerSpawn } from './codex-app-server.js';
 import { selectLanguageModel } from './select.js';
@@ -33,6 +33,7 @@ function createFakeAppServer(): {
 
   let buffer = '';
   let loopTurns = 0;
+  let sawInjectedToolResult = false;
   stdin.on('data', (chunk) => {
     buffer += chunk.toString();
     let newline = buffer.indexOf('\n');
@@ -52,6 +53,8 @@ function createFakeAppServer(): {
         continue;
       }
       if (msg.method === 'thread/inject_items') {
+        const items = (msg.params as { items?: { type?: string }[] } | undefined)?.items ?? [];
+        sawInjectedToolResult = sawInjectedToolResult || items.some((item) => item.type === 'function_call_output');
         stdout.write(`${JSON.stringify({ id: msg.id, result: {} })}\n`);
         continue;
       }
@@ -98,6 +101,21 @@ function createFakeAppServer(): {
               turnId: 'turn_1',
               callId: 'call_1',
               tool: 'ujima_grep',
+              arguments: { body: 'hi' },
+            },
+          })}\n`);
+          continue;
+        }
+        if (text === 'needs tool result') {
+          stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 98,
+            method: 'item/tool/call',
+            params: {
+              threadId: 'thr_1',
+              turnId: 'turn_1',
+              callId: 'needs_result_1',
+              tool: 'ujima_progress',
               arguments: { body: 'hi' },
             },
           })}\n`);
@@ -268,6 +286,12 @@ function createFakeAppServer(): {
           })}\n`);
           continue;
         }
+        if (text === 'Continue.' && sawInjectedToolResult) {
+          stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', itemId: 'msg_tool_result', delta: 'tool result seen' } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { type: 'agentMessage', id: 'msg_tool_result', text: 'tool result seen', phase: null, memoryCitation: null }, completedAtMs: 1 } })}\n`);
+          stdout.write(`${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn_1', status: 'completed' } } })}\n`);
+          continue;
+        }
         stdout.write(`${JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hello from app-server' } })}\n`);
         stdout.write(`${JSON.stringify({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg_1', text: 'hello from app-server' } } })}\n`);
         stdout.write(`${JSON.stringify({
@@ -340,7 +364,18 @@ function loadRealIvyCodexFixture(): {
   }
 }
 
+const originalCodexTransport = process.env.UJIMA_CODEX_TRANSPORT;
+
+beforeEach(() => {
+  process.env.UJIMA_CODEX_TRANSPORT = 'app-server';
+});
+
 afterEach(() => {
+  if (originalCodexTransport === undefined) {
+    delete process.env.UJIMA_CODEX_TRANSPORT;
+  } else {
+    process.env.UJIMA_CODEX_TRANSPORT = originalCodexTransport;
+  }
   setCodexAppServerSpawn(undefined);
 });
 
@@ -928,6 +963,38 @@ describe('selectLanguageModel', () => {
       { type: 'text', text: 'first saved message' },
       { type: 'text', text: 'second saved message' },
     ]);
+  });
+
+  it('injects tool results into a reused Codex app-server thread before continuing', async () => {
+    const child = createFakeAppServer();
+    setCodexAppServerSpawn(vi.fn(() => child) as never);
+
+    const model = selectLanguageModel({
+      kind: 'openai-codex',
+      modelId: 'gpt-5.4-mini',
+    }) as any;
+
+    const result = streamText({
+      model,
+      messages: [{ role: 'user', content: 'needs tool result' }],
+      stopWhen: stepCountIs(2),
+      tools: {
+        progress: {
+          inputSchema: jsonSchema({ type: 'object', properties: { body: { type: 'string' } } }),
+          execute: async () => ({ ok: true, value: 42 }),
+        },
+      },
+    });
+
+    expect(await result.text).toBe('tool result seen');
+    const injected = child.requests.filter((req) => (req as { method?: string }).method === 'thread/inject_items') as {
+      params?: { items?: { type?: string; output?: string }[] };
+    }[];
+    expect(injected.some((req) =>
+      req.params?.items?.some((item) =>
+        item.type === 'function_call_output' && item.output?.includes('"value":42'),
+      ),
+    )).toBe(true);
   });
 
   it('correctly maps collabToolCall items', async () => {
