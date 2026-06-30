@@ -86,26 +86,6 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
-function raceWithAbortSignal<T>(inner: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return inner;
-  if (signal.aborted) {
-    const e = new Error('Aborted');
-    e.name = 'AbortError';
-    return Promise.reject(e);
-  }
-  return Promise.race([
-    inner,
-    new Promise<never>((_, reject) => {
-      const onAbort = () => {
-        const e = new Error('Aborted');
-        e.name = 'AbortError';
-        reject(e);
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-    }),
-  ]);
-}
-
 function loopExitFrom(err: unknown): LoopExit | undefined {
   if (err instanceof LoopExit) return err;
   let cur: unknown = err;

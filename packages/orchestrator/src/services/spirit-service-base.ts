@@ -436,7 +436,7 @@ export class SpiritServiceBase {
         toolResult: result.output,
       });
       if (capture.attachmentRefs.length === 0) return;
-      result.output = wrapAttachmentCapture(result.output, capture.attachmentRefs);
+      result.output = wrapAttachmentCapture(result.output, capture.attachmentRefs.map((ref) => ref.ref));
     } catch (err) {
       console.warn('[spirit-service-base] replay capture threw', err);
     }

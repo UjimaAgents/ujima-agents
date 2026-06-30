@@ -95,16 +95,14 @@ export async function hydrate(deps: HydrateDeps): Promise<HydrationBundle> {
 
   return {
     persona: agent.persona,
-    taskPrompt: task.prompt,
+    taskPrompt: buildTaskPrompt(task, deps.sessionId),
     events,
     peerOutputs,
     approvedArtifacts,
     systemPrompt: buildSystemPrompt({
       agent,
-      task,
       peerOutputs,
       approvedArtifacts,
-      sessionId: deps.sessionId,
       teammates: deps.teammates,
       mcpMeta: deps.mcpMeta,
       constraints: deps.constraints,
@@ -137,10 +135,8 @@ function collectDomains(agent: AgentDef): string[] {
 
 function buildSystemPrompt(opts: {
   agent: AgentDef;
-  task: TaskDef;
   peerOutputs: ContextEntry[];
   approvedArtifacts: ContextEntry[];
-  sessionId?: string;
   teammates?: AgentDef[];
   mcpMeta?: { name: string; description?: string };
   constraints?: {
@@ -148,7 +144,7 @@ function buildSystemPrompt(opts: {
     maxSessionTokens?: number;
   };
 }): string {
-  const { agent, task, peerOutputs, approvedArtifacts, sessionId, teammates, mcpMeta, constraints } = opts;
+  const { agent, peerOutputs, approvedArtifacts, teammates, mcpMeta, constraints } = opts;
   const sections: string[] = [];
 
   sections.push(`You are "${agent.name}" (agent id: ${agent.id}).`);
@@ -179,17 +175,6 @@ function buildSystemPrompt(opts: {
 
   // ── Collaboration protocol: how to work with teammates ──
   sections.push(`\n${buildCollaborationProtocol('channel')}`);
-
-  // ── Task: what the agent is here to do ──
-  const taskLines = [`\n## Task`];
-  if (task.task_id || sessionId) {
-    const ids: string[] = [];
-    if (task.task_id) ids.push(`task_id: ${task.task_id}`);
-    if (sessionId) ids.push(`session_id: ${sessionId}`);
-    taskLines.push(`_${ids.join(' | ')}_`);
-  }
-  taskLines.push(task.prompt);
-  sections.push(taskLines.join('\n'));
 
   // ── Tooling: what the agent has access to ──
   if (mcpMeta) {
@@ -247,6 +232,18 @@ function buildSystemPrompt(opts: {
   }
 
   return sections.join('\n');
+}
+
+function buildTaskPrompt(task: TaskDef, sessionId?: string): string {
+  const lines = [`## Task`];
+  if (task.task_id || sessionId) {
+    const ids: string[] = [];
+    if (task.task_id) ids.push(`task_id: ${task.task_id}`);
+    if (sessionId) ids.push(`session_id: ${sessionId}`);
+    lines.push(`_${ids.join(' | ')}_`);
+  }
+  lines.push(task.prompt);
+  return lines.join('\n');
 }
 
 function truncate(s: string, n: number): string {

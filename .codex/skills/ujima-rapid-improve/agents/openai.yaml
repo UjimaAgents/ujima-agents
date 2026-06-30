@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ujima Rapid Improve"
+  short_description: "Benchmark and improve Ujima loop speed"
+  default_prompt: "Use -rapid-improve to benchmark Ujima agent-loop performance, patch the bottleneck, and rerun proof."

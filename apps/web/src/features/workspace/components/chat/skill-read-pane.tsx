@@ -103,7 +103,7 @@ export function SkillReadPane({
           e.stopPropagation();
           setOpen(!open);
         }}
-        header={<span className="font-semibold text-xs text-foreground/85 leading-none">Read skill "{parsed.name ?? skillName}"</span>}
+        header={<span className="font-semibold text-xs text-foreground/85 leading-none">Read skill &ldquo;{parsed.name ?? skillName}&rdquo;</span>}
         trailing={statusBadge}
       >
         <div className="mt-2 space-y-3">

@@ -148,6 +148,49 @@ describe('approvalPersistedGrantMatches', () => {
     expect(approvalPersistedGrantMatches(grantReason, exactScope, log)).toBe(false);
   });
 
+  it('keeps connector allow_always exact and allow_family tool-wide', () => {
+    const postGeneral = buildConnectorScope({
+      serverId: 'slack',
+      serverDisplayName: 'Slack',
+      toolName: 'post_message',
+      argsPreview: '{"channel":"general"}',
+    });
+    const postTeam = buildConnectorScope({
+      serverId: 'slack',
+      serverDisplayName: 'Slack',
+      toolName: 'post_message',
+      argsPreview: '{"channel":"team"}',
+    });
+    const deleteMessage = buildConnectorScope({
+      serverId: 'slack',
+      serverDisplayName: 'Slack',
+      toolName: 'delete_message',
+      argsPreview: '{"ts":"1"}',
+    });
+
+    expect(
+      approvalPersistedGrantMatches(
+        formatPersistedApprovalGrantReason('grant', postGeneral, ''),
+        postGeneral,
+        postTeam,
+      ),
+    ).toBe(false);
+    expect(
+      approvalPersistedGrantMatches(
+        formatPersistedApprovalGrantReason('family', postGeneral, ''),
+        postGeneral,
+        postTeam,
+      ),
+    ).toBe(true);
+    expect(
+      approvalPersistedGrantMatches(
+        formatPersistedApprovalGrantReason('family', postGeneral, ''),
+        postGeneral,
+        deleteMessage,
+      ),
+    ).toBe(false);
+  });
+
 });
 
 describe('approvalScopeMatches', () => {

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { LanguageModel, ModelMessage, ToolSet } from 'ai';
@@ -8,6 +8,7 @@ const AGENT_LOOP_DIR = '.agent-loop';
 
 export interface AgentLoopLogEntry {
   runId: string;
+  turnIndex?: number;
   agentId?: string;
   threadId?: string;
   channelId?: string;
@@ -42,6 +43,8 @@ export class AgentLoopLogger {
   private log: AgentLoopLogEntry;
   private currentStepReasoning = '';
   private currentStepText = '';
+  private turnIndex = 0;
+  private wroteTurnFile = false;
   private workspaceRoot?: string;
   private readonly enabled = process.env.UJIMA_AGENT_LOOP_LOGS === '1';
 
@@ -101,9 +104,9 @@ export class AgentLoopLogger {
     }
   }
 
-  handleStepFinish(step: AgentLoopStep) {
+  async handleStepFinish(step: AgentLoopStep) {
     if (!this.enabled) return;
-    this.log.steps.push({
+    const stepLog = {
       text: this.currentStepText || step.text,
       reasoning: this.currentStepReasoning || undefined,
       toolCalls: step.toolCalls?.map((tc) => ({
@@ -122,9 +125,18 @@ export class AgentLoopLogger {
             totalTokens: step.usage.totalTokens,
           }
         : undefined,
-    });
+    };
+    this.log.steps.push(stepLog);
     this.currentStepReasoning = '';
     this.currentStepText = '';
+    await this.writeLog({
+      ...this.log,
+      turnIndex: ++this.turnIndex,
+      steps: [stepLog],
+      tokenUsage: stepLog.tokenUsage,
+      timestamps: { ...this.log.timestamps, finishedAt: new Date().toISOString() },
+    });
+    this.wroteTurnFile = true;
   }
 
   setTokenUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }) {
@@ -139,13 +151,21 @@ export class AgentLoopLogger {
 
   async flush() {
     if (!this.enabled) return;
+    if (this.wroteTurnFile) return;
     this.log.timestamps.finishedAt = new Date().toISOString();
+    await this.writeLog(this.log);
+  }
+
+  private async writeLog(log: AgentLoopLogEntry) {
     const dir = join(this.workspaceRoot ?? process.cwd(), AGENT_LOOP_DIR);
     await mkdir(dir, { recursive: true });
-    const ts = formatTimestamp(this.log.timestamps.startedAt);
-    const shortId = this.log.runId.replace(/-/g, '').slice(0, 8);
-    const filePath = join(dir, `${ts}-${shortId}.json`);
-    await writeFile(filePath, JSON.stringify(this.log, null, 2), 'utf-8');
+    const ts = formatTimestamp(log.timestamps.startedAt);
+    const shortId = log.runId.replace(/-/g, '').slice(0, 8);
+    const turn = log.turnIndex ? `-turn-${String(log.turnIndex).padStart(3, '0')}` : '';
+    const filePath = join(dir, `${ts}-${shortId}${turn}.json`);
+    const tmpPath = `${filePath}.tmp`;
+    await writeFile(tmpPath, JSON.stringify(log, null, 2), 'utf-8');
+    await rename(tmpPath, filePath);
   }
 
   setWorkspaceRoot(root: string) {

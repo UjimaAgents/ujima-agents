@@ -660,9 +660,9 @@ export class AiService {
             }
           : (chunk) => debugLogger.handleChunk(chunk),
         onStepFinish: input.onStepFinish
-          ? (step, steps) => {
-              debugLogger.handleStepFinish(step);
-              input.onStepFinish?.(step, steps);
+          ? async (step, steps) => {
+              await debugLogger.handleStepFinish(step);
+              await input.onStepFinish?.(step, steps);
             }
           : (step) => debugLogger.handleStepFinish(step),
         loadInterruptMessages: () =>

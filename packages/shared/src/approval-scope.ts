@@ -118,6 +118,17 @@ export function stripApprovalScopeDisplayFields(scope: string): string {
       return scope;
     }
   }
+  if (scope.startsWith('connector:')) {
+    const payload = scope.slice('connector:'.length);
+    if (!payload.startsWith('{')) return scope;
+    try {
+      const parsed = JSON.parse(payload) as Record<string, unknown>;
+      const { argsPreview: _preview, ...rest } = parsed;
+      return `connector:${JSON.stringify(rest)}`;
+    } catch {
+      return scope;
+    }
+  }
   return scope;
 }
 
@@ -538,6 +549,16 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
     return `filesystem:${JSON.stringify({
       action: filesystem.action,
       resourcePath: normalizeApprovalPath(filesystem.resourcePath),
+    })}`;
+  }
+
+  const connector = parseConnectorScope(scope);
+  if (connector) {
+    return `connector:${JSON.stringify({
+      serverId: connector.serverId,
+      serverDisplayName: connector.serverDisplayName,
+      toolName: connector.toolName,
+      ...(family ? {} : { argsPreview: connector.argsPreview }),
     })}`;
   }
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { loadAgentTeam } from '@ujima/framework';
+import { ToolServiceImpl } from './tool-service-impl.js';
 import { createPermissionGatedToolService, type ToolService } from './tool-service.js';
+import { createTeamStore } from './team-store.js';
+import { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 
 describe('createPermissionGatedToolService', () => {
   it('creates an approval for destructive commands and bypasses permission once after allowRun', async () => {
@@ -277,5 +281,72 @@ describe('createPermissionGatedToolService', () => {
     expect(innerCallCount).toBe(1);
     expect(result.ok).toBe(true);
     expect(result.output).toEqual({ real: 'result' });
+  });
+});
+
+describe('ToolServiceImpl goal mode', () => {
+  it('does not approval-gate trusted goal tools in goal mode', async () => {
+    let approvals = 0;
+    let updates = 0;
+    const team = loadAgentTeam({
+      name: 'Goal Org',
+      workspace: { root: process.cwd() },
+      providers: { openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] } },
+      roles: [{
+        name: 'planner',
+        title: 'Planner',
+        instructions: 'Plan.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['.'],
+        tools: ['goal.task.update'],
+        channels: ['general'],
+      }],
+      agents: [],
+      channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+    } as Record<string, unknown>);
+    const store = createTeamStore();
+    store.setTeam(team, 'org-1');
+
+    const service = new ToolServiceImpl(
+      store,
+      {
+        getRun: () => ({ id: 'run-1', threadId: 'thread-1', status: 'running' }),
+        getMember: () => ({ id: 'agent-1', organizationId: 'org-1', kind: 'agent', roleName: 'planner', name: 'Planner' }),
+        getLatestHumanMessageInThread: () => ({ metadata: { goalMode: true } }),
+        saveAuditEvent: () => undefined,
+        listRunSteps: () => [],
+        saveRunStep: () => undefined,
+      } as never,
+      { requestApproval: () => { approvals++; return { id: 'approval-1' }; } },
+      {} as never,
+      {
+        updateTask: () => {
+          updates++;
+          return { status: 'completed', task: { id: 'task-1' } };
+        },
+      } as never,
+      { emit: () => undefined } as never,
+      {} as never,
+      new ApprovedRunScopeTracker(),
+    );
+
+    const result = await service.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      threadId: 'thread-1',
+      toolCallId: 'tool-1',
+      toolId: 'goal.task.update',
+      action: 'update',
+      resourceType: 'goal_task',
+      resourcePath: 'task-1',
+      input: { task_id: 'task-1', status: 'completed' },
+      bypassPermission: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(approvals).toBe(0);
+    expect(updates).toBe(1);
   });
 });
