@@ -16,6 +16,47 @@ const CODEX_WS_OPEN_RETRIES = 2;
 const CODEX_WS_IDLE_TIMEOUT_MS = 5 * 60_000;
 let refreshPromise: Promise<StoredCodexToken | null> | null = null;
 
+
+
+interface ItemCache {
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
+}
+
+class SizeLimitedMap<K, V> {
+  private map = new Map<K, V>();
+  private keys: K[] = [];
+  constructor(private maxSize: number) {}
+
+  get(key: K): V | undefined {
+    return this.map.get(key);
+  }
+
+  set(key: K, value: V): void {
+    if (!this.map.has(key)) {
+      this.keys.push(key);
+      if (this.keys.length > this.maxSize) {
+        const oldest = this.keys.shift();
+        if (oldest !== undefined) {
+          this.map.delete(oldest);
+        }
+      }
+    }
+    this.map.set(key, value);
+  }
+}
+
+const globalSessionCaches = new SizeLimitedMap<string, SizeLimitedMap<string, unknown>>(100);
+
+function getSessionCache(sessionId: string): SizeLimitedMap<string, unknown> {
+  let cache = globalSessionCaches.get(sessionId);
+  if (!cache) {
+    cache = new SizeLimitedMap<string, unknown>(5000);
+    globalSessionCaches.set(sessionId, cache);
+  }
+  return cache;
+}
+
 interface CodexResponsesOptions {
   modelId: string;
   accessToken: string;
@@ -78,7 +119,7 @@ async function requestWithFreshPool(
   sessionId: string,
 ): Promise<Response> {
   let socket: WebSocket | null = null;
-  const itemCache = new Map<string, unknown>();
+  const itemCache = getSessionCache(sessionId);
   const prepared = await prepareRequest(request, withAuthHeaders(init, bearer, accountId, sessionId), itemCache);
   return fetchCodex(prepared.request, prepared.init, {
     getSocket: () => socket,
@@ -114,7 +155,7 @@ export function stableCodexSessionId(accessToken: string, accountId: string | un
 async function fetchCodex(
   request: Parameters<typeof fetch>[0],
   init: Parameters<typeof fetch>[1],
-  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void; itemCache: Map<string, unknown> },
+  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void; itemCache: ItemCache },
 ): Promise<Response> {
   const url = new URL(request instanceof Request ? request.url : String(request));
   if (init?.method !== 'POST' || !url.pathname.endsWith('/responses')) return fetch(request, init);
@@ -164,7 +205,7 @@ async function openSocket(
 function streamSocket(
   url: URL,
   headers: FetchHeaders | undefined,
-  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void; itemCache: Map<string, unknown> },
+  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void; itemCache: ItemCache },
   body: Record<string, unknown>,
   signal: AbortSignal | undefined,
 ): Response {
@@ -230,7 +271,9 @@ function streamSocket(
           fail(terminalError);
           return;
         }
-        if (event.type === 'response.completed' || event.type === 'response.done') finish();
+        if (event.type === 'response.completed' || event.type === 'response.done') {
+          finish();
+        }
       };
       const onError = (error: Error) => fail(error);
       const onClose = (code: number, reason: Buffer) => {
@@ -319,7 +362,7 @@ function objectMessage(value: unknown): string | undefined {
 async function prepareRequest(
   request: Parameters<typeof fetch>[0],
   init: Parameters<typeof fetch>[1],
-  itemCache: Map<string, unknown>,
+  itemCache: ItemCache,
 ): Promise<{ request: Parameters<typeof fetch>[0]; init: Parameters<typeof fetch>[1] }> {
   if (typeof init?.body === 'string') {
     return { request, init: { ...init, body: rewriteBody(init.body, itemCache) } };
@@ -331,9 +374,14 @@ async function prepareRequest(
   return { request: new Request(request, { body: rewriteBody(body, itemCache) }), init };
 }
 
-function rewriteBody(body: string, itemCache: Map<string, unknown>): string {
+function rewriteBody(body: string, itemCache: ItemCache): string {
   try {
-    const json = replaceItemReferences(JSON.parse(body), itemCache) as { max_output_tokens?: unknown; store?: unknown };
+    const json = replaceItemReferences(JSON.parse(body), itemCache) as {
+      max_output_tokens?: unknown;
+      previous_response_id?: unknown;
+      input?: unknown;
+      store?: unknown;
+    };
     json.store = false;
     delete json.max_output_tokens;
     return JSON.stringify(json);
@@ -342,7 +390,7 @@ function rewriteBody(body: string, itemCache: Map<string, unknown>): string {
   }
 }
 
-function replaceItemReferences(value: unknown, itemCache: Map<string, unknown>): unknown {
+function replaceItemReferences(value: unknown, itemCache: ItemCache): unknown {
   if (Array.isArray(value)) return value.map((item) => replaceItemReferences(item, itemCache));
   if (!value || typeof value !== 'object') return value;
 
@@ -372,7 +420,7 @@ function stripItemId(value: unknown): unknown {
   return next;
 }
 
-function rememberCachedItems(value: unknown, itemCache: Map<string, unknown>): void {
+function rememberCachedItems(value: unknown, itemCache: ItemCache): void {
   if (Array.isArray(value)) {
     for (const entry of value) rememberCachedItems(entry, itemCache);
     return;
