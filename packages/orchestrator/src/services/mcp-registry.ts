@@ -125,6 +125,11 @@ export interface CatalogTool {
     state: ToolPolicyState;
     source: PolicyEvaluation['source'];
     reason?: string;
+    // True when the matched rule targets THIS exact (mcp, tool) — i.e. not a
+    // wildcard/`*` family rule and not an inherited risk default. The settings
+    // UI uses this to know whether a per-tool "pin" creates a new rule and
+    // whether "reset to org default" can actually clear the governing rule.
+    exactRule: boolean;
   };
   // Agents that have this exact tool granted (per-tool attachments).
   grantedAgents: string[];
@@ -735,6 +740,10 @@ export class McpRegistryService {
             state: evaluation.state,
             source: evaluation.source,
             reason: evaluation.reason,
+            exactRule:
+              !!evaluation.rule &&
+              evaluation.rule.mcp_id === server.id &&
+              evaluation.rule.tool_name === d.name,
           },
           grantedAgents,
           attachedAgents,

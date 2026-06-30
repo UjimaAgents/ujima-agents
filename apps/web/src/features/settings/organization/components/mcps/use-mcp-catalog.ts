@@ -36,6 +36,16 @@ export interface UseMcpCatalog {
     toolName: string,
     risk: ToolRiskClass,
   ) => Promise<void>;
+  /**
+   * Set the org-wide decision for a single (server, tool). Writes a
+   * platform rule into the governance policy the gate evaluates.
+   * `inherit` clears the rule so the tool falls back to risk defaults.
+   */
+  setToolRule: (
+    serverId: string,
+    toolName: string,
+    state: "allow" | "require_approval" | "deny" | "inherit",
+  ) => Promise<void>;
   grantToolToAgent: (
     agentId: string,
     serverId: string,
@@ -136,21 +146,35 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     };
   }, [orgId, refresh]);
 
-  const saveRiskDefaults = useCallback(
-    async (patch: Partial<RiskDefaults>) => {
+  // Shared tail for the governance-policy PATCH routes (risk-defaults +
+  // per-tool rule): same response shape, same local-state resync. Keeping it
+  // in one place stops the two mutations from drifting in how they update
+  // riskDefaults / which refresh args they pass.
+  const patchGovernancePolicy = useCallback(
+    async (path: string, body: Record<string, unknown>, errorMessage: string) => {
       const data = await settingsFetch<GovernancePolicyResponse>(
-        `/api/settings/governance/policy/risk-defaults`,
+        path,
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ organizationId: orgId, riskDefaults: patch }),
+          body: JSON.stringify({ organizationId: orgId, ...body }),
         },
-        "Failed to save risk defaults.",
+        errorMessage,
       );
       setRiskDefaults(data.policy.risk_defaults);
       await refresh(viewIdRef.current, viewRoleRef.current);
     },
     [orgId, refresh],
+  );
+
+  const saveRiskDefaults = useCallback(
+    (patch: Partial<RiskDefaults>) =>
+      patchGovernancePolicy(
+        `/api/settings/governance/policy/risk-defaults`,
+        { riskDefaults: patch },
+        "Failed to save risk defaults.",
+      ),
+    [patchGovernancePolicy],
   );
 
   const setToolClassification = useCallback(
@@ -172,6 +196,20 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
       await refresh(viewIdRef.current, viewRoleRef.current);
     },
     [orgId, refresh],
+  );
+
+  const setToolRule = useCallback(
+    (
+      serverId: string,
+      toolName: string,
+      state: "allow" | "require_approval" | "deny" | "inherit",
+    ) =>
+      patchGovernancePolicy(
+        `/api/settings/governance/policy/tool-rule`,
+        { mcpId: serverId, toolName, state },
+        "Failed to update tool rule.",
+      ),
+    [patchGovernancePolicy],
   );
 
   const grantToolToAgent = useCallback(
@@ -236,6 +274,7 @@ export function useMcpCatalog(orgId: string): UseMcpCatalog {
     refresh,
     saveRiskDefaults,
     setToolClassification,
+    setToolRule,
     grantToolToAgent,
     revokeToolFromAgent,
     updateAttachmentTier,

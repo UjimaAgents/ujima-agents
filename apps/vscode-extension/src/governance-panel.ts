@@ -424,6 +424,8 @@ function mergeCatalogWithPolicy(input: {
   }
 
   for (const rule of input.policy.platform.always_deny) addSynthetic(rule.mcp_id, rule.tool_name, true);
+  for (const rule of input.policy.platform.always_allow)
+    addSynthetic(rule.mcp_id, rule.tool_name, false);
   for (const rule of input.policy.platform.default_require_approval)
     addSynthetic(rule.mcp_id, rule.tool_name, false);
   for (const rules of Object.values(input.policy.agents)) {

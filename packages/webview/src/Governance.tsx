@@ -1099,6 +1099,7 @@ function PlatformRules({
     const ids = new Set<string>();
     for (const c of catalog) ids.add(c.mcp_id);
     for (const r of policy.platform.always_deny) ids.add(r.mcp_id);
+    for (const r of policy.platform.always_allow) ids.add(r.mcp_id);
     for (const r of policy.platform.default_require_approval) ids.add(r.mcp_id);
     return ['*', ...[...ids].sort()];
   }, [catalog, policy]);
@@ -1113,6 +1114,13 @@ function PlatformRules({
         mcpOptions={mcpOptions}
       />
       <PlatformBucket
+        bucket="always_allow"
+        title="Allowlist (always allow)"
+        hint="Auto-run with no approval prompt. Overrides the require-approval default and risk defaults (but not the kill-switch or an agent rule). tool_name may end with * to cover a family, e.g. browser_*."
+        rules={policy.platform.always_allow}
+        mcpOptions={mcpOptions}
+      />
+      <PlatformBucket
         bucket="default_require_approval"
         title="Default require-approval"
         hint="Applies when no agent rule says otherwise. Use for destructive tools you want a human to sign off on by default."
@@ -1123,6 +1131,16 @@ function PlatformRules({
   );
 }
 
+/** Stored rule state for each platform bucket. */
+const PLATFORM_BUCKET_STATE: Record<
+  'always_deny' | 'always_allow' | 'default_require_approval',
+  'deny' | 'allow' | 'require_approval'
+> = {
+  always_deny: 'deny',
+  always_allow: 'allow',
+  default_require_approval: 'require_approval',
+};
+
 function PlatformBucket({
   bucket,
   title,
@@ -1130,7 +1148,7 @@ function PlatformBucket({
   rules,
   mcpOptions,
 }: {
-  bucket: 'always_deny' | 'default_require_approval';
+  bucket: 'always_deny' | 'always_allow' | 'default_require_approval';
   title: string;
   hint: string;
   rules: ToolPolicyRule[];
@@ -1150,7 +1168,7 @@ function PlatformBucket({
         rule: {
           mcp_id: mcpId,
           tool_name: toolName.trim(),
-          state: bucket === 'always_deny' ? 'deny' : 'require_approval',
+          state: PLATFORM_BUCKET_STATE[bucket],
           reason: reason.trim() || undefined,
         },
       },

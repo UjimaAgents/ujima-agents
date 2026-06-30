@@ -318,10 +318,17 @@ export function parseConnectorScope(scope: string): ParsedConnectorScope | null 
   const serverDisplayName = stringField(record, 'serverDisplayName', 'server_display_name', 'server');
   const toolName = stringField(record, 'toolName', 'tool_name', 'tool');
   const argsPreview = stringField(record, 'argsPreview', 'args_preview', 'args');
-  if (!serverId || !serverDisplayName || !toolName) return null;
+  // serverDisplayName is display-only and is intentionally neutralized to ''
+  // by canonicalizeApprovalScope (grants key on serverId+toolName). Requiring
+  // it here would make the canonical form unparseable — re-canonicalizing
+  // would fall through to the generic path-mangling branch (breaking grant
+  // matching) and persisted grant scopes couldn't round-trip back into the
+  // connector renderer/audit path. Require only the matching identity
+  // (serverId + toolName); callers substitute serverId when the label is blank.
+  if (!serverId || !toolName) return null;
   return {
     serverId,
-    serverDisplayName,
+    serverDisplayName: serverDisplayName ?? '',
     toolName,
     argsPreview: argsPreview ?? '',
   };
@@ -554,12 +561,12 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
 
   const connector = parseConnectorScope(scope);
   if (connector) {
-    return `connector:${JSON.stringify({
+    return buildConnectorScope({
       serverId: connector.serverId,
-      serverDisplayName: connector.serverDisplayName,
+      serverDisplayName: '',
       toolName: connector.toolName,
-      ...(family ? {} : { argsPreview: connector.argsPreview }),
-    })}`;
+      argsPreview: '',
+    });
   }
 
   if (scope.startsWith('download:')) {
@@ -695,7 +702,7 @@ export function formatApprovalRelayMarkdown(approval: {
 function relayConnectorPlain(connector: ParsedConnectorScope): string {
   const lines = [
     `[Approval needed] Connector action`,
-    `Server: ${connector.serverDisplayName}`,
+    `Server: ${connector.serverDisplayName || connector.serverId}`,
     `Tool: ${connector.toolName}`,
   ];
   if (connector.argsPreview.length > 0) {

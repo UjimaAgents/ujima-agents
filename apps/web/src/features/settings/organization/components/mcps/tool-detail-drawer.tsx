@@ -6,7 +6,20 @@ import type { McpCatalogTool } from "@ujima/api-schema";
 import type { Member, ToolRiskClass } from "@ujima/shared";
 import { McpEffectiveChip } from "./mcp-effective-chip";
 import { McpRiskControl } from "./mcp-risk-control";
+import { ToolPolicyToggle } from "./tool-policy-toggle";
 import type { UseMcpCatalog } from "./use-mcp-catalog";
+
+type EffectiveSource = McpCatalogTool["effective"]["source"];
+
+/** True when the effective decision comes from a per-tool platform rule that
+ * a "Reset to org default" (inherit) action can actually clear. */
+function isPlatformRuleSource(source: EffectiveSource): boolean {
+  return (
+    source === "platform_allow" ||
+    source === "platform_deny" ||
+    source === "platform_require_approval"
+  );
+}
 
 interface Props {
   tool: McpCatalogTool;
@@ -35,6 +48,19 @@ export function ToolDetailDrawer({
   const allowlistSet = new Set(allowlistAgents);
   const [busyAgent, setBusyAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+
+  const handleReset = async () => {
+    setError(null);
+    setResetting(true);
+    try {
+      await catalog.setToolRule(serverId, tool.name, "inherit");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const handleGrant = async (agentId: string) => {
     setError(null);
@@ -133,14 +159,33 @@ export function ToolDetailDrawer({
 
           <section className="space-y-2 border-t border-zinc-100 pt-3 dark:border-zinc-900">
             <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Org default decision
+              Org decision
             </h4>
-            <McpEffectiveChip effective={tool.effective} />
-            {tool.effective.reason ? (
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                {tool.effective.reason}
-              </p>
+            <div className="flex items-center justify-between gap-3">
+              <McpEffectiveChip effective={tool.effective} />
+              <ToolPolicyToggle
+                effective={tool.effective}
+                onChange={(state) =>
+                  catalog.setToolRule(serverId, tool.name, state)
+                }
+              />
+            </div>
+            {isPlatformRuleSource(tool.effective.source) && tool.effective.exactRule ? (
+              <button
+                type="button"
+                onClick={() => void handleReset()}
+                disabled={resetting}
+                className="text-[11px] text-zinc-500 underline-offset-2 hover:underline disabled:opacity-60 dark:text-zinc-400"
+              >
+                {resetting ? "Resetting…" : "Reset to org default"}
+              </button>
             ) : null}
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              {isPlatformRuleSource(tool.effective.source) && !tool.effective.exactRule
+                ? "Governed by an org-wide wildcard rule. Pick a decision above to pin this tool explicitly (it overrides the wildcard), or edit the wildcard in the platform governance panel."
+                : (tool.effective.reason ??
+                  "Pick a decision for this tool, or leave it to follow the org-wide risk defaults.")}
+            </p>
           </section>
 
           <section className="space-y-2 border-t border-zinc-100 pt-3 dark:border-zinc-900">
