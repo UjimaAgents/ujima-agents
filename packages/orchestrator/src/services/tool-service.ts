@@ -138,6 +138,9 @@ function buildGenericToolApprovalScope(input: ToolInvocationInput): string {
   if (input.toolId === 'shell') {
     return buildShellApprovalScope({ input: input.input, resourcePath: input.resourcePath });
   }
+  if (input.toolId === 'mcp') {
+    return buildConnectorActionScope(input);
+  }
   if (input.toolId === 'write') {
     return `write:${JSON.stringify({ resourcePath: input.resourcePath, content: input.input.content })}`;
   }
@@ -295,10 +298,7 @@ export function createPermissionGatedToolService(
         // "Allow for this run" button) instead of the generic
         // "Approve action" card. Non-MCP calls fall through to the
         // legacy displayScope unchanged.
-        const displayScope =
-          input.toolId === 'mcp'
-            ? buildConnectorActionScope(input)
-            : enrichToolApprovalScopeForRequest(approvalScope, input);
+        const displayScope = enrichToolApprovalScopeForRequest(approvalScope, input);
         const approval = requestApproval({
           organizationId: input.organizationId,
           runId: input.runId,

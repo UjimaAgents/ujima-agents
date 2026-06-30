@@ -365,7 +365,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
           );
         },
         onStepFinish: async (_step, currentSteps) => {
-          debugLogger.handleStepFinish(_step);
+          await debugLogger.handleStepFinish(_step);
           const unpersisted = currentSteps.slice(persistedStepCount);
           for (const s of unpersisted) {
             persistedStepCount++;

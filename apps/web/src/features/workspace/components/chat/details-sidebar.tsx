@@ -1,5 +1,5 @@
 import { memo, useState, useMemo } from "react";
-import { CheckCircle2, X, ChevronDown, ChevronRight, Pencil, Search, Terminal, Brain, Target, HelpCircle, BookOpen, Clock, MessageSquare, Settings, FileText, List as ListIcon } from "lucide-react";
+import { CheckCircle2, X, ChevronDown, ChevronRight, Pencil, Search, Terminal, Brain, Target, HelpCircle, BookOpen, Clock, MessageSquare, Settings } from "lucide-react";
 import {Markdown} from "../markdown";
 import {TERMINAL_PANEL, TERMINAL_SECTION} from "./terminal-chrome";
 import {TerminalPane} from "./terminal-pane";
@@ -476,6 +476,10 @@ function renderValue(key: string, val: string) {
   );
 }
 
+function TraceMarkdown({ content, tone = "text-foreground/70" }: { content: string; tone?: string }) {
+  return <Markdown content={content} className={`trace-step-text ${tone}`} />;
+}
+
 export function PrettyToolDetail({
   detail,
   type,
@@ -496,29 +500,9 @@ export function PrettyToolDetail({
         const title = section.title;
         const lowerTitle = title?.toLowerCase() ?? "";
 
-        // Choose icon and color based on section title or operation type
-        let Icon = FileText;
-        let iconColor = "text-foreground/35";
-        
-        if (lowerTitle.includes("argument") || lowerTitle.includes("query") || lowerTitle.includes("key")) {
-          Icon = Settings;
-          iconColor = "text-violet-500/60 dark:text-violet-400/60";
-        } else if (lowerTitle.includes("result") || lowerTitle.includes("output")) {
-          Icon = CheckCircle2;
-          iconColor = "text-emerald-500/60 dark:text-emerald-450/60";
-        } else if (lowerTitle.includes("recall") || type === "memory") {
-          Icon = Brain;
-          iconColor = "text-indigo-500/60 dark:text-indigo-400/60";
-        } else if (section.type === "list") {
-          Icon = ListIcon;
-          iconColor = "text-sky-500/60 dark:text-sky-400/60";
-        }
-
-        // Section header
         const header = title && !["arguments", "result", "recalled", "input", "output"].includes(title.toLowerCase()) ? (
-          <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-foreground/40 select-none mb-1">
-            <Icon className={`h-3 w-3 shrink-0 ${iconColor}`} />
-            <span>{title}</span>
+          <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-foreground/40 select-none">
+            {title}
           </div>
         ) : null;
 
@@ -563,7 +547,7 @@ export function PrettyToolDetail({
                   <li key={itemIdx} className="flex gap-2 text-[11px] leading-relaxed text-foreground/75 select-text">
                     <span className="text-violet-500/50 select-none">•</span>
                     <div className="flex-1 whitespace-pre-wrap font-mono">
-                      <Markdown content={item} className="!text-[11px] !leading-relaxed !text-foreground/70 [&_p]:!my-0 [&_code]:text-[10px]" />
+                      <TraceMarkdown content={item} />
                     </div>
                   </li>
                 ))}
@@ -578,10 +562,7 @@ export function PrettyToolDetail({
             <div key={idx} className="space-y-1.5">
               {header}
               <div className="pl-2 select-text">
-                <Markdown
-                  content={section.content}
-                  className="!text-[11px] !leading-relaxed !text-foreground/75 [&_p]:!my-0 [&_code]:text-[10px] whitespace-pre-wrap"
-                />
+                <TraceMarkdown content={section.content} tone="text-foreground/75" />
               </div>
             </div>
           );
@@ -870,7 +851,7 @@ export const TraceStep = memo(function TraceStep({
       status={step.status}
     />
   ) : step.detail.trim() ? (
-    <PrettyToolDetail detail={step.detail} type={step.toolName ?? "tool"} />
+    <TraceMarkdown content={step.detail} tone="text-foreground/75" />
   ) : null;
 
   return (
@@ -916,7 +897,7 @@ export const TraceStep = memo(function TraceStep({
             <summary className="cursor-pointer list-none text-[11px] leading-snug text-foreground/45">
               Thinking
             </summary>
-            <Markdown content={step.reasoning} className="!text-[11px] !leading-relaxed !text-foreground/60 mt-1! [&_p]:!my-2.5 [&_ul]:!my-2.5 [&_ol]:!my-2.5 [&_hr]:!my-2.5 [&_table]:!my-2.5 [&_h1]:!text-[11px] [&_h2]:!text-[11px] [&_h3]:!text-[11px] [&_h4]:!text-[11px] [&_h5]:!text-[11px] [&_h6]:!text-[11px]" />
+            <TraceMarkdown content={step.reasoning} tone="text-foreground/60" />
           </details>
         ) : null}
         {body ? <div className="mt-2">{body}</div> : null}

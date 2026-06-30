@@ -34,7 +34,6 @@ import type { DelegateHandlers } from "../tools/types.js";
 import {
   approvalWaitResult,
   buildToolApprovalScope,
-  buildConnectorActionScope,
   enrichToolApprovalScopeForRequest,
   type ToolInvocationInput,
   type ToolInvocationResult,
@@ -274,15 +273,8 @@ export class ToolServiceImpl implements ToolService {
           },
         );
 
-    // In goal mode, auto-review applies to ALL non-read tool actions
-    // that require approval (not just shell), so the agent can self-
-    // approve safe operations without blocking on the user.
+    // In goal mode, auto-review handles actions that already require approval.
     if (goalModeActive) {
-      // Force approval for in-scope writes that normally bypass it
-      // (e.g. write/edit/multiedit to scoped paths).
-      if (policy.allowed && !policy.requiresApproval && invocation.action !== 'read') {
-        policy.requiresApproval = true;
-      }
       if (policy.requiresApproval) {
         policy.shellAutoReview = true;
       }
@@ -824,10 +816,7 @@ export class ToolServiceImpl implements ToolService {
     // when resolveMcpPolicy returns require_approval from the blob
     // policy; the outer gate handles the row-table path. Both need to
     // produce the same approval-row shape.
-    const displayScope =
-      preparedInvocation.toolId === 'mcp'
-        ? buildConnectorActionScope(preparedInvocation)
-        : enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
+    const displayScope = enrichToolApprovalScopeForRequest(approvalScope, preparedInvocation);
     const approval = this.approvals.requestApproval({
       organizationId: preparedInvocation.organizationId,
       runId: preparedInvocation.runId,

@@ -27,6 +27,7 @@ export type { AgentWatchdog, WatchdogOptions } from './watchdog';
 export type {
   AgentRunInputs,
   AgentRunResult,
+  GateResolver,
   HydrationBundle,
   SpawnReason,
   ExitReason,

@@ -5,6 +5,7 @@ import { createLocalEventBus, type EventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMockProvider, textTurn, toolTurn } from '@ujima/llm/legacy';
 import { runAgent } from './shell';
+import { hydrate } from './hydrate';
 import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
 import { makeFakeMCPConnection } from './test-helpers';
 
@@ -134,6 +135,28 @@ describe('runAgent — single-agent end-to-end', () => {
     const toolCalls = await db.audit.query({ eventType: 'tool_call' });
     expect(toolCalls).toHaveLength(1);
     expect(toolCalls[0]?.allowed).toBe(false);
+  });
+
+  it('keeps task text out of the cacheable system prompt', async () => {
+    const first = await hydrate({
+      agent: baseAgent,
+      task: { ...task, task_id: 'task-a', prompt: 'Design a user profile card' },
+      sessionId: 's1',
+      context: db.context,
+      eventBus: bus,
+    });
+    const second = await hydrate({
+      agent: baseAgent,
+      task: { ...task, task_id: 'task-b', prompt: 'Create the card layout.' },
+      sessionId: 's1',
+      context: db.context,
+      eventBus: bus,
+    });
+
+    expect(first.systemPrompt).toBe(second.systemPrompt);
+    expect(first.systemPrompt).not.toContain('Design a user profile card');
+    expect(first.taskPrompt).toContain('Design a user profile card');
+    expect(second.taskPrompt).toContain('Create the card layout.');
   });
 
 });

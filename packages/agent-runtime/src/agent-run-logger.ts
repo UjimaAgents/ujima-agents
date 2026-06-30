@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { LanguageModel } from 'ai';
@@ -96,6 +96,8 @@ export class AgentRunLogger {
     const ts = formatTimestamp(this.log.timestamps.startedAt);
     const shortId = this.log.runId.replace(/-/g, '').slice(0, 8);
     const filePath = join(dir, `${ts}-${shortId}.json`);
-    await writeFile(filePath, JSON.stringify(this.log, null, 2), 'utf-8');
+    const tmpPath = `${filePath}.tmp`;
+    await writeFile(tmpPath, JSON.stringify(this.log, null, 2), 'utf-8');
+    await rename(tmpPath, filePath);
   }
 }

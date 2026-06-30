@@ -117,6 +117,61 @@ describe('ApprovalService', () => {
     expect(emitted).toBe(0);
   });
 
+  it('does not reuse same-scope approvals across runs', () => {
+    const shellScope = 'shell:{"cwd":"/workspace","command":"pwd"}';
+    const oldApproval = {
+      id: 'ap-old',
+      organizationId: 'org-1',
+      runId: 'run-old',
+      toolCallId: 'tool-old',
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      status: 'pending',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    };
+
+    let savedPayload: ApprovalRequest | undefined;
+    let emitted = 0;
+    const repo = {
+      listPendingApprovals: () => [oldApproval],
+      saveApproval: (value: ApprovalRequest) => {
+        savedPayload = value;
+        return value;
+      },
+      listMembers: () => [],
+      getRun: () => ({ threadId: 'thread-new' }),
+      getApproval: () => oldApproval,
+      resolveApproval: () => oldApproval,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => { emitted++; } } as never,
+      () => undefined,
+    );
+
+    const result = service.requestApproval({
+      organizationId: 'org-1',
+      runId: 'run-new',
+      toolCallId: 'tool-new',
+      requestedBy: 'agent-1',
+      resourceType: 'shell',
+      resourcePath: '/workspace',
+      action: 'execute',
+      reason: `Tool action requires approval;scope=${encodeURIComponent(shellScope)}`,
+      approvalScope: shellScope,
+    });
+
+    expect(result.id).not.toBe('ap-old');
+    expect(result.runId).toBe('run-new');
+    expect(savedPayload?.toolCallId).toBe('tool-new');
+    expect(emitted).toBe(1);
+  });
+
   it('stops a run on rejection and passes allowRun=false', async () => {
     const shellScope = 'shell:{"cwd":"/workspace","command":"git log --oneline -10"}';
     const approval = {
@@ -280,6 +335,87 @@ describe('ApprovalService', () => {
         targetId: 'mem_snoop',
       },
     });
+  });
+
+  it('tracks allow_once, allow_always, and allow_family scope behavior', async () => {
+    const statusScope = 'shell:{"cwd":"/workspace","command":"git","args":["status"]}';
+    const logScope = 'shell:{"cwd":"/workspace","command":"git","args":["log"]}';
+    const makeApproval = (id: string, scope: string) => ({
+      id,
+      organizationId: 'org-1',
+      runId: 'run-1',
+      toolCallId: `tool-${id}`,
+      requestedBy: 'agent-1',
+      resourceType: 'shell' as const,
+      resourcePath: '/workspace',
+      action: 'execute' as const,
+      status: 'pending' as const,
+      reason: `Tool action requires approval;scope=${encodeURIComponent(scope)}`,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      resolvedAt: undefined,
+    });
+
+    const run = { id: 'run-1', threadId: 'thread-1', status: 'waiting_for_approval' };
+    const approvals = [makeApproval('ap-status', statusScope), makeApproval('ap-log', logScope)];
+    const resolvedIds: string[] = [];
+    const savedRules: { reason: string }[] = [];
+    let resumeScope: string | undefined;
+    const repo = {
+      listPendingApprovals: () => approvals.filter((a) => a.status === 'pending'),
+      getRun: () => run,
+      getApproval: (_orgId: string, approvalId: string) => approvals.find((a) => a.id === approvalId),
+      resolveApproval: (_orgId: string, approvalId: string, status: 'approved' | 'rejected', reason?: string) => {
+        const approval = approvals.find((a) => a.id === approvalId)!;
+        resolvedIds.push(approvalId);
+        Object.assign(approval, { status, reason: reason ?? approval.reason, resolvedAt: '2026-05-04T00:01:00.000Z' });
+        return approval;
+      },
+      saveGovernanceRule: (rule: { reason: string }) => savedRules.push(rule),
+      deleteApproval: () => undefined,
+    } as never;
+
+    const service = new ApprovalService(
+      repo,
+      { emit: () => undefined } as never,
+      (_organizationId, _runId, _allowRun, approvalScope) => {
+        resumeScope = approvalScope;
+      },
+    );
+
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-status',
+      status: 'approved',
+      resolution: 'allow_once',
+    });
+    expect(resolvedIds).toEqual(['ap-status']);
+    expect(savedRules).toEqual([]);
+    expect(resumeScope).toBe(statusScope);
+
+    approvals[0] = makeApproval('ap-status', statusScope);
+    approvals[1] = makeApproval('ap-log', logScope);
+    resolvedIds.length = 0;
+    resumeScope = undefined;
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-status',
+      status: 'approved',
+      resolution: 'allow_always',
+    });
+    expect(resolvedIds).toEqual(['ap-status']);
+    expect(savedRules.at(-1)?.reason).toBe('grant:always_allow:scope=shell%3A%7B%22cwd%22%3A%22%2Fworkspace%22%2C%22command%22%3A%22git%22%2C%22args%22%3A%5B%22status%22%5D%7D;note=');
+
+    approvals[0] = makeApproval('ap-status', statusScope);
+    approvals[1] = makeApproval('ap-log', logScope);
+    resolvedIds.length = 0;
+    await service.resolveApproval({
+      organizationId: 'org-1',
+      approvalId: 'ap-status',
+      status: 'approved',
+      resolution: 'allow_family',
+    });
+    expect(resolvedIds).toEqual(['ap-status', 'ap-log']);
+    expect(savedRules.at(-1)?.reason).toBe('grant:always_allow_family:scope=shell%3A%7B%22cwd%22%3A%22%2Fworkspace%22%2C%22command%22%3A%22git%22%7D;note=');
   });
 
 });

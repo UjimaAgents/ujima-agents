@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -12,6 +13,7 @@ const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const OPENAI_AUTH_ISSUER = 'https://auth.openai.com';
 const RESPONSES_WS_PROTOCOL = 'responses_websockets=2026-02-06';
 const CODEX_WS_OPEN_RETRIES = 2;
+const CODEX_WS_IDLE_TIMEOUT_MS = 5 * 60_000;
 let refreshPromise: Promise<StoredCodexToken | null> | null = null;
 
 interface CodexResponsesOptions {
@@ -46,36 +48,43 @@ export function createCodexResponsesModel(options: CodexResponsesOptions): Langu
 function codexFetch(accessToken: string): typeof fetch {
   let bearer = accessToken;
   let accountId = envAccountId() ?? extractAccountId(accessToken);
-  let socket: WebSocket | null = null;
-  const itemCache = new Map<string, unknown>();
-  const sessionId = crypto.randomUUID();
+  let sessionId = stableCodexSessionId(accessToken, accountId);
 
   return async (request, init) => {
     const refreshed = await maybeRefreshStoredToken();
     if (refreshed) {
       bearer = refreshed.accessToken;
       accountId = envAccountId() ?? refreshed.accountId ?? extractAccountId(refreshed.accessToken);
+      sessionId = stableCodexSessionId(bearer, accountId);
     }
 
-    const prepared = await prepareRequest(request, withAuthHeaders(init, bearer, accountId, sessionId), itemCache);
-    const response = await fetchCodex(prepared.request, prepared.init, {
-      getSocket: () => socket,
-      setSocket: (next) => { socket = next; },
-      itemCache,
-    });
+    const response = await requestWithFreshPool(request, init, bearer, accountId, sessionId);
     if (response.status !== 401) return response;
 
     const retryToken = await refreshStoredToken();
     if (!retryToken) return response;
     bearer = retryToken.accessToken;
     accountId = envAccountId() ?? retryToken.accountId ?? extractAccountId(retryToken.accessToken);
-    const retry = await prepareRequest(request, withAuthHeaders(init, bearer, accountId, sessionId), itemCache);
-    return fetchCodex(retry.request, retry.init, {
-      getSocket: () => socket,
-      setSocket: (next) => { socket = next; },
-      itemCache,
-    });
+    sessionId = stableCodexSessionId(bearer, accountId);
+    return requestWithFreshPool(request, init, bearer, accountId, sessionId);
   };
+}
+
+async function requestWithFreshPool(
+  request: Parameters<typeof fetch>[0],
+  init: Parameters<typeof fetch>[1],
+  bearer: string,
+  accountId: string | undefined,
+  sessionId: string,
+): Promise<Response> {
+  let socket: WebSocket | null = null;
+  const itemCache = new Map<string, unknown>();
+  const prepared = await prepareRequest(request, withAuthHeaders(init, bearer, accountId, sessionId), itemCache);
+  return fetchCodex(prepared.request, prepared.init, {
+    getSocket: () => socket,
+    setSocket: (next) => { socket = next; },
+    itemCache,
+  });
 }
 
 function withAuthHeaders(
@@ -93,6 +102,13 @@ function withAuthHeaders(
   headers.set('session-id', sessionId);
   if (accountId) headers.set('ChatGPT-Account-Id', accountId);
   return { ...init, headers };
+}
+
+export function stableCodexSessionId(accessToken: string, accountId: string | undefined): string {
+  const seed = `ujima:${accountId || accessToken}`;
+  const hex = createHash('sha256').update(seed).digest('hex');
+  const variant = ((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, '0');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
 }
 
 async function fetchCodex(
@@ -161,7 +177,6 @@ function streamSocket(
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       let frameCount = 0;
       let attempts = 0;
-      let resend: (() => void) | undefined;
       const cleanup = () => {
         if (idleTimer) clearTimeout(idleTimer);
         socket?.off('message', onMessage);
@@ -172,12 +187,14 @@ function streamSocket(
       const invalidate = () => pool.setSocket(null);
       const resetIdle = () => {
         if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => fail(new Error('Codex WebSocket idle timeout')), 60_000);
+        idleTimer = setTimeout(() => fail(new Error('Codex WebSocket idle timeout')), CODEX_WS_IDLE_TIMEOUT_MS);
       };
       const finish = () => {
         if (done) return;
         done = true;
         cleanup();
+        invalidate();
+        socket?.close();
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       };
@@ -208,8 +225,12 @@ function streamSocket(
         const event = safeJson(text);
         if (!event) return;
         rememberCachedItems(event, pool.itemCache);
+        const terminalError = codexTerminalError(event);
+        if (terminalError) {
+          fail(terminalError);
+          return;
+        }
         if (event.type === 'response.completed' || event.type === 'response.done') finish();
-        if (event.type === 'response.failed' || event.type === 'response.incomplete' || event.type === 'error') finish();
       };
       const onError = (error: Error) => fail(error);
       const onClose = (code: number, reason: Buffer) => {
@@ -241,10 +262,10 @@ function streamSocket(
         fail(lastError ?? new Error('Codex WebSocket connect failed'));
       };
 
-      resend = () => {
+      function resend() {
         attempts += 1;
         void send();
-      };
+      }
       void send();
     },
     cancel() {
@@ -271,6 +292,28 @@ function safeJson(text: string): { type?: string } | null {
   } catch {
     return null;
   }
+}
+
+function codexTerminalError(event: { type?: string } & Record<string, unknown>): Error | null {
+  if (event.type !== 'response.failed' && event.type !== 'response.incomplete' && event.type !== 'error') {
+    return null;
+  }
+  const message =
+    objectMessage(event.error) ??
+    objectMessage((event.response as { error?: unknown } | undefined)?.error) ??
+    objectMessage((event.response as { incomplete_details?: unknown } | undefined)?.incomplete_details) ??
+    (typeof event.message === 'string' ? event.message : undefined) ??
+    `Codex ${event.type}`;
+  return new Error(message);
+}
+
+function objectMessage(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.message === 'string') return record.message;
+  if (typeof record.reason === 'string') return record.reason;
+  if (typeof record.code === 'string') return record.code;
+  return undefined;
 }
 
 async function prepareRequest(

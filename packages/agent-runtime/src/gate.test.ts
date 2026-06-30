@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentDef, TaskDef, UjimaEvent } from '@ujima/shared';
+import type { AgentDef, TaskDef } from '@ujima/shared';
 import { emptyGovernancePolicy, setAgentRule } from '@ujima/shared';
 import { openDb, type UjimaDb } from '@ujima/context-store';
 import { createLocalEventBus, type EventBus } from '@ujima/event-bus';

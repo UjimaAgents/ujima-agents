@@ -435,7 +435,7 @@ export async function buildMcpToolDefinitionsV2(
                 toolResult: result.output,
               });
               if (capture.attachmentRefs.length > 0) {
-                const wrapped = wrapAttachmentCapture(result.output, capture.attachmentRefs);
+                const wrapped = wrapAttachmentCapture(result.output, capture.attachmentRefs.map((ref) => ref.ref));
                 result = { ...result, output: wrapped };
               }
             } catch (err) {

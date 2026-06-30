@@ -4,7 +4,6 @@ import {
   SocketEventNames,
   approvalScopeMatches,
   approvalScopeMatchesPersisted,
-  buildConnectorScope,
   canonicalizeApprovalFamilyScope,
   canonicalizeApprovalGrantScope,
   formatPersistedApprovalGrantReason,
@@ -174,7 +173,7 @@ export class ApprovalService {
     const existing = requestedScope
       ? this.repo
           .listPendingApprovals(input.organizationId)
-          .find((approval) => matchingApprovalScope(approval, requestedScope))
+          .find((approval) => approval.runId === input.runId && matchingApprovalScope(approval, requestedScope))
       : undefined;
 
     if (existing) {
@@ -417,7 +416,7 @@ export class ApprovalService {
           mcpId,
           toolName,
           state: 'allow',
-          reason: input.reason ?? '',
+          reason: effectiveReason ?? '',
           updatedBy: 'human',
         });
       }
@@ -575,18 +574,7 @@ function approvalOperationalScope(
   approval: ApprovalRequest | null | undefined,
   rawScope: string | undefined,
 ): string | undefined {
-  // For connector scopes, preserve the tool identity but drop
-  // argsPreview so allow_family matches any args on the same tool.
   if (rawScope) {
-    const connector = parseConnectorScope(rawScope);
-    if (connector) {
-      return buildConnectorScope({
-        serverId: connector.serverId,
-        serverDisplayName: connector.serverDisplayName,
-        toolName: connector.toolName,
-        argsPreview: '',
-      });
-    }
     return rawScope;
   }
   return fallbackApprovalScope(approval);

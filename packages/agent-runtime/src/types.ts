@@ -7,6 +7,15 @@ import type { LanguageModel } from 'ai';
 import { type BrowserStateSnapshot } from './browser';
 
 export type SpawnReason = 'initial' | 'event_triggered' | 'human_resume';
+export type GateResolver = (input: {
+  agent: AgentDef;
+  taskId: string;
+  sessionId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  reason?: string;
+  code?: string;
+}) => Promise<'approve' | 'reject'> | 'approve' | 'reject';
 
 export type ExitReason =
   | 'completed'

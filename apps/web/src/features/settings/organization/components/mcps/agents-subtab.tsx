@@ -341,7 +341,7 @@ function renderToolRow(args: {
   const isBusy = busy === `${serverId}:${tool.name}`;
   const exposed = view?.exposed ?? false;
   const effective = view
-    ? { state: view.state, source: view.source, reason: view.reason }
+    ? { state: view.state, source: view.source, reason: view.reason, exactRule: false }
     : tool.effective;
   return (
     <tr key={`${serverId}:${tool.name}`}>

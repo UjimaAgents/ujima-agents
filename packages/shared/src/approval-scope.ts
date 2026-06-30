@@ -118,6 +118,17 @@ export function stripApprovalScopeDisplayFields(scope: string): string {
       return scope;
     }
   }
+  if (scope.startsWith('connector:')) {
+    const payload = scope.slice('connector:'.length);
+    if (!payload.startsWith('{')) return scope;
+    try {
+      const parsed = JSON.parse(payload) as Record<string, unknown>;
+      const { argsPreview: _preview, ...rest } = parsed;
+      return `connector:${JSON.stringify(rest)}`;
+    } catch {
+      return scope;
+    }
+  }
   return scope;
 }
 
@@ -548,12 +559,6 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
     })}`;
   }
 
-  // Connector grants key on (serverId, toolName) only. argsPreview and
-  // serverDisplayName are display-only and vary per call (different args,
-  // late-resolved server label), so neutralizing them here — for BOTH
-  // grant and family mode — is what lets a stored "always allow" actually
-  // match the next invocation of the same tool. Without this the grant is
-  // stored in connector shape but never re-matches and re-prompts forever.
   const connector = parseConnectorScope(scope);
   if (connector) {
     return buildConnectorScope({

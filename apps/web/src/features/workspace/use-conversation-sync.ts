@@ -671,6 +671,8 @@ function handleStreamEvent(
       actions.upsertRun(run, runToActivity);
       if (envelope.event === "run:started") {
         actions.setConversationError(undefined);
+      } else if (envelope.event === "run:completed" && run.status === "failed") {
+        actions.setConversationError(run.summary || "Agent run failed.");
       }
       const member = actions.storeMembers.find((m) => m.id === run.agentId);
       const nextActivity = runStatusToActivityState(run.status, member?.presence);
