@@ -49,6 +49,14 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Deprecate older versions
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm deprecate '@ujima/agents@<'"${VERSION}" \
+            "Upgrade to v${VERSION} for the latest updates"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Upload npm tarball
         uses: actions/upload-artifact@v4
         with:

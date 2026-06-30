@@ -1,4 +1,4 @@
 interface:
   display_name: "Ujima Rapid Improve"
-  short_description: "Benchmark and improve Ujima loop speed"
-  default_prompt: "Use -rapid-improve to benchmark Ujima agent-loop performance, patch the bottleneck, and rerun proof."
+  short_description: "Find and fix bugs in the Ujima agent harness by running diagnostic prompts against live agents and inspecting agent-loop logs for correctness failures."
+  default_prompt: "Use -rapid-improve to hunt bugs in the Ujima harness: send a diagnostic prompt to a live agent, inspect .agent-loop logs for stalled turns, dropped tool results, approval deadlocks, or bridge desyncs, then patch the runtime and re-verify."

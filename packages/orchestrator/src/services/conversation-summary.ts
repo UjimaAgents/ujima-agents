@@ -167,6 +167,32 @@ export function buildSelfNoteSummary(messages: Message[]): string {
   });
 }
 
+export function buildConversationClearSummary(messages: Message[]): string {
+  return buildStructuredConversationSummary({
+    marker: CONVERSATION_ARCHIVE_MARKER,
+    title: `Cleared ${messages.length} earlier messages.`,
+    messages: [],
+    sections: [
+      {
+        heading: "Current discussion",
+        bullets: ["Conversation history was cleared by the user."],
+      },
+      {
+        heading: "Decisions",
+        bullets: ["No decisions were preserved during clear."],
+      },
+      {
+        heading: "Open questions",
+        bullets: ["No open questions were preserved during clear."],
+      },
+      {
+        heading: "Next actions",
+        bullets: ["Continue from the next user message."],
+      },
+    ],
+  });
+}
+
 export interface LlmSummarizerInput {
   messages: Message[];
   model: LanguageModel;
@@ -233,7 +259,7 @@ async function extractSummary(
     messageCount: number;
   },
 ) {
-  const { generateObject } = await import("ai");
+  const { streamObject } = await import("ai");
   const { z } = await import("zod");
   const summarySchema = z.object({
     context: z.array(z.string().max(200)).max(maxBullets),
@@ -242,7 +268,7 @@ async function extractSummary(
     nextActions: z.array(z.string().max(200)).max(maxBullets),
   });
   try {
-    const result = await generateObject({
+    const result = streamObject({
       model,
       schema: summarySchema,
       system:
@@ -257,11 +283,12 @@ async function extractSummary(
       prompt: transcript,
       maxOutputTokens: 2_048,
     });
+    const object = await result.object;
     return {
-      context: sanitizeBullets(result.object.context, maxBullets),
-      decisions: sanitizeBullets(result.object.decisions, maxBullets),
-      openQuestions: sanitizeBullets(result.object.openQuestions, maxBullets),
-      nextActions: sanitizeBullets(result.object.nextActions, maxBullets),
+      context: sanitizeBullets(object.context, maxBullets),
+      decisions: sanitizeBullets(object.decisions, maxBullets),
+      openQuestions: sanitizeBullets(object.openQuestions, maxBullets),
+      nextActions: sanitizeBullets(object.nextActions, maxBullets),
     };
   } catch (error) {
     const detail = {
@@ -271,7 +298,7 @@ async function extractSummary(
       messageCount: context?.messageCount ?? 0,
       transcriptChars: transcript.length,
     };
-    console.warn("[conversation-summary] generateObject failed", detail, error);
+    console.warn("[conversation-summary] streamObject failed", detail, error);
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
       `Conversation summarization failed (${detail.mode}, chunk ${detail.chunkIndex + 1}/${detail.chunkCount}, ${detail.messageCount} messages, ${detail.transcriptChars} transcript chars): ${message}`,

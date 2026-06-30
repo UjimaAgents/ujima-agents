@@ -18,6 +18,57 @@ type Bootstrap = {
 };
 type Message = { threadId: string };
 
+const PROMPTS: Record<string, string> = {
+  'multi-turn': [
+    'Do a full diagnostic sweep of this workspace:',
+    '- List all available channels and procedures',
+    '- Recall from memory what you know about this project',
+    '- List all files in packages/agent-runtime/src/',
+    '- Read the three largest .ts files in that directory',
+    '- Summarize what each does and how they connect',
+    '- Finally, create a file called diagnostic-report.md with your findings',
+    'Use every distinct tool category you can. Show your work at each step.',
+  ].join('\n'),
+  'approval': [
+    'Run an approval diagnostic:',
+    '- Create a file called approval-test-a.md with content "phase 1"',
+    '- Then modify approval-test-a.md to say "phase 2"',
+    '- Then create another file called approval-test-b.md with content "phase 3"',
+    '- Then delete approval-test-a.md',
+    'Pause for approval at each step and report what scope each approval request covers.',
+  ].join('\n'),
+  'error-recovery': [
+    'Test error recovery:',
+    '- Read a file called nonexistent-file-xyz.md',
+    '- Then read package.json',
+    '- Then read another nonexistent file called missing-data.json',
+    '- Then list all .ts files in packages/orchestrator/src/',
+    '- Then create recovery-results.md summarizing which operations failed and which succeeded',
+    'Do not stop on errors. Continue through all steps.',
+  ].join('\n'),
+  'tool-routing': [
+    'Exercise every tool category:',
+    '- List all channels with channel.list',
+    '- Read the latest message in each channel with channel.read',
+    '- Recall past session memories with memory.recall',
+    '- List available procedures with procedure.list',
+    '- List your own procedures with self.procedure.list',
+    '- Search for files containing "agent-loop" with grep',
+    '- Read one of the matches with view',
+    '- List the workspace directory with ls',
+    '- Finally, create tool-routing-report.md documenting which tools worked',
+  ].join('\n'),
+  'rapid-calls': [
+    'Read every .ts file in packages/agent-runtime/src/ one by one.',
+    'List the filename and first export of each.',
+    'Do not skip any file. Read them all in sequence.',
+  ].join('\n'),
+  'wake': 'Hello, please introduce yourself and describe what tools you have available.',
+};
+
+const AREAS = Object.keys(PROMPTS);
+const chosenArea = AREAS[Math.floor(Math.random() * AREAS.length)];
+
 function headers(json = false) {
   return {
     authorization: `Bearer ${token}`,
@@ -41,20 +92,6 @@ function pickAgent(boot: Bootstrap): Member {
   return agent;
 }
 
-function prompt(agent: Member) {
-  return [
-    `@${agent.name ?? agent.id} run a real Ujima loop benchmark now.`,
-    'You must perform at least 15 separate model/tool actions and use at least 10 distinct available tools of your choosing.',
-    'Prefer safe read-only or harmless inspect actions. Do not modify files unless a tool is explicitly safe and reversible.',
-    'Use the canonical dotted tool names and vary across categories: channel.list, channel.read, memory.recall, procedure.list, self.procedure.list, skill.read, ls, glob, grep, view, web_search.',
-    'After the context pass, open the main loop files with view: packages/agent-runtime/src/ai-sdk-loop.ts, packages/llm/src/codex-responses.ts, packages/llm/src/select.ts, and packages/orchestrator/src/debug/agent-loop-logger.ts.',
-    'Do not finish on metadata alone. You are not done until you have actually read those files and compared them.',
-    'Prefer a new tool name when another safe tool can answer the same question, and do not keep rereading the same file with the same tool.',
-    'Do not stop early. If fewer than 10 tools are available, use every available tool and say which were unavailable.',
-    'End with a compact table: tool, why used, time/latency if visible, and bottleneck guess.',
-  ].join('\n');
-}
-
 async function filesSince() {
   const dir = join(process.cwd(), '.agent-loop');
   const names = await readdir(dir).catch(() => []);
@@ -65,35 +102,6 @@ async function filesSince() {
     if ((await stat(path)).mtimeMs >= startedAt - 1000) out.push(path);
   }
   return out.sort();
-}
-
-async function summarize(paths: string[]) {
-  let turns = 0;
-  let actions = 0;
-  let tokens = 0;
-  const tools = new Map<string, number>();
-  for (const path of paths) {
-    const raw = await readFile(path, 'utf-8');
-    if (!raw.trim()) continue;
-    const log = JSON.parse(raw);
-    turns++;
-    tokens += log.tokenUsage?.totalTokens ?? log.steps?.[0]?.tokenUsage?.totalTokens ?? 0;
-    for (const step of log.steps ?? []) {
-      actions += 1 + (step.toolCalls?.length ?? 0) + (step.toolResults?.length ?? 0);
-      for (const call of step.toolCalls ?? []) {
-        const name = call.toolName ?? 'unknown';
-        tools.set(name, (tools.get(name) ?? 0) + 1);
-      }
-    }
-  }
-  return {
-    files: paths.length,
-    turns,
-    actions,
-    distinctTools: tools.size,
-    tokens,
-    tools: [...tools.entries()].sort((a, b) => b[1] - a[1]),
-  };
 }
 
 const boot = await request<Bootstrap>('/api/bootstrap');
@@ -116,6 +124,7 @@ if (!senderId) {
   throw new Error('Need UJIMA_SESSION_TOKEN or UJIMA_EMAIL/UJIMA_PASSWORD. ~/.ujima/token is daemon auth, not the owner web session.');
 }
 const agent = pickAgent(authedBoot);
+const promptText = PROMPTS[chosenArea];
 
 const message = await request<Message>('/api/messages', {
   method: 'POST',
@@ -123,28 +132,43 @@ const message = await request<Message>('/api/messages', {
     organizationId,
     recipientId: agent.id,
     senderId,
-    content: prompt(agent),
-    clientMessageId: `rapid-loop-${Date.now()}`,
+    content: promptText,
+    clientMessageId: `harness-diagnostic-${chosenArea}-${Date.now()}`,
   }),
 });
 
 let paths: string[] = [];
-let lastFileKey = '';
+let lastFileCount = 0;
 let quietPolls = 0;
-for (let i = 0; i < 90; i++) {
+for (let i = 0; i < 120; i++) {
   await new Promise((resolve) => setTimeout(resolve, 2000));
   paths = await filesSince();
-  const summary = await summarize(paths);
-  if (summary.actions >= 15 && summary.distinctTools >= 10) break;
-  const fileKey = paths.join('|');
-  quietPolls = fileKey && fileKey === lastFileKey ? quietPolls + 1 : 0;
-  lastFileKey = fileKey;
-  if (summary.actions > 0 && quietPolls >= 4) break;
+  const currentCount = paths.length;
+  if (currentCount === lastFileCount && currentCount > 0) {
+    quietPolls++;
+  } else {
+    quietPolls = 0;
+  }
+  lastFileCount = currentCount;
+  if (quietPolls >= 6) break;
 }
 
-const summary = await summarize(paths);
-console.log(JSON.stringify({ agent: agent.id, threadId: message.threadId, loop: summary }, null, 2));
+if (paths.length === 0) {
+  console.error(JSON.stringify({
+    status: 'no-loop-files',
+    agent: agent.id,
+    threadId: message.threadId,
+    area: chosenArea,
+    prompt: promptText,
+    hint: 'Agent may not have woken. Check daemon logs and UJIMA_AGENT_LOOP_LOGS=1.',
+  }));
+  process.exit(1);
+}
 
-if (summary.files === 0) throw new Error('No new .agent-loop files. Restart daemon with UJIMA_AGENT_LOOP_LOGS=1.');
-if (summary.actions < 15) throw new Error(`Real smoke too small: ${summary.actions} actions < 15.`);
-if (summary.distinctTools < 10) throw new Error(`Real smoke used ${summary.distinctTools} distinct tools < 10.`);
+process.stdout.write(JSON.stringify({
+  area: chosenArea,
+  prompt: promptText,
+  agent: agent.id,
+  threadId: message.threadId,
+  paths,
+}) + '\n');
