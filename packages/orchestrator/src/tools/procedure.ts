@@ -18,7 +18,10 @@ const OperationSchema = z.enum(['list', 'view', 'add', 'remove', 'update']);
 const ProcedureSchema = z.object({
   scope: z.enum(['self', 'org', 'channel', 'agent']).default('self'),
   operation: OperationSchema,
-  name: z.string().min(2).max(64).optional(),
+  name: z.string().min(2).max(64).regex(
+    /^[a-z0-9][a-z0-9-]{1,63}$/,
+    'Use lowercase letters, digits, and hyphens only (2-64 chars).',
+  ).optional(),
   description: z.string().min(8).max(200).optional(),
   body: z.string().min(8).max(2000).optional(),
   channel_id: z.string().min(1).optional(),
@@ -67,12 +70,12 @@ export const procedureTool: OrchestratorTool<typeof ProcedureSchema> = {
     }
 
     const scopeFilter: ProcedureScope = scope as ProcedureScope;
-    const scopeId = scope === 'org' ? '' : scope === 'channel' ? (channel_id ?? '') : invocation.memberId;
     let channelId = channel_id;
     if (scope === 'channel' && !channelId && invocation.threadId) {
       channelId = (repo as { getThread?: (orgId: string, threadId: string) => { channelId?: string } | null | undefined })
         .getThread?.(invocation.organizationId, invocation.threadId)?.channelId;
     }
+    const scopeId = scope === 'org' ? '' : scope === 'channel' ? (channelId ?? '') : invocation.memberId;
 
     if (operation === 'list') {
       const items = await listProceduresByScope(team.workspace.root, scopeFilter, scopeId);

@@ -262,7 +262,8 @@ function deriveCategory(mimeType: string): AttachmentCategory {
 function escapeHeaderValue(value: string): string {
   return value
     .replaceAll('"', "'")
-    .replace(/[^\x20-\x7E\x09]/g, '')
+    .replaceAll('\t', ' ')
+    .replace(/[^\x20-\x7E]/g, '')
     .replaceAll('\n', '')
     .replaceAll('\r', '');
 }

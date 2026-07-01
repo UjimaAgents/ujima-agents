@@ -121,7 +121,8 @@ function renderProcedureFile(input: ProcedureFile): string {
 }
 
 function procedureFilePath(workspaceRoot: string, memberId: string, name: string): string {
-  return join(proceduresDirPath(workspaceRoot, memberId), `${name}.md`);
+  const safeName = name.replaceAll(/[^a-z0-9-]/g, '-').replaceAll(/-+/g, '-').replace(/(^-|-$)/g, '');
+  return join(proceduresDirPath(workspaceRoot, memberId), `${safeName || 'unnamed'}.md`);
 }
 
 /**
@@ -316,11 +317,14 @@ export async function executeUpdateProcedure(
   if (!existsSync(path)) {
     return { ok: false, reason: `procedure "${input.name}" not found` };
   }
+  const existingRaw = await readFile(path, 'utf8');
+  const { meta } = parseFrontmatter(existingRaw);
+  const existing = { description: meta['description'] ?? '', body: parseFrontmatter(existingRaw).body };
   const raw = renderProcedureFile({
     name: input.name,
-    description: input.description ?? '',
-    body: input.body ?? '',
-    createdAt: new Date().toISOString(),
+    description: input.description ?? existing.description,
+    body: input.body ?? existing.body,
+    createdAt: meta['created_at'] ?? new Date().toISOString(),
     path,
   });
   await writeFile(path, raw, 'utf8');
