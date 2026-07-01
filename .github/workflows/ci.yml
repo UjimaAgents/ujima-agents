@@ -142,12 +142,6 @@ jobs:
             turbo-build-${{ runner.os }}-
             turbo-${{ runner.os }}-
       - run: bun run build
-      - name: Upload package dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-dist
-          path: packages/*/dist
-          if-no-files-found: error
 
   # Unit tests gate PR merges. Sharded so the wall-clock per shard
   # is roughly half the unsharded test job. Integration tests live
@@ -176,11 +170,15 @@ jobs:
         with:
           path: packages/orchestrator/bin
           key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/cache@v4
         with:
-          name: package-dist
-          path: .
+          path: .turbo
+          key: turbo-build-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
+          restore-keys: |
+            turbo-build-${{ runner.os }}-
+            turbo-${{ runner.os }}-
       - run: |
+          bun run build
           bunx vitest run \
             --minWorkers=1 --maxWorkers=4 \
             --exclude '**/*.int.test.ts' \
@@ -217,11 +215,16 @@ jobs:
         with:
           path: packages/orchestrator/bin
           key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/cache@v4
         with:
-          name: package-dist
-          path: .
-      - run: bun run test:integration:ci
+          path: .turbo
+          key: turbo-build-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
+          restore-keys: |
+            turbo-build-${{ runner.os }}-
+            turbo-${{ runner.os }}-
+      - run: |
+          bun run build
+          bun run test:integration:ci
 
   # PR-blocking gate: collapses the parallel jobs into one required
   # status check. GitHub branch protection only needs to require
