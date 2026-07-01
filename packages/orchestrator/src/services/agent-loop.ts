@@ -132,7 +132,9 @@ export async function runAgentWithRetry(
       onContextLengthExceeded: hooks?.onContextLengthExceeded
         ? async (error) => {
             if (compacted) return null;
-            const reduced = await hooks.onContextLengthExceeded!(error);
+            const handler = hooks.onContextLengthExceeded;
+            if (!handler) return null;
+            const reduced = await handler(error);
             if (reduced) {
               compacted = true;
               config.messages = reduced;

@@ -36,13 +36,7 @@ import {
   writeTool,
 } from './workspace-tools.js';
 import { skillReadTool } from './skill-read.js';
-import {
-  ALWAYS_AVAILABLE_AGENT_TOOLS,
-  DEPRECATED_TOOL_ALIASES,
-  filterDeprecatedToolIds,
-  REMOVED_TOOL_IDS,
-  SUPERVISOR_TOOL_ALLOWLIST,
-} from '@ujima/shared';
+import { SUPERVISOR_TOOL_ALLOWLIST } from '@ujima/shared';
 
 export const ORCHESTRATOR_TOOLS = {
   'channel.post': channelPostTool,

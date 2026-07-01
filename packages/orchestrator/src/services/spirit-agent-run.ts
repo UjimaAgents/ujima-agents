@@ -32,7 +32,7 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { requireTeam } from '../utils/require-team.js';
 import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
-import { runAgentWithRetry, type AgentLoopStep, ContextLengthExceededError } from './agent-loop.js';
+import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
 import { emergencyCompactThread } from './conversation-compact.js';
 import { isDelegateMessage } from './run-reply-guard.js';
 import { buildToolDefinitions } from '../utils/to-model-messages.js';
@@ -400,12 +400,13 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         memberLabel: input.memberId,
       }, {
         onContextLengthExceeded: async (_error) => {
-          if (!this.conversations) return null;
+          const conversations = this.conversations;
+          if (!conversations) return null;
           const compacted = await emergencyCompactThread(
             {
               repo: this.repo,
               publishMessage: (msg) =>
-                this.conversations!.publishMessage(msg, [] as never[], undefined, {
+                conversations.publishMessage(msg, [] as never[], undefined, {
                   suppressDmAlerts: true,
                   skipMentionResolution: true,
                 }),

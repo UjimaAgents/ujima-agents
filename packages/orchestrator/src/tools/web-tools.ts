@@ -55,7 +55,9 @@ export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
       if (status >= 400) {
         throw new Error(`Request failed with status code ${status}${stderr ? ': ' + stderr.slice(0, 200) : ''}`);
       }
-      const resolved = assertWorkspaceBoundary(team!.workspace.root, filePath);
+      const workspaceRoot = team?.workspace.root;
+      if (!workspaceRoot) throw new Error('Missing team workspace root');
+      const resolved = assertWorkspaceBoundary(workspaceRoot, filePath);
       await mkdir(dirname(resolved), { recursive: true });
       await writeFile(resolved, body);
       return {

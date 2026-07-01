@@ -128,29 +128,41 @@ const R: Record<string, ToolEntry> = TOOL_REGISTRY;
 export const DEPRECATED_TOOL_ALIASES: Record<string, string> = Object.freeze(
   Object.fromEntries(
     Object.entries(R)
-      .filter(([, entry]) => entry.status === 'deprecated' && entry.alias)
-      .map(([id, entry]) => [id, entry.alias!]),
+      .filter(([, entry]): entry is ToolEntry & { status: 'deprecated'; alias: string } =>
+        entry.status === 'deprecated' && !!entry.alias,
+      )
+      .map(([id, entry]) => [id, entry.alias]),
   ),
 ) as Record<string, string>;
 
 export const REMOVED_TOOL_IDS: ReadonlySet<string> = new Set(
-  Object.keys(R).filter((id) => R[id]!.status === 'removed'),
+  Object.values(R)
+    .filter((entry) => entry.status === 'removed')
+    .map((entry) => entry.id),
 );
 
 export const ALWAYS_AVAILABLE_AGENT_TOOLS: readonly string[] = Object.freeze(
-  Object.keys(R).filter((id) => R[id]!.alwaysAvailable),
+  Object.values(R)
+    .filter((entry) => entry.alwaysAvailable)
+    .map((entry) => entry.id),
 );
 
 export const SUPERVISOR_TOOL_ALLOWLIST: readonly string[] = Object.freeze(
-  Object.keys(R).filter((id) => R[id]!.supervisorAllowed),
+  Object.values(R)
+    .filter((entry) => entry.supervisorAllowed)
+    .map((entry) => entry.id),
 );
 
 export const EXPLORER_DELEGATE_TOOL_IDS: ReadonlySet<string> = new Set(
-  Object.keys(R).filter((id) => R[id]!.explorerDelegate),
+  Object.values(R)
+    .filter((entry) => entry.explorerDelegate)
+    .map((entry) => entry.id),
 );
 
 export const WORKER_BLOCKED_TOOL_IDS: ReadonlySet<string> = new Set(
-  Object.keys(R).filter((id) => R[id]!.workerBlocked),
+  Object.values(R)
+    .filter((entry) => entry.workerBlocked)
+    .map((entry) => entry.id),
 );
 
 export function filterDeprecatedToolIds(toolIds: readonly string[]): string[] {
