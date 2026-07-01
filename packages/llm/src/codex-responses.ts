@@ -337,7 +337,7 @@ function safeJson(text: string): { type?: string } | null {
   }
 }
 
-function codexTerminalError(event: { type?: string } & Record<string, unknown>): Error | null {
+export function codexTerminalError(event: { type?: string } & Record<string, unknown>): Error | null {
   if (event.type !== 'response.failed' && event.type !== 'response.incomplete' && event.type !== 'error') {
     return null;
   }
@@ -347,12 +347,17 @@ function codexTerminalError(event: { type?: string } & Record<string, unknown>):
     objectMessage((event.response as { incomplete_details?: unknown } | undefined)?.incomplete_details) ??
     (typeof event.message === 'string' ? event.message : undefined) ??
     `Codex ${event.type}`;
-  return new Error(message);
+  const error = new Error(message);
+  error.name = 'AI_APICallError';
+  return error;
 }
 
 function objectMessage(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
+  if (typeof record.code === 'string' && typeof record.message === 'string') {
+    return `${record.code}: ${record.message}`;
+  }
   if (typeof record.message === 'string') return record.message;
   if (typeof record.reason === 'string') return record.reason;
   if (typeof record.code === 'string') return record.code;
