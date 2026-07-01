@@ -160,7 +160,7 @@ test('team config migration preserves existing providers and role tools', () => 
     'deepseek',
     'google',
   ]);
-  expect((result.config.roles as Array<{ tools: string[] }>)[0]?.tools).toEqual([
+  expect((result.config.roles as { tools: string[] }[])[0]?.tools).toEqual([
     'channel.read',
     'memory.write',
     'skill.read',
