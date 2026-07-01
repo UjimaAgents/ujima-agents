@@ -391,3 +391,37 @@ function listAllThreadMessages(
 export function isMessageWithAnyMarker(message: Message, markers: string[]): boolean {
   return markers.some((marker) => message.content.startsWith(marker));
 }
+
+export async function emergencyCompactThread(
+  ctx: CompactionContext,
+  organizationId: string,
+  threadId: string,
+  senderId: string,
+): Promise<boolean> {
+  const messages = listAllThreadMessages(ctx.repo, organizationId, threadId);
+  const uncompacted = listUncompactedConversationMessages(messages, {
+    summaryMarker: CONVERSATION_ARCHIVE_MARKER,
+    compactedMarker: CONVERSATION_ARCHIVE_MARKER,
+    mode: 'archive',
+  });
+  if (uncompacted.length === 0) return false;
+
+  console.warn('[conversation-compact] emergency archiving thread', {
+    threadId,
+    uncompactedCount: uncompacted.length,
+    totalMessages: messages.length,
+  });
+
+  await compactThreadMessages(ctx, {
+    organizationId,
+    threadId,
+    senderId,
+    messages,
+    summaryMarker: CONVERSATION_ARCHIVE_MARKER,
+    compactedMarker: CONVERSATION_ARCHIVE_MARKER,
+    batchSize: uncompacted.length,
+    mode: 'archive',
+  });
+
+  return true;
+}

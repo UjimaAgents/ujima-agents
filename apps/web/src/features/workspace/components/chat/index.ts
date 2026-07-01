@@ -31,7 +31,8 @@ export type {
 } from "./connector-action-row";
 
 export { ChangesTab, DetailsSidebar, TraceStep, RunSummary, BoundaryCard } from "./details-sidebar";
-export type { DetailsSidebarProps, TraceStepData, RunSummaryData } from "./details-sidebar";
+export type { DetailsSidebarProps, RunSummaryData } from "./details-sidebar";
+export type { TraceStepData } from "./trace-types";
 
 export { CollapsibleHeaderActions } from "./collapsible-header-actions";
 export { FontSizeControl } from "./font-size-control";

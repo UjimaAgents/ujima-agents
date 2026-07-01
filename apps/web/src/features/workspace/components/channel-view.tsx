@@ -1047,6 +1047,7 @@ export function ChannelView({
               actions={
                 isAgent && agentMember && onMemberUpdated ? (
                   <CollapsibleHeaderActions
+                    key={`${conversation.type}:${conversation.id}`}
                     kind="agent"
                     chatFontSize={chatFontSize}
                     onChatFontSizeChange={setChatFontSize}
@@ -1060,6 +1061,7 @@ export function ChannelView({
                   />
                 ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
                   <CollapsibleHeaderActions
+                    key={`${conversation.type}:${conversation.id}`}
                     kind="channel"
                     chatFontSize={chatFontSize}
                     onChatFontSizeChange={setChatFontSize}
@@ -1068,6 +1070,7 @@ export function ChannelView({
                   />
                 ) : (
                   <CollapsibleHeaderActions
+                    key={`${conversation.type}:${conversation.id}`}
                     kind="channel"
                     chatFontSize={chatFontSize}
                     onChatFontSizeChange={setChatFontSize}

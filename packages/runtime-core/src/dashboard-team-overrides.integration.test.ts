@@ -93,6 +93,71 @@ describe('dashboard team overrides', () => {
     expect(teamStore.getTeam(org.id)?.agents.map((agent) => agent.name)).not.toContain('agent-dashboard-2');
   });
 
+  it('self-heals stale dashboard role overrides with removed providers and tools', () => {
+    const db = openDatabase({ dbPath: ':memory:' });
+    const repo = new Repository(db);
+    const teamStore = createTeamStore();
+    const org = repo.saveOrganization(
+      OrganizationSchema.parse({
+        id: 'org-stale-override',
+        name: 'Stale Override Org',
+        workspace: { root: '/tmp/stale-override', roleScopes: {} },
+        organizationChart: { reportsTo: {} },
+      }),
+    );
+
+    const baseTeam = loadAgentTeam({
+      ...createStarterAgentTeamConfig({
+        name: org.name,
+        workspaceRoot: '/tmp/stale-override',
+      }),
+      providers: {
+        deepseek: { kind: 'deepseek', defaultModel: 'deepseek-v4-flash', models: [] },
+      },
+      roles: [
+        {
+          name: 'engineering-manager',
+          title: 'Engineering Manager',
+          instructions: 'Ship.',
+          provider: 'deepseek',
+          model: 'deepseek-v4-flash',
+          workspaceScopes: ['.'],
+          tools: ['ls', 'grep'],
+          channels: ['general'],
+        },
+      ],
+      agents: [createAgent('engineering-manager', 'engineering-manager', 'direct')],
+    });
+    teamStore.setTeam(baseTeam, org.id);
+    persistTeamConfig(repo, org.id, baseTeam);
+    repo.saveWorkspaceSetting(
+      org.id,
+      'dashboard.teamOverrides',
+      JSON.stringify({
+        roles: [
+          {
+            name: 'engineering-manager',
+            title: 'Engineering Manager',
+            instructions: 'Ship.',
+            provider: 'openai-codex',
+            model: 'gpt-5.4-mini',
+            workspaceScopes: ['.'],
+            tools: ['file', 'channel.send', 'ls'],
+            channels: ['general'],
+          },
+        ],
+        agents: [createAgent('engineering-manager', 'engineering-manager', 'direct')],
+      }),
+    );
+
+    applyDashboardTeamOverrides(repo, org.id, teamStore);
+
+    const role = teamStore.getTeam(org.id)?.getRole('engineering-manager');
+    expect(role?.provider).toBe('deepseek');
+    expect(role?.model).toBe('deepseek-v4-flash');
+    expect(role?.tools).toEqual(['ls', 'skill.read']);
+  });
+
   it('SettingsService.deleteMember removes the agent from the live team', () => {
     const db = openDatabase({ dbPath: ':memory:' });
     const repo = new Repository(db);

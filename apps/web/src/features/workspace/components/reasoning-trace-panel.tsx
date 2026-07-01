@@ -5,7 +5,8 @@ import { ArrowDown, Loader2 } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
 import { groupTraceSteps } from "../trace-grouping";
-import { TraceStep, type TraceStepData } from "./chat/details-sidebar";
+import { TraceStep } from "./chat/details-sidebar";
+import type { TraceStepData } from "./chat/trace-types";
 
 const TRACE_PAGE_SIZE = 15;
 const TOP_LOAD_THRESHOLD = 40;

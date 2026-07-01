@@ -23,7 +23,7 @@ import type { OrchestratorTool } from './types.js';
  * design. The Hermes pattern (`tools/skill_manager_tool.py`) treats
  * the description as the discovery surface: the system prompt
  * loads only `name + description` lines for every procedure; the
- * agent calls `self.procedure.view(name)` to pull the full body
+ * agent calls `procedure view(name, scope:"self")` to pull the full body
  * on demand. This is agentskills.io-compatible by construction.
  *
  * Backward compatibility: the legacy single-file `procedures.md`
@@ -121,7 +121,8 @@ function renderProcedureFile(input: ProcedureFile): string {
 }
 
 function procedureFilePath(workspaceRoot: string, memberId: string, name: string): string {
-  return join(proceduresDirPath(workspaceRoot, memberId), `${name}.md`);
+  const safeName = name.replaceAll(/[^a-z0-9-]/g, '-').replaceAll(/-+/g, '-').replace(/(^-|-$)/g, '');
+  return join(proceduresDirPath(workspaceRoot, memberId), `${safeName || 'unnamed'}.md`);
 }
 
 /**
@@ -203,7 +204,7 @@ export async function listProcedures(
  * Used by the system-prompt loader. Returns a compact list of
  * `name: description` lines — NOT the full bodies — so the cache-
  * stable prefix doesn't balloon with every procedure the agent has
- * ever written. The agent calls `self.procedure.view(name)` to
+ * ever written. The agent calls `procedure view(name, scope:"self")` to
  * pull a body on demand.
  */
 export async function loadProceduresForSystemPrompt(
@@ -214,7 +215,7 @@ export async function loadProceduresForSystemPrompt(
   if (all.length === 0) return undefined;
   const lines = all.map((p) => `- ${p.name}: ${p.description}`);
   return [
-    '## Procedures available (call `self.procedure.view(name)` to read a body):',
+    '## Procedures available (call `procedure view(name, scope:"self")` to read a body):',
     ...lines,
   ].join('\n');
 }
@@ -245,6 +246,93 @@ export async function loadProceduresFile(
 
 export const PROCEDURE_FILE_MAX_BYTES = PROCEDURE_BODY_MAX_BYTES;
 
+// ── Shared execute helpers (used by both legacy and unified tools) ──
+
+export async function executeAddProcedure(
+  workspaceRoot: string,
+  memberId: string,
+  input: { name: string; description: string; body: string },
+) {
+  const dir = proceduresDirPath(workspaceRoot, memberId);
+  await mkdir(dir, { recursive: true });
+  const path = procedureFilePath(workspaceRoot, memberId, input.name);
+  if (existsSync(path)) {
+    return { ok: false, reason: `procedure "${input.name}" already exists; remove it first or pick a different name` };
+  }
+  const file: ProcedureFile = {
+    name: input.name,
+    description: input.description,
+    body: input.body,
+    createdAt: new Date().toISOString(),
+    path,
+  };
+  await writeFile(path, renderProcedureFile(file), 'utf8');
+  const all = await listProcedures(workspaceRoot, memberId);
+  return { ok: true, added: true, name: file.name, count: all.length, path };
+}
+
+export async function executeRemoveProcedure(
+  workspaceRoot: string,
+  memberId: string,
+  input: { name: string },
+) {
+  const path = procedureFilePath(workspaceRoot, memberId, input.name);
+  if (!existsSync(path)) {
+    return { ok: false, reason: `procedure "${input.name}" not found` };
+  }
+  await unlink(path);
+  const all = await listProcedures(workspaceRoot, memberId);
+  return { ok: true, removed: input.name, count: all.length };
+}
+
+export async function executeListProcedures(
+  workspaceRoot: string,
+  memberId: string,
+) {
+  const all = await listProcedures(workspaceRoot, memberId);
+  return {
+    procedures: all.map((p) => ({ name: p.name, description: p.description, createdAt: p.createdAt })),
+  };
+}
+
+export async function executeViewProcedure(
+  workspaceRoot: string,
+  memberId: string,
+  input: { name: string },
+) {
+  const all = await listProcedures(workspaceRoot, memberId);
+  const hit = all.find((p) => p.name === input.name);
+  if (!hit) {
+    return { ok: false, reason: `procedure "${input.name}" not found`, available: all.map((p) => p.name) };
+  }
+  return { ok: true, name: hit.name, description: hit.description, body: hit.body, createdAt: hit.createdAt };
+}
+
+export async function executeUpdateProcedure(
+  workspaceRoot: string,
+  memberId: string,
+  input: { name: string; description?: string; body?: string },
+) {
+  const path = procedureFilePath(workspaceRoot, memberId, input.name);
+  if (!existsSync(path)) {
+    return { ok: false, reason: `procedure "${input.name}" not found` };
+  }
+  const existingRaw = await readFile(path, 'utf8');
+  const { meta } = parseFrontmatter(existingRaw);
+  const existing = { description: meta['description'] ?? '', body: parseFrontmatter(existingRaw).body };
+  const raw = renderProcedureFile({
+    name: input.name,
+    description: input.description ?? existing.description,
+    body: input.body ?? existing.body,
+    createdAt: meta['created_at'] ?? new Date().toISOString(),
+    path,
+  });
+  await writeFile(path, raw, 'utf8');
+  return { ok: true, updated: input.name };
+}
+
+// ── Legacy individual tool definitions ─────────────────────────────
+
 export const selfProcedureAddTool: OrchestratorTool<typeof SelfProcedureAddSchema> = {
   id: 'self.procedure.add',
   schema: SelfProcedureAddSchema,
@@ -254,25 +342,8 @@ export const selfProcedureAddTool: OrchestratorTool<typeof SelfProcedureAddSchem
     bypassPermission: true,
     input: args,
   }),
-  execute: async ({ invocation, team }) => {
-    const input = invocation.input as z.infer<typeof SelfProcedureAddSchema>;
-    const dir = proceduresDirPath(team.workspace.root, invocation.memberId);
-    await mkdir(dir, { recursive: true });
-    const path = procedureFilePath(team.workspace.root, invocation.memberId, input.name);
-    if (existsSync(path)) {
-      return { ok: false, reason: `procedure "${input.name}" already exists; remove it first or pick a different name` };
-    }
-    const file: ProcedureFile = {
-      name: input.name,
-      description: input.description,
-      body: input.body,
-      createdAt: new Date().toISOString(),
-      path,
-    };
-    await writeFile(path, renderProcedureFile(file), 'utf8');
-    const all = await listProcedures(team.workspace.root, invocation.memberId);
-    return { ok: true, added: true, name: file.name, count: all.length, path };
-  },
+  execute: async ({ invocation, team }) =>
+    executeAddProcedure(team.workspace.root, invocation.memberId, invocation.input as z.infer<typeof SelfProcedureAddSchema>),
 };
 
 export const selfProcedureRemoveTool: OrchestratorTool<typeof SelfProcedureRemoveSchema> = {
@@ -284,16 +355,8 @@ export const selfProcedureRemoveTool: OrchestratorTool<typeof SelfProcedureRemov
     bypassPermission: true,
     input: args,
   }),
-  execute: async ({ invocation, team }) => {
-    const input = invocation.input as z.infer<typeof SelfProcedureRemoveSchema>;
-    const path = procedureFilePath(team.workspace.root, invocation.memberId, input.name);
-    if (!existsSync(path)) {
-      return { ok: false, reason: `procedure "${input.name}" not found` };
-    }
-    await unlink(path);
-    const all = await listProcedures(team.workspace.root, invocation.memberId);
-    return { ok: true, removed: input.name, count: all.length };
-  },
+  execute: async ({ invocation, team }) =>
+    executeRemoveProcedure(team.workspace.root, invocation.memberId, invocation.input as z.infer<typeof SelfProcedureRemoveSchema>),
 };
 
 export const selfProcedureListTool: OrchestratorTool<typeof SelfProcedureListSchema> = {
@@ -305,12 +368,8 @@ export const selfProcedureListTool: OrchestratorTool<typeof SelfProcedureListSch
     bypassPermission: true,
     input: args,
   }),
-  execute: async ({ invocation, team }) => {
-    const all = await listProcedures(team.workspace.root, invocation.memberId);
-    return {
-      procedures: all.map((p) => ({ name: p.name, description: p.description, createdAt: p.createdAt })),
-    };
-  },
+  execute: async ({ invocation, team }) =>
+    executeListProcedures(team.workspace.root, invocation.memberId),
 };
 
 export const selfProcedureViewTool: OrchestratorTool<typeof SelfProcedureViewSchema> = {
@@ -322,13 +381,6 @@ export const selfProcedureViewTool: OrchestratorTool<typeof SelfProcedureViewSch
     bypassPermission: true,
     input: args,
   }),
-  execute: async ({ invocation, team }) => {
-    const input = invocation.input as z.infer<typeof SelfProcedureViewSchema>;
-    const all = await listProcedures(team.workspace.root, invocation.memberId);
-    const hit = all.find((p) => p.name === input.name);
-    if (!hit) {
-      return { ok: false, reason: `procedure "${input.name}" not found`, available: all.map((p) => p.name) };
-    }
-    return { ok: true, name: hit.name, description: hit.description, body: hit.body, createdAt: hit.createdAt };
-  },
+  execute: async ({ invocation, team }) =>
+    executeViewProcedure(team.workspace.root, invocation.memberId, invocation.input as z.infer<typeof SelfProcedureViewSchema>),
 };

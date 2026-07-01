@@ -1,13 +1,11 @@
 import * as crypto from 'node:crypto';
 import * as vscode from 'vscode';
 import type { PendingGate } from '@ujima/shared';
-import type {
-  GateDecision,
-  GateRequest,
-  GateResolver,
-} from '@ujima/agent-runtime';
+import type { GateResolver } from '@ujima/agent-runtime';
 
 type GateOutcome = 'approve' | 'reject' | 'expired' | 'aborted';
+type GateDecision = Awaited<ReturnType<GateResolver>>;
+type GateRequest = Parameters<GateResolver>[0];
 
 export interface GateResolvedPayload {
   id: string;
@@ -28,8 +26,6 @@ export interface GateDecidePayload {
 interface PendingEntry {
   gate: PendingGate;
   resolve: (decision: GateDecision) => void;
-  abortHandler?: () => void;
-  abortSignal?: AbortSignal;
 }
 
 /**
@@ -49,9 +45,7 @@ export class GateCenter implements vscode.Disposable {
   constructor(private readonly channel?: vscode.OutputChannel) {}
 
   resolver(): GateResolver {
-    return {
-      awaitDecision: (req) => this.enqueue(req),
-    };
+    return (req) => this.enqueue(req);
   }
 
   list(): PendingGate[] {
@@ -91,18 +85,20 @@ export class GateCenter implements vscode.Disposable {
 
   private enqueue(req: GateRequest): Promise<GateDecision> {
     const id = `gate_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+    const code = req.code === 'requires_input' ? 'requires_input' : 'requires_approval';
     const gate: PendingGate = {
       id,
-      agent_id: req.agentId,
+      agent_id: req.agent.id,
+      agent_name: req.agent.name,
       task_id: req.taskId,
       session_id: req.sessionId,
-      tool_call_id: req.toolCallId,
+      tool_call_id: `gate_${id}`,
       tool_name: req.toolName,
-      mcp_id: req.mcpId,
-      mcp_name: req.mcpName,
+      mcp_id: req.agent.mcp,
+      mcp_name: req.agent.mcp,
       args: req.args,
-      gate: req.gate,
-      code: req.code,
+      gate: code === 'requires_input' ? 'input' : 'approval',
+      code,
       reason: req.reason,
       requested_at: new Date().toISOString(),
     };
@@ -111,15 +107,7 @@ export class GateCenter implements vscode.Disposable {
     );
 
     return new Promise<GateDecision>((resolve) => {
-      const entry: PendingEntry = { gate, resolve, abortSignal: req.abortSignal };
-      if (req.abortSignal) {
-        if (req.abortSignal.aborted) {
-          setImmediate(() => this.finalize(entry, 'aborted'));
-        } else {
-          entry.abortHandler = () => this.finalize(entry, 'aborted');
-          req.abortSignal.addEventListener('abort', entry.abortHandler, { once: true });
-        }
-      }
+      const entry: PendingEntry = { gate, resolve };
       this.pending.set(id, entry);
       this.addedEmitter.fire(gate);
     });
@@ -132,18 +120,8 @@ export class GateCenter implements vscode.Disposable {
   ): void {
     if (!this.pending.has(entry.gate.id)) return;
     this.pending.delete(entry.gate.id);
-    if (entry.abortHandler && entry.abortSignal) {
-      entry.abortSignal.removeEventListener('abort', entry.abortHandler);
-    }
 
-    const decision: GateDecision =
-      outcome === 'approve'
-        ? { kind: 'approve', args: meta.args, reason: meta.reason, decidedBy: meta.decidedBy }
-        : outcome === 'reject'
-          ? { kind: 'reject', reason: meta.reason, decidedBy: meta.decidedBy }
-          : { kind: 'reject', reason: meta.reason ?? `gate ${outcome}` };
-
-    entry.resolve(decision);
+    entry.resolve(outcome === 'approve' ? 'approve' : 'reject');
     this.channel?.appendLine(
       `[gate] resolved ${entry.gate.id} outcome=${outcome}${meta.decidedBy ? ` by=${meta.decidedBy}` : ''}`,
     );

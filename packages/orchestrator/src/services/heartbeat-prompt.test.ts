@@ -32,9 +32,9 @@ describe('SELF_IMPROVEMENT_SYSTEM_PROMPT', () => {
     expect(SELF_IMPROVEMENT_SYSTEM_PROMPT).toBe(SELF_IMPROVEMENT_SYSTEM_PROMPT.trim());
   });
 
-  it('mentions memory.write and self.procedure.add', () => {
+  it('mentions memory.write and procedure add', () => {
     expect(SELF_IMPROVEMENT_SYSTEM_PROMPT).toContain('memory.write');
-    expect(SELF_IMPROVEMENT_SYSTEM_PROMPT).toContain('self.procedure.add');
+    expect(SELF_IMPROVEMENT_SYSTEM_PROMPT).toContain('procedure add');
   });
 
   it('mentions self-improvement mode', () => {

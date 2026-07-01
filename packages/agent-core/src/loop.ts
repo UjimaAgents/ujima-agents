@@ -76,6 +76,13 @@ export class SchemaTooLargeError extends Error {
   }
 }
 
+export class ContextLengthExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ContextLengthExceededError';
+  }
+}
+
 export function findToolApprovalRequiredError(error: unknown): ToolApprovalRequiredError | null {
   if (error instanceof ToolApprovalRequiredError) return error;
   if (!error || typeof error !== 'object') return null;
@@ -109,7 +116,11 @@ function rethrowClassified(error: unknown): never {
   if (approval) throw approval;
   const input = findToolInputRequiredError(error);
   if (input) throw input;
-  if (error instanceof ModelNotFoundError || error instanceof SchemaTooLargeError) throw error;
+  if (
+    error instanceof ModelNotFoundError ||
+    error instanceof SchemaTooLargeError ||
+    error instanceof ContextLengthExceededError
+  ) throw error;
   const classified = classifyApiError(error);
   if (classified) throw classified;
   throw error;
@@ -135,6 +146,10 @@ function classifyApiError(error: unknown): Error | null {
 
   if (status === 400 && /too many states for serving/i.test(message)) {
     return new SchemaTooLargeError(message);
+  }
+
+  if (/context_length_exceeded/i.test(message)) {
+    return new ContextLengthExceededError(message);
   }
 
   return null;

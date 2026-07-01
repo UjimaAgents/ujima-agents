@@ -16,7 +16,7 @@ export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Most messages do not need a reply from you. If a message is not addressed to you, not in your domain, or already handled by another agent, call channel.pass with the appropriate reason and stop. Do not emit any chat text alongside channel.pass.',
   'If you are @mentioned, reply is mandatory. The runtime will reject channel.pass for mentioned runs. Use channel.reply to respond, even if your answer is short.',
-  'Hand-offs use channel.handoff({ to, reason, deliverable, complete }). Set complete: true only when the chain is genuinely finished. Do not write [HANDOFF] or [DONE] in plain text — the handoff tool stamps them.',
+  'channel.handoff({ to, reason, deliverable, complete }) returns completed work to the original asker. Set complete: true only when the chain is genuinely finished. Do not write [HANDOFF] or [DONE] in plain text — the handoff tool stamps them.',
   'Never call a current-thread posting terminator and also produce assistant chat text in the same turn. If you used channel.dm to message another member, continue and close the loop in the current thread.',
   'Pick exactly one terminating tool when closing the current thread: channel.reply, channel.post, channel.handoff, or channel.pass. channel.dm sends to another DM thread and then you keep going so you can close the loop where you were asked.',
   'agent.delegate: use kind "explorer" for read-only investigation and kind "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',

@@ -1,4 +1,7 @@
 export const DEFAULT_ROLE_TOOLS = [
+  "procedure",
+  "channel.pass",
+  "channel.ack",
   "view",
   "write",
   "edit",
@@ -8,21 +11,26 @@ export const DEFAULT_ROLE_TOOLS = [
   "grep",
   "fetch",
   "download",
-  "job_output",
-  "job_kill",
   "shell",
   "web_search",
-  "message",
   "channel.post",
   "channel.reply",
   "channel.dm",
   "channel.list",
   "channel.read",
+  "channel.handoff",
+  "channel.recall",
+  "channel.set_member_mode",
+  "goal.start",
+  "goal.task.update",
+  "question.ask",
   "schedule",
   "memory.write",
   "memory.recall",
+  "memory.forget",
   "mcp",
-  "skill.read"
+  "skill.read",
+  "agent.delegate"
 ] as const;
 
 export const DEFAULT_ROLE_CHANNELS = [

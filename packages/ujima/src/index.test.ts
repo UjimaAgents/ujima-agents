@@ -10,6 +10,7 @@ import {
   createEmptyWorkspaceTeamConfig,
   defineProvider,
   defineTool,
+  migrateAgentTeamConfig,
 } from './index.js';
 
 test('empty workspace config has roles but no agents', () => {
@@ -124,3 +125,44 @@ test('AgentTeam normalizes and validates the team config', () => {
   expect(team.getChannel('general')?.kind).toBe('general');
 });
 
+test('team config migration preserves existing providers and role tools', () => {
+  const result = migrateAgentTeamConfig({
+    configVersion: 5,
+    name: 'Existing Org',
+    workspace: { root: '/tmp/existing-org', roleScopes: {} },
+    organizationChart: { reportsTo: {} },
+    providers: {
+      deepseek: { kind: 'deepseek', defaultModel: 'deepseek-v4-flash', models: [] },
+      google: { kind: 'google', defaultModel: 'gemini-2.5-pro', models: [] },
+    },
+    tools: {
+      'channel.read': { id: 'channel.read' },
+      filesystem: { id: 'filesystem' },
+      'memory.save': { id: 'memory.save' },
+    },
+    roles: [
+      {
+        name: 'engineering-manager',
+        title: 'Engineering Manager',
+        instructions: 'Ship.',
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+        workspaceScopes: ['.'],
+        tools: ['channel.read', 'filesystem', 'memory.save'],
+        channels: ['general'],
+      },
+    ],
+    agents: [],
+    channels: [{ name: 'general', kind: 'general' }],
+  });
+
+  expect(Object.keys(result.config.providers as Record<string, unknown>).sort()).toEqual([
+    'deepseek',
+    'google',
+  ]);
+  expect((result.config.roles as { tools: string[] }[])[0]?.tools).toEqual([
+    'channel.read',
+    'memory.write',
+    'skill.read',
+  ]);
+});

@@ -86,8 +86,11 @@ export function SkillReadPane({
 }: SkillReadPaneProps) {
   const [open, setOpen] = useState(false);
   const parsed = output ? parseLoadedSkillBlock(output) : {};
-  const hasInstructions = !!parsed.instructions;
+  const title = parsed.name ?? skillName;
+  const summary = parsed.description ?? description ?? "No description returned.";
+  const instructions = parsed.instructions;
   const isError = status === "failed" || !!parsed.error;
+  const showRawOutput = !!output?.trim() && (!instructions || isError);
 
   const statusBadge = isError ? (
     <span className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded font-mono">Failed</span>
@@ -103,10 +106,15 @@ export function SkillReadPane({
           e.stopPropagation();
           setOpen(!open);
         }}
-        header={<span className="font-semibold text-xs text-foreground/85 leading-none">Read skill &ldquo;{parsed.name ?? skillName}&rdquo;</span>}
+        header={
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-xs text-foreground/85 leading-none">Read skill &ldquo;{title}&rdquo;</div>
+            <div className="mt-1 truncate text-[11px] text-foreground/55">{summary}</div>
+          </div>
+        }
         trailing={statusBadge}
       >
-        <div className="mt-2 space-y-3">
+        <div className="mt-3 space-y-3 select-text">
           {pluginName && (
             <div className="flex gap-x-1.5 text-[11px] py-0.5">
               <span className="text-[10px] font-medium text-foreground/45 select-none">Plugin:</span>
@@ -119,15 +127,15 @@ export function SkillReadPane({
               <span className="text-foreground/75 font-mono">{parsed.description ?? description}</span>
             </div>
           )}
-          {parsed.instructions && (
+          {instructions && (
             <div className="space-y-1.5 select-text">
               <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-foreground/40 select-none mb-1">
                 <BookOpen className="h-3 w-3 shrink-0 text-violet-500/60 dark:text-violet-400/60" />
-                <span>Instructions</span>
+                <span>SKILL.md</span>
               </div>
               <div className="pl-2">
                 <Markdown
-                  content={parsed.instructions}
+                  content={instructions}
                   className="!text-[11px] !leading-relaxed !text-foreground/75 [&_p]:!my-0 [&_code]:text-[10px] whitespace-pre-wrap font-mono"
                 />
               </div>
@@ -138,6 +146,11 @@ export function SkillReadPane({
               <span className="text-[10px] font-medium text-foreground/45 select-none">Error:</span>
               <span className="text-red-600 dark:text-red-400 font-mono">{parsed.error}</span>
             </div>
+          )}
+          {showRawOutput && (
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-foreground/[0.03] p-2 font-mono text-[10px] leading-relaxed text-foreground/70">
+              {output}
+            </pre>
           )}
         </div>
       </ExpandableRow>

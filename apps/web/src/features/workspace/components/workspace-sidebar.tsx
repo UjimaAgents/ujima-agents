@@ -15,7 +15,7 @@ import {
 import Link from "next/link";
 import { Avatar, RunningFigureIndicator } from "./chat/primitives";
 import type { BootstrapResponse } from "@ujima/api-schema";
-import { slugifyMemberId } from "@ujima/shared";
+import { filterDeprecatedToolIds, slugifyMemberId } from "@ujima/shared";
 import type { CreateAgentHandler, UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo, useEffect, useRef, memo, useCallback } from "react";
@@ -179,7 +179,7 @@ export function buildAgentEditorDraft({
     description: role?.description ?? "",
     instructions: role?.instructions ?? "",
     workspaceScopes: role?.workspaceScopes ?? [],
-    tools: role?.tools ?? [],
+    tools: filterDeprecatedToolIds(role?.tools ?? []),
     channels: (role?.channels ?? ["general"])
       .map((channelName) => channels.find((channel) => channel.name === channelName)?.id)
       .filter((id): id is string => Boolean(id)),

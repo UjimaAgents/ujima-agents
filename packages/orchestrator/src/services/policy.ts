@@ -183,6 +183,7 @@ export function checkToolPolicy(
   // these tools don't have.
   if (
     toolId.startsWith('memory.') ||
+    toolId === 'procedure' ||
     toolId.startsWith('self.procedure.') ||
     toolId.startsWith('goal.') ||
     toolId.startsWith('question.')

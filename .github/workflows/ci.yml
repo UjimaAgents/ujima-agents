@@ -147,7 +147,7 @@ jobs:
   # is roughly half the unsharded test job. Integration tests live
   # in the integration job below and DON'T gate PRs.
   test-unit:
-    needs: install
+    needs: [install, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -170,7 +170,15 @@ jobs:
         with:
           path: packages/orchestrator/bin
           key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-build-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
+          restore-keys: |
+            turbo-build-${{ runner.os }}-
+            turbo-${{ runner.os }}-
       - run: |
+          bun run build
           bunx vitest run \
             --minWorkers=1 --maxWorkers=4 \
             --exclude '**/*.int.test.ts' \
@@ -184,7 +192,7 @@ jobs:
   # They do NOT gate PR merges by default — flip the label when a
   # change actually touches integration-sensitive paths.
   test-integration:
-    needs: install
+    needs: [install, build]
     if: >
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
@@ -207,7 +215,16 @@ jobs:
         with:
           path: packages/orchestrator/bin
           key: vendor-bin-linux-x86_64-${{ hashFiles('scripts/vendor-binaries.sh') }}
-      - run: bun run test:integration:ci
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-build-${{ runner.os }}-${{ hashFiles('turbo.json', 'bun.lock') }}
+          restore-keys: |
+            turbo-build-${{ runner.os }}-
+            turbo-${{ runner.os }}-
+      - run: |
+          bun run build
+          bun run test:integration:ci
 
   # PR-blocking gate: collapses the parallel jobs into one required
   # status check. GitHub branch protection only needs to require

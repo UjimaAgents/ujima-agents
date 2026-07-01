@@ -26,7 +26,7 @@ import { aggregateProcedures, type AggregatorOutput } from './procedures.js';
  *
  * Procedures.md (Bet 7) loads into Zone 1 because it is per-agent
  * stable: an agent's own playbook changes only when the agent
- * explicitly calls `self.procedure.add/remove`. The cache busts on
+ * explicitly calls `procedure add/remove`. The cache busts on
  * those (rare) writes — every other wake is a cache hit.
  *
  * `cacheHashFor(system)` returns a deterministic SHA-256 so the CI
@@ -93,7 +93,7 @@ export const MEMORY_GUIDANCE: readonly string[] = Object.freeze([
  * should act, not what it knows.
  */
 export const PROCEDURES_GUIDANCE: readonly string[] = Object.freeze([
-  'Procedural memory (self.procedure.add / self.procedure.remove):',
+  'Procedural memory (procedure add / remove):',
   '- Write a procedure when you discover a non-obvious pattern that worked: "When pinging Phoebe in #design on a long thread, include the artifact path explicitly so she doesn\'t have to scroll".',
   '- Procedures are FOR YOU. Phrase them as "When X, do Y" — short, specific, actionable.',
   '- Do NOT add a procedure for behavior the system already enforces (mandatory-reply, channel.pass rules). Those live in the wake scaffold.',
@@ -150,7 +150,7 @@ export function buildCacheableSystem(input: CacheableSystemInput): CacheableSyst
   // tool availability so prompts without memory tools stay clean.
   const toolIds = new Set(input.availableToolIds ?? []);
   if (toolIds.has('memory.write')) sections.push(MEMORY_GUIDANCE.join('\n'));
-  if (toolIds.has('self.procedure.add')) sections.push(PROCEDURES_GUIDANCE.join('\n'));
+  if (toolIds.has('procedure')) sections.push(PROCEDURES_GUIDANCE.join('\n'));
   if (input.proceduresText) {
     sections.push(input.proceduresText);
   }
@@ -215,7 +215,7 @@ export function buildWakeContextMessages(_input: WakeContextInput): ModelMessage
  *
  * Bet 2 (Hermes-inspired): the system prompt loads only
  * `name: description` lines for each procedure, NOT the full
- * bodies. The agent calls `self.procedure.view(name)` on demand.
+ * bodies. The agent calls `procedure view(name)` on demand.
  * This keeps the cache-stable prefix lean even when the agent
  * accumulates many playbooks.
  */

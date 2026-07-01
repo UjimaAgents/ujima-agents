@@ -7,6 +7,7 @@ import type { Member } from "@ujima/shared";
 import {
   type MemberShellApprovalMode,
   type ShellApprovalMode,
+  getModelOptionsForProvider,
   listConfiguredProviderModels,
   parseConfiguredProviderModelValue,
   resolveMemberModelSelection,
@@ -44,12 +45,33 @@ export function AgentChatHeaderControls({
   const [approvalOpen, setApprovalOpen] = useState(false);
 
   const modelOptions = useMemo(
-    () =>
-      listConfiguredProviderModels(
+    () => {
+      const configured = listConfiguredProviderModels(
         providers,
         (provider, model) => `${PROVIDER_LABELS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1)} · ${model}`,
-      ),
-    [providers],
+      );
+      const selectedProvider =
+        parseConfiguredProviderModelValue(resolveMemberModelSelection(member))?.provider ??
+        member.llm ??
+        "";
+      if (!selectedProvider || configured.some((option) => option.provider === selectedProvider)) {
+        return configured;
+      }
+      const providerLabel =
+        PROVIDER_LABELS[selectedProvider] ??
+        selectedProvider.charAt(0).toUpperCase() + selectedProvider.slice(1);
+      return [
+        ...configured,
+        ...getModelOptionsForProvider(selectedProvider).map((option) => ({
+          provider: selectedProvider,
+          model: option.value,
+          label: option.label,
+          selectedLabel: `${providerLabel} · ${option.label}`,
+          value: `${selectedProvider}::${option.value}`,
+        })),
+      ];
+    },
+    [member, providers],
   );
 
   const rawSelectedModelValue = resolveMemberModelSelection(member);

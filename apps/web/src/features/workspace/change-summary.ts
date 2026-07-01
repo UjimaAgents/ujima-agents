@@ -1,4 +1,4 @@
-import type { TraceStepData } from "./components/chat/details-sidebar";
+import type { TraceStepData } from "./components/chat/trace-types";
 
 export interface FileChange {
   id: string;

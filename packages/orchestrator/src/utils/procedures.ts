@@ -314,7 +314,7 @@ export async function aggregateProcedures(input: { workspaceRoot: string; organi
 
   appendProcedureSection(sections, 'Workspace Culture — applies to everyone in this org. Call `procedure.view(name, scope:"org")` for the full body.', fittedOrg);
   appendProcedureSection(sections, 'Channel Culture — applies in this channel. Call `procedure.view(name, scope:"channel")` for the full body.', fittedChannel);
-  appendProcedureSection(sections, 'Your own procedures — what you have learned. Call `self.procedure.view(name)` for the full body.', fittedAgent);
+  appendProcedureSection(sections, 'Your own procedures — what you have learned. Call `procedure view(name, scope:"self")` for the full body.', fittedAgent);
 
   let lawText: string | undefined;
   if (lawEntries.length > 0) {
