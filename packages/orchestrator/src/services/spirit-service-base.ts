@@ -659,6 +659,30 @@ export class SpiritServiceBase {
     );
   }
 
+  protected findLatestThreadMessageForRun(
+    organizationId: string,
+    threadId: string,
+    runId: string,
+    agentId: string,
+  ): Message | undefined {
+    let cursor: string | undefined;
+    do {
+      const page = this.repo.listMessages(organizationId, threadId, cursor, 100);
+      for (const item of filterVisibleMessages(page.data).slice().reverse()) {
+        if (
+          item.metadata?.runId === runId &&
+          item.senderId === agentId &&
+          item.senderKind === AGENT_KIND &&
+          item.kind === AGENT_KIND
+        ) {
+          return item;
+        }
+      }
+      cursor = page.hasMore ? page.nextCursor : undefined;
+    } while (cursor);
+    return undefined;
+  }
+
   protected listAllChannelMessages(organizationId: string, channelId: string): Message[] {
     return filterVisibleMessages(
       collectCursorPages((cursor) =>

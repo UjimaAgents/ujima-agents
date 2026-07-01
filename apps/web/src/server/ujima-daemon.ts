@@ -8,8 +8,9 @@ import type { RolePresetTemplate } from "@/features/onboarding/types";
 
 export const WEB_SESSION_COOKIE = "ujima_web_session";
 const DEFAULT_DAEMON_PORT = process.env.UJIMA_PORT ?? "7511";
+const DEFAULT_DAEMON_FETCH_TIMEOUT_MS = 60_000;
 const DAEMON_FETCH_TIMEOUT_MS = Number.parseInt(
-  process.env.UJIMA_DAEMON_FETCH_TIMEOUT_MS ?? "5000",
+  process.env.UJIMA_DAEMON_FETCH_TIMEOUT_MS ?? String(DEFAULT_DAEMON_FETCH_TIMEOUT_MS),
   10,
 );
 
@@ -112,7 +113,7 @@ export async function daemonFetch(
     options?.timeoutMs ??
     (Number.isFinite(DAEMON_FETCH_TIMEOUT_MS) && DAEMON_FETCH_TIMEOUT_MS > 0
       ? DAEMON_FETCH_TIMEOUT_MS
-      : 5000);
+      : DEFAULT_DAEMON_FETCH_TIMEOUT_MS);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const upstreamSignal = init.signal;

@@ -246,7 +246,7 @@ export class SpiritService extends SpiritServiceSupervisor {
     return {
       ...page,
       data: page.data.flatMap((run) => {
-        const detail = this.getRunTraceDetail(organizationId, run.id);
+        const detail = this.getRunTraceDetail(organizationId, run.id, false);
         return detail ? [detail] : [];
       }),
     };
@@ -256,7 +256,7 @@ export class SpiritService extends SpiritServiceSupervisor {
     return this.repo.getRun(organizationId, runId);
   }
 
-  getRunTraceDetail(organizationId: string, runId: string) {
+  getRunTraceDetail(organizationId: string, runId: string, includeMessages = true) {
     const run = this.repo.getRun(organizationId, runId);
     if (!run) {
       return null;
@@ -265,17 +265,20 @@ export class SpiritService extends SpiritServiceSupervisor {
     const approvals = this.repo
       .listPendingApprovals(organizationId)
       .filter((approval) => approval.runId === runId);
-    const messages = run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
+    const messages = includeMessages && run.threadId ? this.listAllThreadMessages(organizationId, run.threadId) : [];
     const steps = this.repo.listRunSteps?.(organizationId, runId) ?? [];
-    const message = [...messages]
-      .reverse()
-      .find(
-        (item) =>
-          item.metadata?.runId === run.id &&
-          item.senderId === run.agentId &&
-          item.senderKind === AGENT_KIND &&
-          item.kind === AGENT_KIND,
-      );
+    const message =
+      includeMessages || !run.threadId
+        ? [...messages]
+            .reverse()
+            .find(
+              (item) =>
+                item.metadata?.runId === run.id &&
+                item.senderId === run.agentId &&
+                item.senderKind === AGENT_KIND &&
+                item.kind === AGENT_KIND,
+            )
+        : this.findLatestThreadMessageForRun(organizationId, run.threadId, run.id, run.agentId);
 
     return {
       run,
