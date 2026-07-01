@@ -128,8 +128,9 @@ const R: Record<string, ToolEntry> = TOOL_REGISTRY;
 export const DEPRECATED_TOOL_ALIASES: Record<string, string> = Object.freeze(
   Object.fromEntries(
     Object.entries(R)
-      .filter(([, entry]): entry is ToolEntry & { status: 'deprecated'; alias: string } =>
-        entry.status === 'deprecated' && !!entry.alias,
+      .filter(
+        (entry): entry is [string, ToolEntry & { status: 'deprecated'; alias: string }] =>
+          entry[1].status === 'deprecated' && !!entry[1].alias,
       )
       .map(([id, entry]) => [id, entry.alias]),
   ),
