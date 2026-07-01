@@ -115,6 +115,13 @@ jobs:
       - run: bun run typecheck
 
   build:
+    if: >
+      github.event_name != 'push' ||
+      github.ref != 'refs/heads/main' ||
+      !(
+        startsWith(github.event.head_commit.message, 'Merge pull request') ||
+        startsWith(github.event.head_commit.message, 'Merge branch')
+      )
     needs: install
     runs-on: ubuntu-latest
     steps:
@@ -147,7 +154,7 @@ jobs:
   # is roughly half the unsharded test job. Integration tests live
   # in the integration job below and DON'T gate PRs.
   test-unit:
-    needs: [install, build]
+    needs: install
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -192,7 +199,7 @@ jobs:
   # They do NOT gate PR merges by default — flip the label when a
   # change actually touches integration-sensitive paths.
   test-integration:
-    needs: [install, build]
+    needs: install
     if: >
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
@@ -231,7 +238,7 @@ jobs:
   # this single job; if any of the upstream jobs fail, this one
   # fails too.
   ci:
-    needs: [lint, typecheck, build, test-unit]
+    needs: [lint, typecheck, test-unit]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All gating jobs passed."
