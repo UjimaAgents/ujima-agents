@@ -5,6 +5,7 @@ import { assertWorkspaceBoundary } from '@ujima/shared/workspace';
 import { isSensitiveWorkspacePath, shouldSkipWorkspaceTreeDirectory } from '@ujima/shared/workspace-file-filters';
 import type { OrchestratorTool } from './types.js';
 import { readWindowValue } from './window-utils.js';
+import { globToRegExp } from './glob-utils.js';
 
 const TREE_LIMIT = 1000;
 
@@ -138,40 +139,6 @@ function matchGlob(pattern: string, candidate: string): boolean {
   const normalizedCandidate = normalizePath(candidate.trim());
   if (!normalizedPattern) return false;
   return globToRegExp(normalizedPattern).test(normalizedCandidate);
-}
-
-function globToRegExp(pattern: string): RegExp {
-  let source = '^';
-  for (let i = 0; i < pattern.length; i += 1) {
-    const char = pattern[i] ?? '';
-    if (char === '*') {
-      const next = pattern[i + 1];
-      if (next === '*') {
-        const after = pattern[i + 2];
-        if (after === '/') {
-          source += '(?:.*/)?';
-          i += 2;
-          continue;
-        }
-        source += '.*';
-        i += 1;
-        continue;
-      }
-      source += '[^/]*';
-      continue;
-    }
-    if (char === '?') {
-      source += '[^/]';
-      continue;
-    }
-    source += escapeRegExp(char);
-  }
-  source += '$';
-  return new RegExp(source);
-}
-
-function escapeRegExp(char: string): string {
-  return /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
 }
 
 function normalizePath(path: string): string {

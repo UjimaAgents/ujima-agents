@@ -48,7 +48,6 @@ export type {
 export {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   ORCHESTRATOR_TOOLS,
-  SUPERVISOR_ALLOWED_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
   listBackgroundJobs,
   terminateBackgroundJob,

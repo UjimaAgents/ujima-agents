@@ -51,6 +51,17 @@ function runFallback(run: RunState): string {
   return cleanText(run.step) ? `Working: ${cleanText(run.step)}` : "Working";
 }
 
+function latestMeaningfulEventText(run: RunState, activity: readonly ActivityEvent[]): string | undefined {
+  const start = Math.max(0, activity.length - MAX_ACTIVITY_LOOKBACK);
+  for (let i = activity.length - 1; i >= start; i -= 1) {
+    const event = activity[i];
+    if (eventRunId(event) !== run.id) continue;
+    const text = textForEvent(event, activity, i, run.id);
+    if (text) return text;
+  }
+  return undefined;
+}
+
 function textForEvent(event: ActivityEvent, activity: readonly ActivityEvent[], index: number, runId: string): string | undefined {
   const payload = objectValue(event.payload);
   if (event.type === "run_chunk") {
@@ -73,13 +84,7 @@ function textForEvent(event: ActivityEvent, activity: readonly ActivityEvent[], 
 }
 
 export function liveActivityTextForRun(run: RunState, activity: readonly ActivityEvent[]): string {
-  const start = Math.max(0, activity.length - MAX_ACTIVITY_LOOKBACK);
-  for (let i = activity.length - 1; i >= start; i -= 1) {
-    const event = activity[i];
-    if (eventRunId(event) !== run.id) continue;
-    return textForEvent(event, activity, i, run.id) ?? runFallback(run);
-  }
-  return runFallback(run);
+  return latestMeaningfulEventText(run, activity) ?? runFallback(run);
 }
 
 export function liveActivityTextForRuns(runs: readonly RunState[], activity: readonly ActivityEvent[]): string | undefined {

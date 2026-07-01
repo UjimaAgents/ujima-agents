@@ -169,9 +169,21 @@ async function serveAttachment(
     return apiError(reply, 404, 'Attachment not found.');
   }
   const data = readFileSync(path);
+  const escaped = escapeHeaderValue(attachment.filename) || 'file';
+  let disposition: string;
+  if (/[^\x20-\x7E]/.test(attachment.filename)) {
+    const encoded = `UTF-8''${encodeURIComponent(attachment.filename).replaceAll("'", '%27').replaceAll('*', '%2A')}`;
+    disposition = thumbnail
+      ? `inline; filename="${escaped}"; filename*=${encoded}`
+      : `attachment; filename="${escaped}"; filename*=${encoded}`;
+  } else {
+    disposition = thumbnail
+      ? `inline; filename="${escaped}"`
+      : `attachment; filename="${escaped}"`;
+  }
   return reply
     .header('Content-Type', attachment.mimeType)
-    .header('Content-Disposition', thumbnail ? `inline; filename="${escapeHeaderValue(attachment.filename)}"` : `attachment; filename="${escapeHeaderValue(attachment.filename)}"`)
+    .header('Content-Disposition', disposition)
     .send(data);
 }
 
@@ -248,5 +260,9 @@ function deriveCategory(mimeType: string): AttachmentCategory {
 }
 
 function escapeHeaderValue(value: string): string {
-  return value.replaceAll('"', "'").replaceAll('\n', '').replaceAll('\r', '');
+  return value
+    .replaceAll('"', "'")
+    .replace(/[^\x20-\x7E\x09]/g, '')
+    .replaceAll('\n', '')
+    .replaceAll('\r', '');
 }

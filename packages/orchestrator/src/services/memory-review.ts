@@ -51,7 +51,7 @@ const MEMORY_REVIEW_PROMPT = [
   'You are running a brief, BACKGROUND memory-review pass on the conversation above.',
   '',
   'Your job: decide whether any DURABLE fact, preference, or playbook from this conversation deserves to be saved.',
-  'Use ONLY these tools: memory.write, memory.forget, self.procedure.add, self.procedure.remove.',
+  'Use ONLY these tools: memory.write, memory.forget, procedure (add/remove).',
   'Do NOT post in the channel. Do NOT use any other tool. Do NOT reply to the user.',
   '',
   'What to save (call memory.write):',
@@ -59,7 +59,7 @@ const MEMORY_REVIEW_PROMPT = [
   ' - Preferences likely to apply in future turns ("user prefers concise replies").',
   ' - Identity ("user is the engineering lead", "team uses Postgres on RDS").',
   '',
-  'What to save as a procedure (call self.procedure.add):',
+  'What to save as a procedure (call procedure add):',
   ' - A non-obvious pattern that worked this turn ("when pinging X in a long thread, include the artifact path").',
   '',
   'What NOT to save:',
@@ -172,7 +172,7 @@ export class MemoryReviewService {
         triggerType: input.triggerType ?? 'post_turn',
         summary: result.text.trim() || 'Nothing to save.',
         memoryWrites: countToolCalls(result, 'memory.write'),
-        procedureWrites: countToolCalls(result, 'self.procedure.add'),
+        procedureWrites: countToolCalls(result, 'self.procedure.add') + countProcedureAdds(result),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
@@ -202,6 +202,17 @@ function countToolCalls(
       count + (step.toolCalls ?? []).filter((call) => call.toolName === toolName).length,
     0,
   );
+}
+
+function countProcedureAdds(
+  result: Awaited<ReturnType<AiService['generateMemoryReview']>>,
+): number {
+  return result.steps.reduce((count, step) => {
+    const calls = (step.toolCalls ?? []).filter(
+      (call) => call.toolName === 'procedure' && (call.input as Record<string, unknown>)?.operation === 'add',
+    );
+    return count + calls.length;
+  }, 0);
 }
 
 export { MEMORY_REVIEW_PROMPT };

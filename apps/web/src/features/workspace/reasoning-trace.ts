@@ -11,7 +11,7 @@ import {
   type RunState,
   type RunStep,
 } from "@ujima/shared/browser";
-import type { TraceStepData } from "./components/chat/details-sidebar";
+import type { TraceStepData } from "./components/chat/trace-types";
 import { formatTimestamp } from "./lib/format-timestamp";
 import { collapseRunChunkActivities, runChunkActivityKey } from "./run-chunk-activity";
 
@@ -691,17 +691,25 @@ function getBasename(path?: string): string {
   return path;
 }
 
+function normalizeToolName(name: string, args?: Record<string, unknown>): string {
+  const lower = name.toLowerCase();
+  if (lower === "skill_read") return "skill.read";
+  if (lower === "read" && args?.resourceType === "skill") return "skill.read";
+  return lower;
+}
+
 function deriveToolLine(
   input: ReasoningTraceInput,
   event: ActivityEvent | undefined,
   callBody: ToolSocketPayload | undefined,
 ): { title: string; detail?: string } {
   const actor = resolveMember(input, event?.publisher ?? callBody?.agentId);
-  const toolName = (
+  const toolName = normalizeToolName(
     callBody?.toolCall?.toolName ??
     (callBody as { toolName?: string } | undefined)?.toolName ??
-    "tool"
-  ).toLowerCase();
+    "tool",
+    callBody?.toolCall?.args,
+  );
   const parsed = inferToolAction(callBody?.toolCall?.args);
   const actorLabel = actor.name;
   const location =
@@ -1262,11 +1270,13 @@ function buildToolStep(
   const callBody = call?.payload as ToolSocketPayload | undefined;
   const resultBody = result?.payload as ToolSocketPayload | undefined;
   const mergedPayload = mergeToolCallActivityPayload(callBody, resultBody);
-  const name =
+  const name = normalizeToolName(
     (mergedPayload?.toolCall?.toolName ??
       (resultBody as { toolName?: string } | undefined)?.toolName ??
       "tool"
-    ).toLowerCase();
+    ),
+    mergedPayload?.toolCall?.args,
+  );
   const argsPreview = mergedPayload?.toolCall?.args
     ? truncatePreview(mergedPayload.toolCall.args, 220)
     : "";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ActivityEvent, Message, RunState } from "@ujima/shared/browser";
+import type { ActivityEvent, RunState } from "@ujima/shared/browser";
 import {
   buildHistoricalTraceSteps,
   buildReasoningTraceSteps,
@@ -394,6 +394,51 @@ describe("reasoning-trace ordering", () => {
     for (const step of runBoundSteps) {
       expect(step.runId).toBe(run.id);
     }
+  });
+
+  it("renders historical skill reads as skill panes when stored as read skill steps", () => {
+    const run: RunState = {
+      id: "run-skill",
+      organizationId: "org-1",
+      agentId: "carter-jordan",
+      threadId: "dm:carter-jordan:owner",
+      status: "completed",
+      step: "done",
+      summary: "done",
+      startedAt: "2026-07-01T06:55:07.000Z",
+    };
+
+    const steps = buildHistoricalTraceSteps({
+      conversationName: "Carter Jordan",
+      conversationType: "agent",
+      members: [{ id: "carter-jordan", name: "Carter Jordan", kind: "agent" }],
+      run,
+      steps: [
+        {
+          id: "step-skill",
+          organizationId: "org-1",
+          runId: run.id,
+          threadId: run.threadId,
+          agentId: run.agentId,
+          toolCallId: "call-skill",
+          toolId: "read",
+          action: "read",
+          resourceType: "skill",
+          resourcePath: "",
+          input: { name: "agent-skills:incremental-implementation" },
+          output:
+            "<loaded_skill>\n  <name>agent-skills:incremental-implementation</name>\n  <description>Delivers changes incrementally.</description>\n  <instructions>\nFix smallest piece first.\n  </instructions>\n</loaded_skill>",
+          status: "ok",
+          createdAt: "2026-07-01T06:55:15.417Z",
+        },
+      ],
+      organizationId: "org-1",
+    });
+
+    const skillStep = steps.find((step) => step.skillRead);
+    expect(skillStep?.toolName).toBe("skill.read");
+    expect(skillStep?.skillRead?.skillName).toBe("agent-skills:incremental-implementation");
+    expect(skillStep?.skillRead?.output).toContain("<loaded_skill>");
   });
 
 });

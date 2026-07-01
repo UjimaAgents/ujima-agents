@@ -192,10 +192,7 @@ export class AiService {
       'memory.write',
       'memory.recall',
       'memory.forget',
-      'self.procedure.add',
-      'self.procedure.remove',
-      'self.procedure.list',
-      'self.procedure.view',
+      'procedure',
     ] as const;
     const runId = `memory-review:${randomUUID()}`;
     const toolDefs = buildToolDefinitions(reviewToolIds, team, this.tools, {

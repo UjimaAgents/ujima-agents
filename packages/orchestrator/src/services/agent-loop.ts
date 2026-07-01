@@ -1,6 +1,7 @@
 import type { LanguageModel, ModelMessage, ToolSet } from 'ai';
 import {
   runAgentLoop,
+  ContextLengthExceededError,
   SchemaTooLargeError,
   type AgentLoopChunk,
   type AgentLoopStep,
@@ -10,6 +11,7 @@ import { dropHeaviestAttachedMcp, type AttachedMcpServerSummary } from './spirit
 
 export {
   RUN_TERMINATING_TOOL_NAMES,
+  ContextLengthExceededError,
   ToolApprovalRequiredError,
   ToolInputRequiredError,
   ModelNotFoundError,
@@ -33,6 +35,7 @@ export type {
 
 export interface RunAgentLoopRetryHooks {
   onSchemaTooLarge?: (error: SchemaTooLargeError) => Promise<ToolSet | null> | ToolSet | null;
+  onContextLengthExceeded?: (error: ContextLengthExceededError) => Promise<ModelMessage[] | null>;
 }
 
 export async function runAgentLoopWithRetry(
@@ -41,6 +44,7 @@ export async function runAgentLoopWithRetry(
   hooks: RunAgentLoopRetryHooks = {},
 ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
   let paletteReduced = false;
+  let contextReduced = false;
   while (true) {
     try {
       return await runAgentLoop(buildArgs());
@@ -50,6 +54,13 @@ export async function runAgentLoopWithRetry(
         if (trimmed) {
           paletteReduced = true;
           setTools(trimmed);
+          continue;
+        }
+      }
+      if (error instanceof ContextLengthExceededError && !contextReduced && hooks.onContextLengthExceeded) {
+        contextReduced = true;
+        const reduced = await hooks.onContextLengthExceeded(error);
+        if (reduced) {
           continue;
         }
       }
@@ -77,11 +88,17 @@ export interface RunAgentExecutionConfig {
   memberLabel: string;
 }
 
+export interface RunAgentRetryHooks {
+  onContextLengthExceeded?: (error: ContextLengthExceededError) => Promise<ModelMessage[] | null>;
+}
+
 export async function runAgentWithRetry(
   config: RunAgentExecutionConfig,
+  hooks?: RunAgentRetryHooks,
 ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
   let currentTools = config.tools;
   const temperature = supportsTemperature(config.model) ? config.temperature : undefined;
+  let compacted = false;
 
   return runAgentLoopWithRetry(
     () => ({
@@ -112,6 +129,17 @@ export async function runAgentWithRetry(
         );
         return dropped.toolDefs;
       },
+      onContextLengthExceeded: hooks?.onContextLengthExceeded
+        ? async (error) => {
+            if (compacted) return null;
+            const reduced = await hooks.onContextLengthExceeded!(error);
+            if (reduced) {
+              compacted = true;
+              config.messages = reduced;
+            }
+            return reduced;
+          }
+        : undefined,
     },
   );
 }

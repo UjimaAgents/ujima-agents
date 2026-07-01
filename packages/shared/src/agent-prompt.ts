@@ -160,7 +160,7 @@ const COLLABORATION_PROTOCOL_SHARED_BULLETS = [
 
 const COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS = [
   "- Not every message needs a reply. If a message should be ignored, do not answer it just to acknowledge it.",
-  "- To end a back-and-forth, call channel.handoff with complete: true. The tool stamps [DONE] and terminates the chain.",
+  "- When you've completed delegated work, call channel.handoff({ to, reason, deliverable, complete: true }) to return it to the original asker. The tool stamps [DONE] and terminates the chain.",
   "- If the message does not need a reply, stay quiet. Concretely: call channel.pass with a reason. Do not produce empty assistant text.",
 ] as const;
 

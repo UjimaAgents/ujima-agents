@@ -8,6 +8,7 @@ import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import { ChannelPicker } from "@/features/team/channel-picker";
 import { Select } from "@/components/ui/select";
 import type { BootstrapResponse } from "@ujima/api-schema";
+import { filterDeprecatedToolIds, TOOL_REGISTRY } from "@ujima/shared";
 import type { SelectedConversation } from "../../types";
 import type { RolePresetTemplate } from "../../../onboarding/types";
 import { defaultModelForProvider } from "../../../onboarding/types";
@@ -23,6 +24,9 @@ import type { UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { WorkspaceSidebarProps } from "../workspace-sidebar";
 
 type TeamRole = NonNullable<WorkspaceSidebarProps["teamSettings"]>["roles"][number];
+const ACTIVE_RUNTIME_TOOL_IDS = Object.keys(TOOL_REGISTRY).filter(
+  (toolId) => TOOL_REGISTRY[toolId]?.status === "active",
+);
 
 export function AgentEditorModal({
   agent,
@@ -51,18 +55,15 @@ export function AgentEditorModal({
 
   const availableTools = useMemo(() => {
     if (!draft) return [];
-    // Pull from the full team tool catalog so opt-in baseline tools
-    // (shell, download, filesystem, etc.) appear as selectable
-    // chips. Pre-fix the picker only listed tools already wired
-    // into some role/preset, so tools nobody had granted yet were
-    // invisible — admins had to type the id into the freeform CSV
-    // input to grant them, which nobody knew to do.
-    return uniqueSorted([
-      ...Object.keys(teamSettings?.tools ?? {}),
-      ...rolePresets.flatMap((preset) => preset.tools ?? []),
-      ...(teamSettings?.roles.flatMap((role: TeamRole) => role.tools ?? []) ?? []),
-      ...draft.tools,
-    ]);
+    return uniqueSorted(
+      filterDeprecatedToolIds([
+        ...ACTIVE_RUNTIME_TOOL_IDS,
+        ...Object.keys(teamSettings?.tools ?? {}),
+        ...rolePresets.flatMap((preset) => preset.tools ?? []),
+        ...(teamSettings?.roles.flatMap((role: TeamRole) => role.tools ?? []) ?? []),
+        ...draft.tools,
+      ]),
+    );
   }, [draft, rolePresets, teamSettings?.roles, teamSettings?.tools]);
 
   if (!agent || !draft) return null;
@@ -290,7 +291,7 @@ export function AgentEditorModal({
                     provider: draft.llm.trim(),
                     model: draft.model.trim(),
                     workspaceScopes: draft.workspaceScopes,
-                    tools: draft.tools,
+                    tools: filterDeprecatedToolIds(draft.tools),
                     channels: draft.channels
                       .map((channelId) => visibleChannels.find((channel) => channel.id === channelId)?.name)
                       .filter((channelName): channelName is string => Boolean(channelName)),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TraceStepData } from "./components/chat/details-sidebar";
+import type { TraceStepData } from "./components/chat/trace-types";
 import { groupTraceSteps } from "./trace-grouping";
 
 const WRITE_VERBS = ["writing", "deleted", "created", "updated"];
@@ -28,32 +28,6 @@ function fsStep(input: {
       action: isWrite ? "write" : "read",
       resourcePath: input.path,
     },
-  };
-}
-
-function reasoningStep(input: { id: string; actorId: string; actor: string }): TraceStepData {
-  return {
-    id: input.id,
-    title: `${input.actor} · reasoning`,
-    detail: "thinking",
-    time: "00:00",
-    duration: "—",
-    status: "running",
-    actorId: input.actorId,
-    actorName: input.actor,
-  };
-}
-
-function runStartStep(input: { id: string; actorId: string; actor: string; status?: TraceStepData["status"] }): TraceStepData {
-  return {
-    id: input.id,
-    title: "Run · Running",
-    detail: "",
-    time: "00:00",
-    duration: "—",
-    status: input.status ?? "running",
-    actorId: input.actorId,
-    actorName: input.actor,
   };
 }
 

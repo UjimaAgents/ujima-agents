@@ -1,4 +1,4 @@
-import type { TraceStepData } from "./components/chat/details-sidebar";
+import type { TraceStepData } from "./components/chat/trace-types";
 import { diffStats } from "./change-summary";
 
 type AggregatedOperation = NonNullable<TraceStepData["aggregatedOperations"]>[number];
@@ -44,6 +44,15 @@ function toolStepToOperation(step: TraceStepData): AggregatedOperation {
       command: step.terminal.commandLine,
       file: step.terminal.cwd,
       terminal: step.terminal,
+    };
+  }
+  if (step.skillRead) {
+    return {
+      ...base,
+      type: "skill",
+      toolName: step.toolName ?? "skill.read",
+      detail: step.detail || "",
+      skillRead: step.skillRead,
     };
   }
 

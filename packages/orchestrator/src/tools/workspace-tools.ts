@@ -412,7 +412,7 @@ function resolveWorkspacePath(workspaceRoot: string, resourcePath: string): stri
 function assertAgentWritePermitted(memberId: string, resourcePath: string): void {
   if (isAgentRestrictedProcedurePath(memberId, resourcePath)) {
     throw new Error(
-      'agents may only write under ai/memory-bank/agents/<self>/. Use self.procedure.add for your own procedures; ask a human to change org/channel culture.',
+      'agents may only write under ai/memory-bank/agents/<self>/. Use procedure add for your own procedures; ask a human to change org/channel culture.',
     );
   }
 }

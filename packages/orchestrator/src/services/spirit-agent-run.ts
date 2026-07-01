@@ -32,7 +32,8 @@ import {
 } from '../utils/wake-reply-policy.js';
 import { requireTeam } from '../utils/require-team.js';
 import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
-import { runAgentWithRetry, type AgentLoopStep } from './agent-loop.js';
+import { runAgentWithRetry, type AgentLoopStep, ContextLengthExceededError } from './agent-loop.js';
+import { emergencyCompactThread } from './conversation-compact.js';
 import { isDelegateMessage } from './run-reply-guard.js';
 import { buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
@@ -290,7 +291,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     }
     const systemPrompt = system;
     const historyMessages = sourceMessage ? recent.filter((message) => message.id !== sourceMessage.id) : recent;
-    const messages = buildPromptMessages({
+    let messages = buildPromptMessages({
       historyMessages,
       currentMemberId: member.id,
       runSteps: this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
@@ -397,6 +398,54 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         }),
         logLabel: 'spirit-agent-run',
         memberLabel: input.memberId,
+      }, {
+        onContextLengthExceeded: async (_error) => {
+          if (!this.conversations) return null;
+          const compacted = await emergencyCompactThread(
+            {
+              repo: this.repo,
+              publishMessage: (msg) =>
+                this.conversations!.publishMessage(msg, [] as never[], undefined, {
+                  suppressDmAlerts: true,
+                  skipMentionResolution: true,
+                }),
+              summarizeConversation: async () => {
+                throw new Error('emergency compaction uses archive mode only');
+              },
+              contextWindowTokens: () => 128_000,
+            },
+            input.organizationId,
+            session.channelId,
+            input.memberId,
+          );
+          if (!compacted) return null;
+          console.warn('[spirit-agent-run] context length exceeded — compacted thread, retrying', {
+            organizationId: input.organizationId,
+            threadId: session.channelId,
+            memberId: input.memberId,
+          });
+          const newThreadMessages = collectCursorPages((cursor) =>
+            this.repo.listChannelMessages(input.organizationId, session.channelId, { cursor, limit: 600 }),
+          );
+          const newRecent = selectPromptContextMessages(newThreadMessages);
+          const newHistoryMessages = sourceMessage
+            ? newRecent.filter((msg) => msg.id !== sourceMessage.id)
+            : newRecent;
+          messages = buildPromptMessages({
+            historyMessages: newHistoryMessages,
+            currentMemberId: member.id,
+            runSteps: this.repo.listRunSteps(input.organizationId, spirit.runId ?? spirit.id),
+            contextMessages,
+            currentRequestMessage: sourceMessage,
+            currentRequest: sourceMessage
+              ? undefined
+              : {
+                  role: 'user',
+                  content: input.extraPrompt ?? session.prompt ?? 'Continue the task.',
+                },
+          });
+          return messages;
+        },
       });
       const { steps, usage } = result;
 

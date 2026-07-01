@@ -44,6 +44,24 @@ function normalizeRoleScopes(role: RoleConfig, workspaceRoot: string): RoleConfi
   };
 }
 
+function normalizeRoleProvider(role: RoleConfig, baseRole: RoleConfig | undefined, team: AgentTeamHandle | undefined): RoleConfig {
+  if (!role.provider || team?.providers[role.provider]) return role;
+  return {
+    ...role,
+    provider: baseRole?.provider,
+    model: baseRole?.model,
+  };
+}
+
+function normalizeRoleTools(role: RoleConfig, baseRole: RoleConfig | undefined, team: AgentTeamHandle | undefined): RoleConfig {
+  if (!team) return role;
+  const tools = role.tools.filter((tool) => team.tools[tool]);
+  return {
+    ...role,
+    tools: tools.length > 0 ? tools : (baseRole?.tools ?? role.tools),
+  };
+}
+
 function readOverrides(
   repo: ApiRepository,
   organizationId: string,
@@ -53,19 +71,28 @@ function readOverrides(
   if (!value) return { roles: [], agents: [] };
 
   try {
-    const team = teamStore.getTeam(organizationId);
+    const team = teamStore.getTeam(organizationId) ?? undefined;
     const members = new Map(
       repo.listMembers(organizationId).map((member) => [member.id, member] as const),
     );
     const parsed = JSON.parse(value) as Partial<DashboardTeamOverrides>;
     const workspaceRoot = team?.workspace.root;
     const roles = Array.isArray(parsed.roles)
-      ? parsed.roles.map((role) =>
-          normalizeRoleScopes(
-            mergeRoleOverride(team?.getRole(role.name), defineRole(upgradeLegacyDefaultRoleTools(role))),
+      ? parsed.roles.map((role) => {
+          const baseRole = team?.getRole(role.name);
+          return normalizeRoleScopes(
+            normalizeRoleTools(
+              normalizeRoleProvider(
+                mergeRoleOverride(baseRole, defineRole(upgradeLegacyDefaultRoleTools(role))),
+                baseRole,
+                team,
+              ),
+              baseRole,
+              team,
+            ),
             workspaceRoot ?? '.',
-          ),
-        )
+          );
+        })
       : [];
     if (Array.isArray(parsed.roles) && JSON.stringify(parsed.roles) !== JSON.stringify(roles)) {
       repo.saveWorkspaceSetting(

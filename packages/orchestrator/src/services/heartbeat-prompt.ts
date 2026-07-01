@@ -33,7 +33,7 @@ You are running in self-improvement mode. Your task is to:
 2. Identify patterns, gaps, or opportunities for improvement.
 3. Use \`memory.write\` to record important observations, patterns,
    or lessons learned.
-4. Use \`self.procedure.add\` to capture reusable procedures that
+ 4. Use \`procedure add\` to capture reusable procedures that
    would help future runs.
 5. **Stay silent** unless you have a meaningful change to report.
    Do not post acknowledgements or "all clear" messages.

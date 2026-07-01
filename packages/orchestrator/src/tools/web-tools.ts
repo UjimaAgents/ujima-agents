@@ -15,6 +15,7 @@ const FetchSchema = z.object({
   url: z.string().min(1),
   format: z.enum(['text', 'markdown', 'html']).default('text'),
   timeout: z.number().int().min(1).max(600).default(30),
+  file_path: z.string().min(1).optional(),
 });
 
 // Schema-facing field is `file_path` (matches workspace tools) so
@@ -43,10 +44,30 @@ export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
     resourceType: 'message',
     input: args,
   }),
-  execute: async ({ invocation }) => {
+  execute: async ({ invocation, team }) => {
     const url = parseHttpUrl(String(invocation.input?.url ?? ''));
-    const format = (invocation.input?.format as 'text' | 'markdown' | 'html' | undefined) ?? 'text';
     const timeoutSeconds = typeof invocation.input?.timeout === 'number' ? invocation.input.timeout : 30;
+    const filePath = typeof invocation.input?.file_path === 'string' ? invocation.input.file_path : '';
+
+    if (filePath) {
+      const maxBytes = DOWNLOAD_MAX_BYTES;
+      const { status, contentType, stderr, body } = await curlFetch(url, timeoutSeconds, maxBytes);
+      if (status >= 400) {
+        throw new Error(`Request failed with status code ${status}${stderr ? ': ' + stderr.slice(0, 200) : ''}`);
+      }
+      const resolved = assertWorkspaceBoundary(team!.workspace.root, filePath);
+      await mkdir(dirname(resolved), { recursive: true });
+      await writeFile(resolved, body);
+      return {
+        url: url.toString(),
+        status,
+        contentType,
+        bytesWritten: body.byteLength,
+        path: resolved,
+      };
+    }
+
+    const format = (invocation.input?.format as 'text' | 'markdown' | 'html' | undefined) ?? 'text';
     const { status, contentType, stderr, body } = await curlFetch(url, timeoutSeconds, FETCH_MAX_BYTES);
     if (status >= 400) {
       throw new Error(`Request failed with status code ${status}${stderr ? ': ' + stderr.slice(0, 200) : ''}`);
@@ -61,7 +82,7 @@ export const fetchTool: OrchestratorTool<typeof FetchSchema> = {
   },
 };
 
-// ── Download Tool ─────────────────────────────────────────────────
+// ── Download Tool (backward-compat wrapper) ────────────────────────
 
 export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
   id: 'download',
@@ -79,7 +100,6 @@ export const downloadTool: OrchestratorTool<typeof DownloadSchema> = {
     if (!invocation.resourcePath) {
       throw new Error('file_path is required (the destination workspace file path)');
     }
-
     const url = parseHttpUrl(String(invocation.input?.url ?? ''));
     const timeoutSeconds = typeof invocation.input?.timeout === 'number' ? invocation.input.timeout : 30;
     const resolved = assertWorkspaceBoundary(team.workspace.root, invocation.resourcePath);

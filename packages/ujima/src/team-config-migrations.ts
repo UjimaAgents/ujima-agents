@@ -1,5 +1,6 @@
 import { DEFAULT_TOOL_CATALOG } from './constants.js';
 import { DEFAULT_ROLE_TOOLS } from './roles/shared.js';
+import { DEPRECATED_TOOL_ALIASES, REMOVED_TOOL_IDS } from '@ujima/shared';
 
 // Bumped from 3 → 4 to trigger the role-class default-fill migration.
 // Bumped from 4 → 5 to seed skill.read into all existing roles' tool
@@ -7,7 +8,7 @@ import { DEFAULT_ROLE_TOOLS } from './roles/shared.js';
 // skill.read is already in ALWAYS_AVAILABLE_AGENT_TOOLS on the
 // orchestrator side, so it was always callable — this migration just
 // makes it visible as "enabled" in the web UI.
-export const TEAM_CONFIG_VERSION = 5;
+export const TEAM_CONFIG_VERSION = 6;
 
 // Role-class default tool sets. Used by the v4 migration to fill
 // roles whose `tools` array is empty. The keys are matched
@@ -81,7 +82,6 @@ const LEGACY_DEFAULT_ROLE_TOOL_SET = new Set<string>([
   'memory.save',
   'memory.write',
 ]);
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -100,15 +100,10 @@ export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>
   let tools = [...(role.tools as string[])];
   if (isLegacyDefaultRoleToolList(tools)) {
     tools = [...DEFAULT_ROLE_TOOLS];
-  } else if (tools.includes('filesystem')) {
-    tools = tools.filter((tool) => tool !== 'filesystem');
   }
-  if (tools.includes('self.note')) {
-    tools = tools.filter((tool) => tool !== 'self.note');
-  }
-  if (tools.includes('memory.save')) {
-    tools = tools.map((tool) => (tool === 'memory.save' ? 'memory.write' : tool));
-  }
+  tools = tools.filter((t) => !REMOVED_TOOL_IDS.has(t));
+  tools = tools.map((t) => (DEPRECATED_TOOL_ALIASES as Record<string, string>)[t] ?? t);
+  tools = [...new Set(tools)];
   return { ...role, tools } as T;
 }
 
@@ -146,15 +141,20 @@ function migrateToV3(config: Record<string, unknown>): Record<string, unknown> {
     : config.roles;
   const tools = isRecord(config.tools)
     ? (() => {
-        const toolEntries = Object.entries(config.tools).filter(([toolName]) => toolName !== 'memory.save');
+        const toolEntries = Object.entries(config.tools).filter(
+          ([toolName]) => toolName !== 'memory.save',
+        );
         const legacyMemorySave = config.tools['memory.save'];
-        return Object.fromEntries([
+        const entries = [
           ...Object.entries(DEFAULT_TOOL_CATALOG),
           ...toolEntries,
-          ...(legacyMemorySave !== undefined && !('memory.write' in config.tools)
-            ? [['memory.write', legacyMemorySave] as const]
-            : []),
-        ]);
+        ];
+        if (legacyMemorySave !== undefined && !('memory.write' in config.tools)) {
+          entries.push(['memory.write', legacyMemorySave]);
+        }
+        return Object.fromEntries(
+          entries.filter(([toolName]) => !REMOVED_TOOL_IDS.has(toolName)),
+        );
       })()
     : DEFAULT_TOOL_CATALOG;
 
@@ -202,6 +202,30 @@ function migrateToV5(config: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+/**
+ * V6 — re-apply the registry-driven tool upgrade and strip removed
+ * tool catalog entries. Guarantees configs that went through V3-V5
+ * with older migration logic get the new generic treatment.
+ */
+function migrateToV6(config: Record<string, unknown>): Record<string, unknown> {
+  const roles = Array.isArray(config.roles)
+    ? config.roles.map((role) => (isRecord(role) ? upgradeLegacyDefaultRoleTools(role) : role))
+    : config.roles;
+  const tools = isRecord(config.tools)
+    ? Object.fromEntries(
+        Object.entries(config.tools as Record<string, unknown>).filter(
+          ([toolName]) => !REMOVED_TOOL_IDS.has(toolName),
+        ),
+      )
+    : DEFAULT_TOOL_CATALOG;
+  return {
+    ...config,
+    configVersion: TEAM_CONFIG_VERSION,
+    roles,
+    tools,
+  };
+}
+
 function needsToolCatalogUpgrade(config: Record<string, unknown>): boolean {
   if (!isRecord(config.tools)) return true;
   const tools = config.tools as Record<string, unknown>;
@@ -218,20 +242,22 @@ export interface TeamConfigMigrationResult {
 export function migrateAgentTeamConfig(input: unknown): TeamConfigMigrationResult {
   const config = isRecord(input) ? { ...input } : {};
   const fromVersion = typeof config.configVersion === 'number' ? config.configVersion : 1;
-  // Chain v3 → v4 → v5 — v3 ensures the tool catalog and legacy-tool
-  // mapping is in place; v4 layers the role-class default fill on
-  // top of the result; v5 seeds skill.read into every role's tools.
+  // Chain v3 → v4 → v5 → v6 — v3 ensures the tool catalog and
+  // legacy-tool mapping is in place; v4 layers the role-class default
+  // fill on top of the result; v5 seeds skill.read into every role's
+  // tools; v6 strips removed tools.
   const afterV3 = migrateToV3(config);
   const afterV4 = migrateToV4(afterV3);
   const afterV5 = migrateToV5(afterV4);
+  const afterV6 = migrateToV6(afterV5);
   const migrated =
     fromVersion < TEAM_CONFIG_VERSION ||
     needsToolCatalogUpgrade(config) ||
-    JSON.stringify(config.roles ?? []) !== JSON.stringify(afterV5.roles ?? []) ||
-    JSON.stringify(config.tools ?? {}) !== JSON.stringify(afterV5.tools ?? {});
+    JSON.stringify(config.roles ?? []) !== JSON.stringify(afterV6.roles ?? []) ||
+    JSON.stringify(config.tools ?? {}) !== JSON.stringify(afterV6.tools ?? {});
 
   return {
-    config: afterV5,
+    config: afterV6,
     migrated,
     fromVersion,
     toVersion: TEAM_CONFIG_VERSION,

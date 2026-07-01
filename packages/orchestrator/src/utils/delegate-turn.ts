@@ -1,33 +1,8 @@
 import type { ModelMessage, ToolSet } from 'ai';
+import { EXPLORER_DELEGATE_TOOL_IDS, WORKER_BLOCKED_TOOL_IDS } from '@ujima/shared';
 
 export const DELEGATE_KINDS = ['worker', 'explorer'] as const;
 export type DelegateKind = (typeof DELEGATE_KINDS)[number];
-
-const EXPLORER_DELEGATE_TOOL_IDS = new Set([
-  'channel.read',
-  'channel.list',
-  'channel.recall',
-  'view',
-  'ls',
-  'glob',
-  'grep',
-  'fetch',
-  'web_search',
-  'memory.recall',
-  'self.procedure.view',
-  'procedure.view',
-]);
-
-const WORKER_BLOCKED_TOOL_IDS = new Set([
-  'channel.post',
-  'channel.reply',
-  'channel.dm',
-  'channel.handoff',
-  'channel.pass',
-  'channel.ack',
-  'message',
-  'agent.delegate',
-]);
 
 const DELEGATE_KIND_MESSAGES: Record<DelegateKind, string> = {
   worker: '<delegate_kind>\nkind=worker\nYou may use edit/write tools if needed, but still do not post or hand off.\n</delegate_kind>',
