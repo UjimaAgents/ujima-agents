@@ -60,11 +60,11 @@ export function packageEntryExists(pkgDir: string): boolean {
 function* walkPackageDirs(modulesDir: string): Generator<string> {
   if (!existsSync(modulesDir)) return;
   for (const entry of readdirSync(modulesDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === '.bin') continue;
+    if (!entry.isDirectory() || entry.name === '.bin' || entry.name.startsWith('.')) continue;
     if (entry.name.startsWith('@')) {
       const scopeDir = join(modulesDir, entry.name);
       for (const scoped of readdirSync(scopeDir, { withFileTypes: true })) {
-        if (scoped.isDirectory()) yield join(scopeDir, scoped.name);
+        if (scoped.isDirectory() && !scoped.name.startsWith('.')) yield join(scopeDir, scoped.name);
       }
       continue;
     }
@@ -105,6 +105,18 @@ function copyPackageTree(source: string, dest: string): void {
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dirname(dest), { recursive: true });
   cpSync(source, dest, { recursive: true, dereference: true });
+}
+
+function materializePackageCopies(sourceDir: string, destDir: string): number {
+  if (!existsSync(sourceDir)) return 0;
+
+  let copied = 0;
+  for (const sourcePkg of walkPackageDirs(sourceDir)) {
+    const destPkg = join(destDir, relative(sourceDir, sourcePkg));
+    copyPackageTree(sourcePkg, destPkg);
+    copied += 1;
+  }
+  return copied;
 }
 
 /**
@@ -203,4 +215,15 @@ export function materializeTopLevelNodeModules(nodeModulesDir: string): number {
   }
 
   return materialized;
+}
+
+/**
+ * Copy the already-materialized top-level packages into a packable vendor dir.
+ * npm pack keeps this, unlike nested node_modules.
+ */
+export function materializePackableVendorPackages(
+  nodeModulesDir: string,
+  vendorDir: string,
+): number {
+  return materializePackageCopies(nodeModulesDir, vendorDir);
 }

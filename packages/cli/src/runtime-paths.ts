@@ -78,12 +78,11 @@ export function resolveWebServerCwd(webRuntimeDir: string, serverEntry: string):
 }
 
 /**
- * Bun standalone traces into `node_modules/.bun/.../node_modules/<pkg>`.
- * npm pack does not preserve symlinks, so Node needs NODE_PATH for those store paths.
+ * Packaged web runtime can resolve from a vendored dir, then Bun store paths, then node_modules.
  */
 export function buildPackagedWebNodePath(webRuntimeDir: string, existingNodePath?: string): string {
   const nodeModulesDir = join(webRuntimeDir, 'node_modules');
-  const paths: string[] = [nodeModulesDir];
+  const paths: string[] = [join(webRuntimeDir, 'vendor'), nodeModulesDir];
   const bunDir = join(nodeModulesDir, '.bun');
   if (existsSync(bunDir)) {
     for (const entry of readdirSync(bunDir, { withFileTypes: true })) {

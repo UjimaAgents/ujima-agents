@@ -6,6 +6,7 @@ export const DIST_OUT_DIR = join(DIST_PKG_DIR, 'dist');
 export const RUNTIME_DIR = join(DIST_OUT_DIR, 'runtime');
 export const API_RUNTIME_DIR = join(RUNTIME_DIR, 'api');
 export const WEB_RUNTIME_DIR = join(RUNTIME_DIR, 'web');
+export const WEB_VENDOR_DIR = join(WEB_RUNTIME_DIR, 'vendor');
 
 export const DISTRIBUTION_PKG_JSON = join(DIST_PKG_DIR, 'package.json');
 export const CHANGELOG_PATH = join(REPO_ROOT, 'CHANGELOG.md');
