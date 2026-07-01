@@ -2,9 +2,10 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hydrateTracedBunStorePackages,
+  materializePackableVendorPackages,
   materializeTopLevelNodeModules,
 } from './repair-standalone-node-modules.ts';
-import { REPO_ROOT } from './paths.ts';
+import { REPO_ROOT, WEB_VENDOR_DIR } from './paths.ts';
 import { formatPruneStats, pruneWebRuntimeNodeModules } from './prune-web-runtime.ts';
 
 /**
@@ -36,6 +37,11 @@ export async function prepareTracedStandaloneNodeModules(
   const materialized = materializeTopLevelNodeModules(nodeModulesDir);
   if (materialized > 0) {
     console.log(`[release:dist] Materialized ${materialized} top-level node_modules package(s).`);
+  }
+
+  const vendored = materializePackableVendorPackages(nodeModulesDir, WEB_VENDOR_DIR);
+  if (vendored > 0) {
+    console.log(`[release:dist] Vendored ${vendored} web runtime package(s).`);
   }
 }
 

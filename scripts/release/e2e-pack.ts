@@ -15,6 +15,7 @@ import {
   assertBootstrapEndpoints,
   assertDistManifestVersion,
   assertNoTransportErrors,
+  assertPackagedWebNext,
   waitForHttpOk,
 } from './lib/pack-verify.ts';
 import { DIST_PKG_DIR, REPO_ROOT } from './lib/paths.ts';
@@ -74,13 +75,13 @@ async function main(): Promise<void> {
 
   const pkgRoot = join(installRoot, 'node_modules');
   const packageDir = installedPackagePath(pkgRoot, distribution.name);
-  const webRuntimeDir = join(packageDir, 'dist', 'runtime', 'web');
-  const nextPkg = join(webRuntimeDir, 'node_modules', 'next', 'package.json');
-  if (!existsSync(nextPkg)) {
-    console.error(`[release:e2e] node_modules/next missing in installed package: ${nextPkg}`);
+  try {
+    assertPackagedWebNext(packageDir);
+  } catch (error) {
+    console.error('[release:e2e]', error);
     process.exit(1);
   }
-  console.log('[release:e2e] Packaged web has node_modules/next');
+  console.log('[release:e2e] Web runtime resolves next OK');
 
   console.log('[release:e2e] Starting ujima start (API + web)…');
   const proc = Bun.spawn([ujimaBin, 'start'], {

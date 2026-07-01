@@ -20,6 +20,7 @@ describe('prepareTracedStandaloneNodeModules', () => {
 
     expect(existsSync(join(workDir, 'node_modules/.bun'))).toBe(true);
     expect(existsSync(join(workDir, 'node_modules/next'))).toBe(true);
+    expect(existsSync(join(workDir, 'vendor/next'))).toBe(true);
 
     const react18 = join(workDir, 'node_modules/.bun/react@18.3.1/node_modules/react');
     if (existsSync(react18)) {
