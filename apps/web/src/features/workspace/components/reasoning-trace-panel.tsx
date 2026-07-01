@@ -8,7 +8,7 @@ import { groupTraceSteps } from "../trace-grouping";
 import { TraceStep } from "./chat/details-sidebar";
 import type { TraceStepData } from "./chat/trace-types";
 
-const TRACE_PAGE_SIZE = 15;
+const TRACE_PAGE_SIZE = 8;
 const TOP_LOAD_THRESHOLD = 40;
 
 function formatElapsed(ms: number): string {
@@ -363,6 +363,12 @@ export function ReasoningTracePanel({
     <>
       <div ref={rootRef} className="relative min-h-0">
         <div className="space-y-1.5">
+          {loadingMore ? (
+            <div className="sticky top-0 z-10 -mx-1 mb-1 flex items-center gap-2 bg-background/90 px-1 py-1 text-[10px] text-foreground/40 backdrop-blur">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading older traces...
+            </div>
+          ) : null}
           {traceRows.map((row) => (
             <TraceStep
               key={row.key}
@@ -400,7 +406,6 @@ export function ReasoningTracePanel({
             detail={undefined}
           />
         ) : null}
-        {loadingMore ? <p className="px-1 text-[10px] text-foreground/40">Loading older traces...</p> : null}
         {error ? <p className="px-1 text-xs text-red-500">{error}</p> : null}
         <div className="h-px w-full" aria-hidden />
       </div>

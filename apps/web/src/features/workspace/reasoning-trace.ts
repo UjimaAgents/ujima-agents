@@ -286,46 +286,6 @@ function readStringArrayArg(
   return Array.isArray(candidate) && candidate.length ? candidate.map((item) => String(item)) : undefined;
 }
 
-function splitDiffLines(prefix: "+" | "-", value: string): string[] {
-  return value.split(/\r?\n/).map((line) => `${prefix}${line}`);
-}
-
-function proposedWriteDiff(resourcePath: string, content: string): string {
-  const lineCount = Math.max(1, content.split(/\r?\n/).length);
-  return [
-    `--- ${resourcePath}`,
-    `+++ ${resourcePath}`,
-    `@@ -0,0 +1,${lineCount} @@`,
-    ...splitDiffLines("+", content),
-  ].join("\n");
-}
-
-function proposedEditDiff(resourcePath: string, oldString: string, newString: string): string {
-  return [
-    `--- ${resourcePath}`,
-    `+++ ${resourcePath}`,
-    "@@",
-    ...splitDiffLines("-", oldString),
-    ...splitDiffLines("+", newString),
-  ].join("\n");
-}
-
-function proposedMultiEditDiff(
-  resourcePath: string | undefined,
-  edits: { oldString?: string; newString?: string }[] | undefined,
-): string | undefined {
-  if (!resourcePath || !edits?.length) return undefined;
-  const patch = edits
-    .map((edit) =>
-      edit.oldString !== undefined && edit.newString !== undefined
-        ? proposedEditDiff(resourcePath, edit.oldString, edit.newString)
-        : "",
-    )
-    .filter(Boolean)
-    .join("\n");
-  return patch || undefined;
-}
-
 function readEditArrayArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
@@ -1445,15 +1405,11 @@ function buildToolStep(
     const pendingBody =
       !hasResult || pendingCompletion
         ? name === "write"
-          ? parsed.resourcePath && parsed.content !== undefined
-            ? proposedWriteDiff(parsed.resourcePath, parsed.content)
-            : argsPreview
+          ? argsPreview
           : name === "edit"
-            ? parsed.resourcePath && parsed.oldString !== undefined && parsed.newString !== undefined
-              ? proposedEditDiff(parsed.resourcePath, parsed.oldString, parsed.newString)
-              : argsPreview
+            ? argsPreview
             : name === "multiedit"
-              ? proposedMultiEditDiff(parsed.resourcePath, parsed.edits) ?? argsPreview
+              ? argsPreview
               : name === "view"
                 ? argsPreview
                 : name === "ls"
