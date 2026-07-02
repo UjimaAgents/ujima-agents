@@ -8,6 +8,7 @@ import {
   type RoleConfig,
 } from '@ujima/framework';
 import type { Organization } from '@ujima/shared';
+import { listCustomRoleToolIds } from '../tools/index.js';
 import { isPathInsideRoot } from '@ujima/shared/workspace';
 import type { AuthService } from './auth.js';
 import { assertWorkspaceRootPathExists, normalizeProjectFolderPath } from './workspace-root.js';
@@ -108,7 +109,7 @@ function sanitizeCopiedRole(
   return {
     ...role,
     channels: channels.length ? channels : channelNames.has('general') ? ['general'] : [],
-    tools: role.tools.filter((name) => toolNames.has(name)),
+    tools: listCustomRoleToolIds(role.tools).filter((name) => toolNames.has(name)),
     provider,
     model: provider ? role.model : undefined,
     workspaceScopes: role.workspaceScopes

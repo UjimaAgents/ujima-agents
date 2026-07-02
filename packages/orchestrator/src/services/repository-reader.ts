@@ -305,7 +305,7 @@ export interface ApiRepository extends ConversationRepository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
-  listActiveRuns?(organizationId: string): RunState[];
+  listActiveRuns(organizationId: string): RunState[];
   listThreadRuns(
     organizationId: string,
     threadId: string,

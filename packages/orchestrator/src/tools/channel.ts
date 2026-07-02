@@ -124,11 +124,47 @@ const ChannelReadSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
 });
 
+const ChannelCloseReasonSchema = z.union([z.literal('ack'), ChannelPassReasonSchema]);
+const ChannelCloseSchema = z
+  .object({
+    reason: ChannelCloseReasonSchema.describe(
+      'ack = you were addressed but have no useful reply. Other reasons stand down silently and terminate the current session.',
+    ),
+    note: z.string().max(280).optional(),
+    cited_message_ids: z
+      .array(z.string().min(1))
+      .max(5)
+      .optional()
+      .describe('Message ids from <thread-state> that justify already_handled or duplicate_reply.'),
+    quoted_text: z.string().max(200).optional(),
+  })
+  .refine(
+    (value) =>
+      !(value.reason === 'already_handled' || value.reason === 'duplicate_reply') ||
+      (typeof value.note === 'string' && value.note.trim().length > 0),
+    {
+      message:
+        'channel.close reason "already_handled" or "duplicate_reply" requires a non-empty note',
+      path: ['note'],
+    },
+  )
+  .refine(
+    (value) =>
+      !(value.reason === 'already_handled' || value.reason === 'duplicate_reply') ||
+      (Array.isArray(value.cited_message_ids) && value.cited_message_ids.length > 0),
+    {
+      message:
+        'channel.close reason "already_handled" or "duplicate_reply" requires cited_message_ids referencing the message(s) that already covered this',
+      path: ['cited_message_ids'],
+    },
+  );
+
 // `channel.pass` is the first-class "silent" outcome: an agent that
 // has nothing to add to a channel message calls this tool with a
-// reason and the run terminates without publishing chat text. The
-// run-loop sees it via `RUN_TERMINATING_TOOL_NAMES` and skips the
-// forced-reply fallback in `run.ts`.
+// reason and the run terminates the current session without
+// publishing chat text. The run-loop sees it via
+// `RUN_TERMINATING_TOOL_NAMES` and skips the forced-reply fallback
+// in `run.ts`.
 //
 // L13: `already_handled` and `duplicate_reply` require a non-empty
 // `note` so the model has to demonstrate it actually checked,
@@ -162,20 +198,20 @@ const ChannelPassSchema = z
         'Short verbatim quote from one of the cited messages. Substring-checked against the actual message content.',
       ),
   })
-  .refine(
-    (value) =>
-      !(value.reason === 'already_handled' || value.reason === 'duplicate_reply') ||
-      (typeof value.note === 'string' && value.note.trim().length > 0),
+    .refine(
+      (value) =>
+        !(value.reason === 'already_handled' || value.reason === 'duplicate_reply') ||
+        (typeof value.note === 'string' && value.note.trim().length > 0),
     {
       message:
         'channel.pass reason "already_handled" or "duplicate_reply" requires a non-empty note',
       path: ['note'],
     },
   )
-  .refine(
-    (value) =>
-      !(value.reason === 'already_handled' || value.reason === 'duplicate_reply') ||
-      (Array.isArray(value.cited_message_ids) && value.cited_message_ids.length > 0),
+    .refine(
+      (value) =>
+        !(value.reason === 'already_handled' || value.reason === 'duplicate_reply') ||
+        (Array.isArray(value.cited_message_ids) && value.cited_message_ids.length > 0),
     {
       message:
         'channel.pass reason "already_handled" or "duplicate_reply" requires cited_message_ids referencing the message(s) that already covered this',
@@ -194,6 +230,95 @@ const ChannelHandoffSchema = z.object({
   deliverable: z.string().min(1),
   complete: z.boolean().optional(),
 });
+
+type ChannelCloseReason = z.infer<typeof ChannelCloseReasonSchema>;
+
+type CloseThreadContext = Pick<ToolExecutionContext, 'invocation' | 'repo' | 'conversations'>;
+
+function closeThread(ctx: CloseThreadContext, input: {
+  reason: ChannelCloseReason;
+  note?: string;
+  citedMessageIds?: string[];
+  quotedText?: string;
+}) {
+  const { invocation, repo, conversations } = ctx;
+  const run = repo.getRun(invocation.organizationId, invocation.runId);
+  const threadId = invocation.threadId ?? run?.threadId;
+  const channelId = threadId
+    ? repo.getThread(invocation.organizationId, threadId)?.channelId
+    : undefined;
+
+  if (run?.sourceMessageId) {
+    const source = repo.getMessage(invocation.organizationId, run.sourceMessageId);
+    const addressed = (source?.mentions ?? []).includes(invocation.memberId);
+    if (addressed && input.reason !== 'ack') {
+      return {
+        status: 'rejected' as const,
+        error:
+          'channel.close with a stand-down reason is not allowed when you were explicitly addressed. Use channel.reply for visible content, or channel.close reason "ack" when no visible reply helps.',
+      };
+    }
+  }
+
+  if (run) {
+    repo.saveRun({
+      ...run,
+      terminatingTool: 'channel.close',
+    });
+  }
+
+  if (input.reason === 'ack') {
+    void conversations.emitAgentAck({
+      organizationId: invocation.organizationId,
+      memberId: invocation.memberId,
+      runId: invocation.runId,
+      channelId,
+      threadId,
+      note: input.note,
+    });
+    return { status: 'closed', reason: input.reason, note: input.note };
+  }
+
+  void conversations.emitAgentPassed({
+    organizationId: invocation.organizationId,
+    memberId: invocation.memberId,
+    runId: invocation.runId,
+    channelId,
+    threadId,
+    reason: input.reason,
+    note: input.note,
+  });
+
+  if (threadId) {
+    const agentMember = repo.getMember(invocation.organizationId, invocation.memberId);
+    const verificationResult = verifyChannelPass(
+      {
+        organizationId: invocation.organizationId,
+        agentId: invocation.memberId,
+        agentName: agentMember?.name,
+        threadId,
+        reason: input.reason,
+        citedMessageIds: input.citedMessageIds,
+        quotedText: input.quotedText,
+        sourceMessageId: run?.sourceMessageId ?? undefined,
+      },
+      repo,
+    );
+    void conversations.emitDecisionVerification({
+      organizationId: invocation.organizationId,
+      memberId: invocation.memberId,
+      runId: invocation.runId,
+      channelId,
+      threadId,
+      decision: 'channel.pass',
+      claimedReason: input.reason,
+      verified: verificationResult.verified,
+      failureKinds: verificationResult.failureKinds,
+    });
+  }
+
+  return { status: 'closed', reason: input.reason, note: input.note };
+}
 
 function resolveChannelId(
   team: AgentTeamHandle,
@@ -777,6 +902,29 @@ export const channelReadTool: OrchestratorTool<typeof ChannelReadSchema> = {
     }),
 };
 
+export const channelCloseTool: OrchestratorTool<typeof ChannelCloseSchema> = {
+  id: 'channel.close',
+  schema: ChannelCloseSchema,
+  toInvocation: (args) => ({
+    action: 'message',
+    resourceType: 'message',
+    permissionMcpId: 'channels',
+    input: args,
+  }),
+  execute: ({ invocation, repo, conversations }) => {
+    const parsed = ChannelCloseSchema.parse(invocation.input);
+    return closeThread(
+      { invocation, repo, conversations },
+      {
+        reason: parsed.reason,
+        note: parsed.note?.trim() || undefined,
+        citedMessageIds: parsed.cited_message_ids,
+        quotedText: parsed.quoted_text,
+      },
+    );
+  },
+};
+
 // L1/L12: `channel.pass` is a silent run terminator. It does NOT
 // call `publishMessage` — instead it records an audit-only step
 // and emits `agent.passed` so the UI can show "Agent X stood down"
@@ -886,7 +1034,8 @@ export const channelPassTool: OrchestratorTool<typeof ChannelPassSchema> = {
   },
 };
 
-// `channel.ack` — silent terminator for mandatory-reply turns.
+// `channel.ack` — silent terminator for mandatory-reply turns that
+// ends the current session.
 //
 // When an agent is @mentioned but has nothing substantive to add
 // (the prior message is a status update with no question, no new
@@ -959,7 +1108,8 @@ export const channelAckTool: OrchestratorTool<typeof ChannelAckSchema> = {
 // suffixed with `[HANDOFF]` or `[DONE]` (when `complete === true`)
 // and recorded with `metadata.handoff`. The TOOL appends the
 // token, not the model — so we can't accidentally cut off a
-// follow-up tool call with a stop sequence.
+// follow-up tool call with a stop sequence. It also terminates the
+// current session.
 function buildHandoffSchemaForOrg(ctx: BuildSchemaContext) {
   const handles = rosterAgentHandles(ctx);
   if (handles.length === 0) {

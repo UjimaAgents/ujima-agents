@@ -25,6 +25,7 @@ function readTerminatingToolName(value: unknown): string | undefined {
   const status = output && typeof output === 'object' ? (output as { status?: unknown }).status : undefined;
   if (status === 'passed') return 'channel.pass';
   if (status === 'acked') return 'channel.ack';
+  if (status === 'closed') return 'channel.close';
   if (status === 'acknowledged') return 'channel.ack';
   if (status === 'handoff_sent') return 'channel.handoff';
   return undefined;
@@ -97,8 +98,9 @@ export function runUsedThreadPublishingTool(result: unknown): boolean {
  */
 const TERMINATOR_PRECEDENCE: readonly string[] = [
   'message',
-  'channel.post',
   'channel.reply',
+  'channel.close',
+  'channel.post',
   'channel.handoff',
   // `channel.ack` and `channel.pass` are both silent terminators (no
   // channel message published). Precedence places real publishes
@@ -158,7 +160,7 @@ export function runUsedChannelPass(result: unknown): boolean {
   return collectFiredToolNames(result).has('channel.pass');
 }
 
-const SILENT_TERMINATING_TOOLS = new Set(['channel.pass', 'channel.ack']);
+const SILENT_TERMINATING_TOOLS = new Set(['channel.close', 'channel.pass', 'channel.ack']);
 
 /**
  * Steps containing silent terminators (`channel.pass`, `channel.ack`)

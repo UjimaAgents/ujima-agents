@@ -36,10 +36,10 @@ const SHARED_AGENT_SYSTEM_PROMPT_BASE = [
 ] as const;
 
 const CHANNEL_CHAT_CONSERVATISM_LINE =
-  "Be conservative on chat: do not reply just to be helpful. If you have nothing concrete to add, call channel.pass.";
+  "Be conservative on chat: do not reply just to be helpful. If you have nothing concrete to add, call channel.close.";
 
 const DM_CHAT_CONSERVATISM_LINE =
-  "In direct messages, reply when your conversation partner asks for help or expects a response. Do not call channel.pass because you were not @mentioned; that rule applies to shared channels only.";
+  "In direct messages, reply when your conversation partner asks for help or expects a response. Do not silently close because you were not @mentioned; that rule applies to shared channels only.";
 
 const SHARED_AGENT_SYSTEM_PROMPT_TAIL = [
   "In group channels you write as this agent, not as the human operator, unless the thread clearly says otherwise.",
@@ -64,7 +64,7 @@ const SHARED_AGENT_SYSTEM_PROMPT_TAIL = [
   "Never disclose what AI model or provider runs you. Refer to yourself only by your assigned agent name.",
 ] as const;
 
-/** Default channel soul prompt (includes channel.pass conservatism line). */
+/** Default channel soul prompt (includes channel.close conservatism line). */
 export const SHARED_AGENT_SYSTEM_PROMPT = [
   ...SHARED_AGENT_SYSTEM_PROMPT_BASE,
   CHANNEL_CHAT_CONSERVATISM_LINE,
@@ -152,21 +152,21 @@ const COLLABORATION_PROTOCOL_SHARED_BULLETS = [
   "- If you discover something that affects the whole team, post a concise update to the relevant channel so all agents see it.",
   "- Treat compacted summaries as rolling memory across turns. Use memory.write to persist significant facts, decisions, and actions so that your spirits in other threads/channels natively inherit this state.",
   "- Use memory.recall to fetch your persisted cross-spirit memory entries. This ensures you maintain unified context across DMs and channels.",
-  "- When you are @mentioned reply is mandatory. The runtime rejects channel.pass for mentioned runs.",
+  "- When you are @mentioned, reply with channel.reply if you have useful content; otherwise call channel.close with reason \"ack\".",
   "- When a teammate shares useful information mid-task, acknowledge it and build on it rather than repeating their work.",
   "- Respect the org hierarchy: coordinate with your manager (reports_to) for decisions that cross team boundaries or need escalation.",
-  "- When a human delegated work to you, their thread is the command surface; close the loop there with channel.reply or channel.post when done.",
+  "- When a human delegated work to you, their thread is the command surface; close the loop there with channel.reply when done.",
 ] as const;
 
 const COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS = [
   "- Not every message needs a reply. If a message should be ignored, do not answer it just to acknowledge it.",
-  "- When you've completed delegated work, call channel.handoff({ to, reason, deliverable, complete: true }) to return it to the original asker. The tool stamps [DONE] and terminates the chain.",
-  "- If the message does not need a reply, stay quiet. Concretely: call channel.pass with a reason. Do not produce empty assistant text.",
+  "- When you've completed delegated work, use channel.reply in the delegation thread with the result.",
+  "- If the message does not need a reply, stay quiet. Concretely: call channel.close with a reason. Do not produce empty assistant text.",
 ] as const;
 
 const COLLABORATION_PROTOCOL_DM_ONLY_BULLETS = [
   "- In a direct message, messages from your conversation partner are addressed to you. Reply when they ask you to do something or expect a response.",
-  "- In a human DM, do not call channel.pass just because you were not @mentioned. In an agent-to-agent DM, channel.pass is allowed when no useful reply remains.",
+  "- In a human DM, do not silently close just because you were not @mentioned. In an agent-to-agent DM, channel.close is allowed when no useful reply remains.",
 ] as const;
 
 const DELEGATION_GUIDANCE = [

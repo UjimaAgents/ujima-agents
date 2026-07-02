@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunState } from '@ujima/shared';
 import {
-  clearPendingMemberAlertsForTests,
-  drainPendingMemberAlertAfterRun,
-  enqueuePendingMemberAlert,
-  takePendingMemberAlert,
+  clearPendingThreadAlertsForTests,
+  drainPendingThreadAlertAfterRun,
+  enqueuePendingThreadAlert,
+  takePendingThreadAlert,
 } from './pending-member-alerts.js';
 import {
   clearRunInterruptCursorsForTests,
@@ -15,12 +15,12 @@ const flushMicrotasks = () => new Promise<void>((resolve) => queueMicrotask(() =
 
 describe('pending-member-alerts', () => {
   beforeEach(() => {
-    clearPendingMemberAlertsForTests();
+    clearPendingThreadAlertsForTests();
     clearRunInterruptCursorsForTests();
   });
 
-  it('queues distinct alerts per org/member/thread', () => {
-    enqueuePendingMemberAlert({
+  it('queues distinct alerts per org/thread', () => {
+    enqueuePendingThreadAlert({
       organizationId: 'org-1',
       memberId: 'agent-1',
       threadId: 'thread-1',
@@ -29,7 +29,7 @@ describe('pending-member-alerts', () => {
       reason: 'dm',
       wakeReason: 'dm',
     });
-    enqueuePendingMemberAlert({
+    enqueuePendingThreadAlert({
       organizationId: 'org-1',
       memberId: 'agent-1',
       threadId: 'thread-1',
@@ -38,14 +38,37 @@ describe('pending-member-alerts', () => {
       reason: 'dm',
       wakeReason: 'dm',
     });
-    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-1');
-    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')?.messageId).toBe('msg-2');
-    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
+    expect(takePendingThreadAlert('org-1', 'thread-1')?.messageId).toBe('msg-1');
+    expect(takePendingThreadAlert('org-1', 'thread-1')?.messageId).toBe('msg-2');
+    expect(takePendingThreadAlert('org-1', 'thread-1')).toBeUndefined();
+  });
+
+  it('keeps different members queued on the same message', () => {
+    enqueuePendingThreadAlert({
+      organizationId: 'org-1',
+      memberId: 'agent-1',
+      threadId: 'thread-1',
+      messageId: 'msg-1',
+      byMemberId: 'peer-1',
+      reason: 'mention',
+      wakeReason: 'mention',
+    });
+    enqueuePendingThreadAlert({
+      organizationId: 'org-1',
+      memberId: 'agent-2',
+      threadId: 'thread-1',
+      messageId: 'msg-1',
+      byMemberId: 'peer-1',
+      reason: 'mention',
+      wakeReason: 'mention',
+    });
+    expect(takePendingThreadAlert('org-1', 'thread-1')?.memberId).toBe('agent-1');
+    expect(takePendingThreadAlert('org-1', 'thread-1')?.memberId).toBe('agent-2');
   });
 
   it('drains a pending alert after a terminal run completes', async () => {
     const wake = vi.fn(async () => undefined);
-    enqueuePendingMemberAlert({
+    enqueuePendingThreadAlert({
       organizationId: 'org-1',
       memberId: 'agent-1',
       threadId: 'thread-1',
@@ -66,21 +89,21 @@ describe('pending-member-alerts', () => {
       endedAt: new Date().toISOString(),
     } as RunState;
 
-    await drainPendingMemberAlertAfterRun(run, wake);
+    await drainPendingThreadAlertAfterRun(run, wake);
     await flushMicrotasks();
 
     expect(wake).toHaveBeenCalledTimes(1);
     expect(wake).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: 'msg-queued' }),
     );
-    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
+    expect(takePendingThreadAlert('org-1', 'thread-1')).toBeUndefined();
   });
 
   it.each(['failed'] as const)(
     'drains a pending alert after a terminal run with status %s',
     async (status) => {
       const wake = vi.fn(async () => undefined);
-      enqueuePendingMemberAlert({
+      enqueuePendingThreadAlert({
         organizationId: 'org-1',
         memberId: 'agent-1',
         threadId: 'thread-1',
@@ -101,17 +124,17 @@ describe('pending-member-alerts', () => {
         endedAt: new Date().toISOString(),
       } as RunState;
 
-      await drainPendingMemberAlertAfterRun(run, wake);
+      await drainPendingThreadAlertAfterRun(run, wake);
       await flushMicrotasks();
 
       expect(wake).toHaveBeenCalledTimes(1);
-      expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
+      expect(takePendingThreadAlert('org-1', 'thread-1')).toBeUndefined();
     },
   );
 
   it('clears pending alerts after a cancelled run without waking a successor', async () => {
     const wake = vi.fn(async () => undefined);
-    enqueuePendingMemberAlert({
+    enqueuePendingThreadAlert({
       organizationId: 'org-1',
       memberId: 'agent-1',
       threadId: 'thread-1',
@@ -132,11 +155,11 @@ describe('pending-member-alerts', () => {
       endedAt: new Date().toISOString(),
     } as RunState;
 
-    await drainPendingMemberAlertAfterRun(run, wake);
+    await drainPendingThreadAlertAfterRun(run, wake);
     await flushMicrotasks();
 
     expect(wake).not.toHaveBeenCalled();
-    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
+    expect(takePendingThreadAlert('org-1', 'thread-1')).toBeUndefined();
   });
 
   it('drops pending alerts already seen by the finished run and wakes the next one', async () => {
@@ -145,7 +168,7 @@ describe('pending-member-alerts', () => {
       createdAt: '2026-01-01T00:00:02.000Z',
       id: 'msg-cursor',
     });
-    enqueuePendingMemberAlert({
+    enqueuePendingThreadAlert({
       organizationId: 'org-1',
       memberId: 'agent-1',
       threadId: 'thread-1',
@@ -155,7 +178,7 @@ describe('pending-member-alerts', () => {
       reason: 'dm',
       wakeReason: 'dm',
     });
-    enqueuePendingMemberAlert({
+    enqueuePendingThreadAlert({
       organizationId: 'org-1',
       memberId: 'agent-1',
       threadId: 'thread-1',
@@ -177,11 +200,11 @@ describe('pending-member-alerts', () => {
       endedAt: new Date().toISOString(),
     } as RunState;
 
-    await drainPendingMemberAlertAfterRun(run, wake);
+    await drainPendingThreadAlertAfterRun(run, wake);
     await flushMicrotasks();
 
     expect(wake).toHaveBeenCalledTimes(1);
     expect(wake).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'msg-new' }));
-    expect(takePendingMemberAlert('org-1', 'agent-1', 'thread-1')).toBeUndefined();
+    expect(takePendingThreadAlert('org-1', 'thread-1')).toBeUndefined();
   });
 });

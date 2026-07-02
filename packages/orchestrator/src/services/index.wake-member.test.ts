@@ -2,15 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { SocketEventNames, type RunState } from '@ujima/shared';
 import { wakeMemberWithFailureEvents } from './index.js';
 
-// saveRun got added to WakeMemberDeps['repo'] in the d3d4b38 commit
-// so the index.ts can mutate an existing run's wakeReason on a
-// mention-while-active path. Tests need to provide the stub; absent
-// it the calling branch throws "saveRun is not a function" and
-// 2 tests fail. Defaulted to vi.fn() here so per-test stubs only
-// override what they actually inspect.
 const noopRepo = {
-  findActiveRunForMemberThread: vi.fn(() => null),
-  saveRun: vi.fn(),
+  listActiveRuns: vi.fn(() => []),
 };
 
 const baseInput = {
@@ -54,20 +47,10 @@ describe('wakeMemberWithFailureEvents', () => {
     });
   });
 
-  // L10 — when two near-simultaneous wakes hit the same
-  // (org, member, threadId), the createRun mutex must serialize
-  // them so only ONE run is spawned. Without the mutex,
-  // findActiveRunForMemberThread is TOCTOU and both callers see
-  // "no run" and each fire createRun.
-  it('coalesces two concurrent wakes into a single createRun (L10 mutex)', async () => {
+  it('coalesces concurrent wakes in one thread into a single createRun', async () => {
     const emit = vi.fn();
-    // Track the side-effects across calls. The first createRun
-    // should "create" a run; subsequent findActiveRunForMemberThread
-    // calls should see it (simulating real repo behaviour where
-    // saveRun → next find returns the row).
     let activeRun: RunState | null = null;
     const createRun = vi.fn(async () => {
-      // Tiny artificial delay to widen the race window.
       await new Promise((resolve) => setTimeout(resolve, 5));
       activeRun = {
         id: 'run-coalesce',
@@ -87,8 +70,7 @@ describe('wakeMemberWithFailureEvents', () => {
       };
     });
     const repo = {
-      saveRun: vi.fn(),
-      findActiveRunForMemberThread: vi.fn(() => activeRun),
+      listActiveRuns: vi.fn(() => activeRun ? [activeRun] : []),
     };
     const deps = {
       spirits: {
@@ -99,10 +81,9 @@ describe('wakeMemberWithFailureEvents', () => {
       repo,
     };
 
-    // Two concurrent calls. Mutex must serialize → only one createRun.
     await Promise.all([
       wakeMemberWithFailureEvents(deps, baseInput),
-      wakeMemberWithFailureEvents(deps, baseInput),
+      wakeMemberWithFailureEvents(deps, { ...baseInput, memberId: 'agent-2', messageId: 'msg-2' }),
     ]);
 
     expect(createRun).toHaveBeenCalledTimes(1);

@@ -27,50 +27,47 @@ export const SCAFFOLD_RULES = Object.freeze({
   threadStateAuthoritative:
     'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
   optionalBackpressure:
-    'If <reply-obligation>optional-backpressure</reply-obligation>, the message was addressed to you but repeated agent-to-agent wake activity made a reply optional. Reply only with substantive new information; otherwise call channel.pass and stop.',
+    'If <reply-obligation>optional-backpressure</reply-obligation>, the message was addressed to you but repeated agent-to-agent wake activity made a reply optional. Reply only with substantive new information; otherwise call channel.close and stop.',
   toolDefinitionsBase:
-    'channel.ack = you were addressed but have no new information, question, or status to add. channel.pass = you were not addressed at all. channel.reply = you have substantive content (an answer, an artifact, a question, a status that changes the picture).',
+    'channel.close = silent close when you have no useful visible reply. Use reason "ack" if addressed, otherwise use a stand-down reason. channel.reply = substantive visible content (an answer, artifact, question, or changed status).',
   toolDefinitionsChannel:
-    'channel.ack = you were addressed under normal reply obligation but have no new information, question, or status to add. channel.pass = no reply is needed. channel.reply = you have substantive content (an answer, an artifact, a question, a status that changes the picture).',
+    'channel.close = silent close when you have no useful visible reply. Use reason "ack" if addressed, otherwise use a stand-down reason. channel.reply = substantive visible content (an answer, artifact, question, or changed status).',
   explicitAddressedBase:
-    'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.ack with an empty body. Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
+    'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.close with reason "ack". Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
   explicitAddressedChannel:
-    'If <you-explicitly-addressed>true</you-explicitly-addressed> AND <reply-obligation>normal</reply-obligation>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.ack with an empty body. Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
-  // Out-of-scope handling: agents were silently channel.pass-ing with
+    'If <you-explicitly-addressed>true</you-explicitly-addressed> AND <reply-obligation>normal</reply-obligation>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.close with reason "ack". Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
+  // Out-of-scope handling: agents were silently closing with
   // `reason: out_of_scope` when explicitly addressed but the topic
   // didn't match their role. That looks like "Layla never replied"
   // to the human even though Layla DID consider the message. Force
   // an explicit, brief, visible response in that case.
   outOfScopeRedirect:
-    'If <you-explicitly-addressed>true</you-explicitly-addressed> AND <reply-obligation>normal</reply-obligation> AND the topic is outside your role/scope, use channel.reply with a one-line redirect (e.g. "That\'s outside my scope as <role>; @<better-fit-member> might be better here."). Do NOT use channel.pass with `reason: out_of_scope` when you were explicitly addressed under normal reply obligation.',
+    'If <you-explicitly-addressed>true</you-explicitly-addressed> AND <reply-obligation>normal</reply-obligation> AND the topic is outside your role/scope, use channel.reply with a one-line redirect (e.g. "That\'s outside my scope as <role>; @<better-fit-member> might be better here."). Do NOT use channel.close with `reason: out_of_scope` when you were explicitly addressed under normal reply obligation.',
   implicitAddressed:
     'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>true</you-implicitly-addressed>, the human used your name without @ — treat this as addressed. Reply normally.',
   notAddressed:
-    'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, you were not named. If the message is a general greeting (e.g. "hey", "hi everyone", "good morning") or a general statement (e.g. "just checking in", "updates?"), you SHOULD reply with a brief response. If the message is relevant to your role, knowledge, and expertise, you may also reply. Otherwise call channel.pass and stop.',
+    'If <you-explicitly-addressed>false</you-explicitly-addressed> AND <you-implicitly-addressed>false</you-implicitly-addressed>, you were not named. If the message is a general greeting (e.g. "hey", "hi everyone", "good morning") or a general statement (e.g. "just checking in", "updates?"), you SHOULD reply with a brief response. If the message is relevant to your role, knowledge, and expertise, you may also reply. Otherwise call channel.close and stop.',
   passNoteSpecific:
-    'When you call channel.pass, the note field must reference a specific fact from <thread-state>. Empty notes and generic phrasing are rejected.',
+    'When you call channel.close for any non-ack reason, the note field must reference a specific fact from <thread-state>. Empty notes and generic phrasing are rejected.',
   autoReMentionHandoff:
-    'An auto-re-mention closing a hand-off does NOT count as being addressed. If the previous message is a plain acknowledgement of YOUR work and contains no new question, treat the chain as complete — call channel.handoff with complete:true (if you initiated the chain) or channel.ack (if you are receiving the acknowledgement).',
+    'An auto-re-mention closing a hand-off does NOT count as being addressed. If the previous message is a plain acknowledgement of YOUR work and contains no new question, treat the chain as complete with channel.close reason "ack".',
 } as const);
 
 const DM_WAKE_SCAFFOLD = [
   SCAFFOLD_RULES.readThreadState,
   'This is a direct message (1:1) thread. Messages from your conversation partner are addressed to you — reply when they ask you to do something or expect a response.',
-  'If the peer is another agent and the conversation has reached a natural stopping point, call channel.ack instead of sending a filler reply.',
-  'Do not call channel.pass in a human DM because you think you were not @mentioned; that rule applies to shared channels only.',
-  'Use channel.reply to answer in this DM. Use channel.dm only to message a different member, then keep going so you can close the loop here.',
+  'If the peer is another agent and the conversation has reached a natural stopping point, call channel.close reason "ack" instead of sending a filler reply.',
+  'Do not silently close a human DM because you were not @mentioned; that rule applies to shared channels only.',
+  'Use channel.reply to answer in this DM.',
 ].join('\n');
 
-// Agent↔agent DM scaffold. Unlike a human DM (where the human is owed a
-// reply), a 1:1 between two agents is exactly where the self-chatter
-// loop forms, so `channel.pass` is RESTORED here: the agent is allowed
-// — and expected — to stand down the moment it has nothing substantive
-// to add. Mirrors the `channel-read`-demotion scaffold below.
+// Agent↔agent DM scaffold: a 1:1 between agents is exactly where the
+// self-chatter loop forms, so channel.close is the expected stand-down.
 const AGENT_DM_WAKE_SCAFFOLD = [
   SCAFFOLD_RULES.readThreadState,
   'This is a direct message (1:1) thread with ANOTHER AGENT, not a human.',
   'Reply only when you have substantive new information, a concrete deliverable, or a question that moves the work forward.',
-  'You are allowed — and expected — to call channel.pass to stand down and break the loop. If you have no constructive/new response, call channel.pass with a descriptive note immediately instead of sending a filler reply.',
+  'You are allowed — and expected — to call channel.close to stand down and break the loop. If you have no constructive/new response, call channel.close with a descriptive note immediately instead of sending a filler reply.',
 ].join('\n');
 
 export const CHANNEL_WAKE_SCAFFOLD_LINES: readonly string[] = Object.freeze([
@@ -111,7 +108,7 @@ export const BASE_WAKE_SCAFFOLD_LINES: readonly string[] = Object.freeze([
 const CHANNEL_WAKE_SCAFFOLD = CHANNEL_WAKE_SCAFFOLD_LINES.join('\n');
 
 export const ANTI_MIRROR_SCAFFOLD_LINE =
-  'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.ack with no body. Filler acknowledgements waste team attention and trigger redundant wakes.';
+  'IMPORTANT — anti-mirror rule: Do NOT paraphrase the previous message. If your intended reply restates what the previous turn already said, differs only by swapping names, or amounts to "noted / understood / I will await", call channel.close with reason "ack". Filler acknowledgements waste team attention and trigger redundant wakes.';
 
 /**
  * True when both participants of a 1:1 DM thread are agents. For a
@@ -134,10 +131,8 @@ export function resolveWakeReplyPolicy(input: {
   threadId: string;
   wakeReason?: WakeReason | null;
   /**
-   * Set by callers when the DM peer is another agent. Restores
-   * `channel.pass` in agent↔agent DMs so the self-chatter loop can
-   * terminate; human DMs keep the mandatory-reply contract. Defaults
-   * to the pre-existing behaviour (treat as human DM) when omitted.
+   * Set by callers when the DM peer is another agent. Human DMs keep
+   * the mandatory-reply contract; agent DMs can close silently.
    */
   dmPeerIsAgent?: boolean;
 }): WakeReplyPolicy {
@@ -156,8 +151,8 @@ export function resolveWakeReplyPolicy(input: {
     scaffoldBlock = [
       SCAFFOLD_RULES.readThreadState,
       'This is a direct message (1:1) thread demoted by channel-read back-pressure after a pairwise mention cap was hit.',
-      'You are allowed to call channel.pass to stand down and break the loop.',
-      'If you have no constructive/new response, please call channel.pass with a descriptive note immediately.',
+      'You are allowed to call channel.close to stand down and break the loop.',
+      'If you have no constructive/new response, please call channel.close with a descriptive note immediately.',
     ].join('\n');
   }
 
@@ -173,9 +168,9 @@ export function buildPassDenialReason(
   policy: Pick<WakeReplyPolicy, 'mandatoryReply' | 'conversationKind'>,
 ): string {
   if (policy.mandatoryReply) {
-    return 'mandatory-reply: you were @mentioned, channel.pass is not allowed. Reply via channel.reply.';
+    return 'mandatory-reply: you were @mentioned. Reply via channel.reply or silently close with channel.close reason "ack".';
   }
-  return 'direct-message: channel.pass is not allowed in a human 1:1 DM. Reply via channel.reply.';
+  return 'direct-message: silent stand-down is not allowed in a human 1:1 DM. Reply via channel.reply.';
 }
 
 export function filterToolsForWakeReplyPolicy(
@@ -183,17 +178,11 @@ export function filterToolsForWakeReplyPolicy(
   policy: Pick<WakeReplyPolicy, 'suppressPassTool' | 'conversationKind'>,
 ): string[] {
   return toolIds.filter((toolId) => {
-    // Mandatory-reply / human-DM contract: the model literally cannot
-    // opt out of replying.
-    if (policy.suppressPassTool && toolId === 'channel.pass') {
-      return false;
-    }
     // Keep channel-originated conversations IN the channel. An agent
     // woken by channel activity has no `channel.dm` in its palette, so
     // it can only reply on the shared surface where the team can see
     // it — it cannot peel a teammate (or a human) into a siloed 1:1.
-    // DMs remain reachable on DM wakes, where channel.dm is a side-effect
-    // delivery tool rather than the current-thread terminator.
+    // DMs remain reachable on DM wakes.
     if (policy.conversationKind === 'channel' && toolId === 'channel.dm') {
       return false;
     }

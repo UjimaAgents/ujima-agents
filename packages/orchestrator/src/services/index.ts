@@ -37,10 +37,10 @@ import { GovernanceService } from './governance-service.js';
 import { PluginRegistryService } from './plugin-registry.js';
 import { DEFAULT_SKILL_URLS, OnboardingService } from './onboarding.js';
 import {
-  drainPendingMemberAlertAfterRun,
-  enqueuePendingMemberAlert,
-  hasPendingMemberAlert,
-  type PendingMemberAlert,
+  drainPendingThreadAlertAfterRun,
+  enqueuePendingThreadAlert,
+  hasPendingThreadAlert,
+  type PendingThreadAlert,
 } from './pending-member-alerts.js';
 import type { ApiRepository } from './repository-reader.js';
 import { SettingsService } from './settings.js';
@@ -276,7 +276,7 @@ export interface ApiServices {
   pluginRegistry: PluginRegistryService;
 }
 
-type WakeMemberInput = PendingMemberAlert;
+type WakeMemberInput = PendingThreadAlert;
 const AGENT_DELEGATE_POLL_INTERVAL_MS = 500;
 const AGENT_DELEGATE_TIMEOUT_MS = 120_000;
 
@@ -284,14 +284,13 @@ interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
   runs: Pick<SpiritService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
-  repo: Pick<ApiRepository, 'findActiveRunForMemberThread' | 'saveRun'> &
-    Partial<Pick<ApiRepository, 'getMessage'>>;
+  repo: Pick<ApiRepository, 'listActiveRuns'> & Partial<Pick<ApiRepository, 'getMessage'>>;
 }
 
 const createRunMutex = new AsyncMutex();
 
 function createRunMutexKey(input: WakeMemberInput): string {
-  return `${input.organizationId}:${input.memberId}:${input.threadId}`;
+  return `${input.organizationId}:${input.threadId}`;
 }
 
 function errMessage(error: unknown): string {
@@ -308,6 +307,14 @@ function pendingMemberAlertWithCreatedAt(
       repo.getMessage?.(input.organizationId, input.messageId)?.createdAt ??
       new Date().toISOString(),
   };
+}
+
+function threadHasActiveRun(
+  repo: WakeMemberDeps['repo'],
+  organizationId: string,
+  threadId: string,
+): boolean {
+  return repo.listActiveRuns(organizationId).some((run) => run.threadId === threadId);
 }
 
 function latestDelegateReply(
@@ -566,7 +573,7 @@ export async function wakeMemberWithFailureEvents(
   );
 
   if (dispatch.kind === 'debounced') {
-    enqueuePendingMemberAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+    enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
     return;
   }
 
@@ -574,28 +581,16 @@ export async function wakeMemberWithFailureEvents(
     return;
   }
 
-  // L10 — serialize the findActiveRunForMemberThread → createRun
-  // window per `(org, member, threadId)` so two near-simultaneous
-  // broad-wake alerts can't both observe "no run" and each spawn
-  // their own.
+  if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
+    enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+    return;
+  }
+
+  // One thread speaks at a time. The mutex closes the check/create window
+  // across all agents in that conversation.
   await createRunMutex.run(createRunMutexKey(input), async () => {
-    const activeRun = deps.repo.findActiveRunForMemberThread(
-      input.organizationId,
-      input.memberId,
-      input.threadId,
-    );
-    if (activeRun) {
-      if (input.wakeReason === 'mention' && activeRun.wakeReason !== 'mention') {
-        deps.repo.saveRun({
-          ...activeRun,
-          wakeReason: 'mention',
-          sourceMessageId: input.messageId,
-          byMemberId: input.byMemberId,
-          summary: `Wake (mention) by ${input.byMemberId} on message ${input.messageId}`,
-        });
-      } else {
-        enqueuePendingMemberAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
-      }
+    if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
+      enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
       return;
     }
 
@@ -651,7 +646,7 @@ async function waitForAgentDelegateReply(input: {
   };
 
   while (Date.now() - startedAt < timeoutMs) {
-    const isAlertQueued = hasPendingMemberAlert(
+    const isAlertQueued = hasPendingThreadAlert(
       input.organizationId,
       input.agentId,
       input.threadId,
@@ -747,13 +742,6 @@ async function waitForAgentDelegateReply(input: {
   };
 }
 
-function deriveTempAgentName(name: string | undefined, message: string): string {
-  const trimmedName = name?.trim();
-  if (trimmedName) return trimmedName;
-  const trimmedMessage = message.trim().slice(0, 60);
-  return trimmedMessage || 'Delegate';
-}
-
 function isTempAgentRole(roleName: string): boolean {
   return roleName.startsWith('@delegate/');
 }
@@ -799,34 +787,15 @@ export async function runAgentDelegateTurn(input: {
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<AgentDelegateResult> {
-  let target: ReturnType<typeof input.repo.getMember> | null = null;
+  const targetName = input.to?.trim();
+  if (!targetName) throw new Error('Delegate target is required.');
 
-  if (input.to) {
-    const members = input.repo.listMembers(input.organizationId);
-    const activeAgents = members.filter(
-      (member) => member.kind === AGENT_KIND && !member.retiredAt,
-    );
-    target = activeAgents.find(
-      (member) => member.id === input.to || member.name === input.to,
-    ) ?? null;
-  }
+  const target = input.repo
+    .listMembers(input.organizationId)
+    .filter((member) => member.kind === AGENT_KIND && !member.retiredAt)
+    .find((member) => member.id === targetName || member.name === targetName);
 
-  if (!target) {
-    // No existing agent found — create a temp (ephemeral) agent.
-    const agentName = deriveTempAgentName(input.name, input.message);
-    const delegateKind = input.kind ?? 'worker';
-    const roleName = delegateKind === 'explorer' ? '@delegate/explorer' : '@delegate/worker';
-    const now = new Date().toISOString();
-    target = input.repo.saveMember({
-      id: randomUUID(),
-      organizationId: input.organizationId,
-      name: agentName,
-      kind: AGENT_KIND,
-      roleName,
-      presence: 'online',
-      createdAt: now,
-    });
-  }
+  if (!target) throw new Error(`Delegate target "${targetName}" not found.`);
 
   if (target.id === input.fromMemberId) {
     throw new Error('Cannot delegate to yourself. Delegate to a different agent.');
@@ -1170,7 +1139,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     delegateId: string,
   ): Promise<{ stopped: boolean; runId?: string }> => {
     const ctx = resolveDelegateMessage(context.repo, orgId, delegateId);
-    // Retire the temp agent before cancelling the run.
+    // Older delegate threads may point at retired ephemeral members.
     retireTempAgent(context.repo, orgId, ctx.recipientId);
     const activeRun = context.repo.findActiveRunForMemberThread?.(
       orgId,
@@ -1837,7 +1806,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         }
       }
     }
-    await drainPendingMemberAlertAfterRun(run, (pending) =>
+    await drainPendingThreadAlertAfterRun(run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
     try {

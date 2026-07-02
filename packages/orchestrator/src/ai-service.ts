@@ -22,6 +22,7 @@ import type { ToolService } from './services/tool-service.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   filterDeprecatedToolIds,
+  listEffectiveAgentToolIds,
 } from './tools/index.js';
 import { isMirrorFragileModel } from './services/mirror-guard.js';
 import {
@@ -354,15 +355,9 @@ export class AiService {
       ),
     });
 
-    // Mandatory-reply enforcement at the tool-palette layer.
-    // When wakeReason === 'mention' (the agent was @mentioned, or
-    // included via @all expansion), `channel.pass`
-    // is stripped so the model literally cannot opt out of
-    // replying. Posting tools (`channel.reply`, `channel.post`,
-    // `channel.dm`) stay available via `ALWAYS_AVAILABLE_AGENT_TOOLS`,
-    // so the model has a clear path to comply with the "you must
-    // reply" contract regardless of how the role config declares its
-    // `tools`.
+    // Role configs store custom tools only. Baseline tools come from the
+    // registry every run, so adding channel.close does not require rewriting
+    // every onboarded agent.
     const isDelegateTurn = isDelegateMessage(sourceMessage);
     const wakeReasonForPalette = (runRow?.wakeReason ?? null) as WakeReason | null;
     const wakeReplyPolicy = resolveWakeReplyPolicy({
@@ -373,11 +368,8 @@ export class AiService {
         (memberId) => this.repo.getMember(input.organizationId, memberId)?.kind === AGENT_KIND,
       ),
     });
-    const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(
-      ALWAYS_AVAILABLE_AGENT_TOOLS,
-      wakeReplyPolicy,
-    );
-    const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
+    const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(ALWAYS_AVAILABLE_AGENT_TOOLS, wakeReplyPolicy);
+    const roleTools = filterToolsForWakeReplyPolicy(listEffectiveAgentToolIds(role.tools), wakeReplyPolicy);
     const builtInToolDefs = buildToolDefinitions(
       filterDeprecatedToolIds([...new Set([...roleTools, ...baseAlwaysAvailable])]),
       team,
