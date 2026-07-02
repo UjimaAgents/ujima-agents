@@ -1,83 +1,28 @@
-import { randomUUID } from 'node:crypto';
-import { type ModelMessage, type ToolSet } from 'ai';
-import { buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
-import { AgentLoopLogger } from './debug/agent-loop-logger.js';
-import {
-  AGENT_KIND,
-  DEFAULT_SPIRIT_TEMPERATURE,
-  type ReasoningEffort,
-  type SpiritRole,
-  type WakeReason,
-} from '@ujima/shared';
-import {
-  runAgentLoop,
-  runAgentWithRetry,
-  type AgentLoopChunk,
-  type AgentLoopStep,
-  type HumanPause,
-} from './services/agent-loop.js';
-import type { ApiRepository } from './services/repository-reader.js';
-import type { TeamStore } from './services/team-store.js';
-import type { ToolService } from './services/tool-service.js';
-import {
-  ALWAYS_AVAILABLE_AGENT_TOOLS,
-  filterDeprecatedToolIds,
-  listEffectiveAgentToolIds,
-} from './tools/index.js';
-import { isMirrorFragileModel } from './services/mirror-guard.js';
+import {randomUUID} from "node:crypto";
+import {type ToolSet} from "ai";
+import {buildAgentSystemPrompt, normalizeProviderKey} from "@ujima/framework";
+import {AgentLoopLogger} from "./debug/agent-loop-logger.js";
+import {type SpiritRole} from "@ujima/shared";
+import {runAgentLoop} from "./services/agent-loop.js";
+import type {ApiRepository} from "./services/repository-reader.js";
+import type {TeamStore} from "./services/team-store.js";
+import type {ToolService} from "./services/tool-service.js";
 import {
   toModelMessages,
   resolveSpiritModel,
   buildToolDefinitions,
   makeProviderModelsInUseLookup,
   defaultResolveModelId,
-} from './utils/to-model-messages.js';
-import { requireTeam } from './utils/require-team.js';
-import { resolveVisiblePromptChannels } from './utils/visible-prompt-channels.js';
-import {
-  buildCacheableSystem,
-  buildStableWakeContext,
-  buildWakeContextMessages,
-  loadCultureForSystemPrompt,
-  loadProceduresForSystemPrompt,
-} from './utils/system-prompt-builder.js';
-import { buildSystemMessage } from './services/message-factory.js';
-import { isWakeContextMessage } from './utils/to-model-messages.js';
-import { buildThreadStateBlock } from './utils/thread-state.js';
-import { buildWorkspaceStateBlock } from './utils/workspace-state.js';
-import { buildPromptMessages } from './utils/prompt-assembly.js';
-import {
-  filterToolsForWakeReplyPolicy,
-  isAgentOnlyDmThread,
-  resolveWakeReplyPolicy,
-} from './utils/wake-reply-policy.js';
-import { selectPromptContextMessages } from './utils/prompt-context.js';
-import { createMessageCursor, loadInterruptModelMessages } from './utils/interrupt-loader.js';
-import {
-  buildDelegateTurnContextMessages,
-  filterDelegateTurnToolSet,
-  getDelegateKind,
-} from './utils/delegate-turn.js';
-import { isDelegateMessage } from './services/run-reply-guard.js';
-import { collectCursorPages } from './utils/cursor-pages.js';
+} from "./utils/to-model-messages.js";
+import {requireTeam} from "./utils/require-team.js";
+import {resolveVisiblePromptChannels} from "./utils/visible-prompt-channels.js";
+import {buildCacheableSystem, loadProceduresForSystemPrompt} from "./utils/system-prompt-builder.js";
+import {selectPromptContextMessages} from "./utils/prompt-context.js";
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
 // AI-SDK-driven code path (this `/api/runs` service, the upcoming
 // agent-runtime `ai-sdk-loop`, the conflict referee, the task promoter)
 // agrees on the provider kind → model wiring.
-
-export interface GenerateRunReplyInput {
-  organizationId: string;
-  agentId: string;
-  threadId: string;
-  runId: string;
-  summary?: string;
-  systemPromptSuffix?: string;
-  abortSignal?: AbortSignal;
-  onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
-  onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
-  detectExternalPause?: () => HumanPause | null;
-}
 
 export interface GenerateMemoryReviewInput {
   organizationId: string;
@@ -133,7 +78,7 @@ export class AiService {
   constructor(
     private readonly teamStore: TeamStore,
     private readonly repo: ApiRepository,
-    private readonly tools: ToolService,
+    private readonly tools: ToolService
   ) {}
 
   /**
@@ -146,7 +91,7 @@ export class AiService {
   }
 
   async generateMemoryReview(
-    input: GenerateMemoryReviewInput,
+    input: GenerateMemoryReviewInput
   ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
     const team = requireTeam(this.teamStore, input.organizationId);
     const organization = this.repo.getOrganization(input.organizationId);
@@ -171,11 +116,13 @@ export class AiService {
     const model = await resolveSpiritModel({
       organizationId: input.organizationId,
       memberId: input.memberId,
-      role: 'worker' as SpiritRole,
+      role: "worker" as SpiritRole,
       member,
       team,
-      getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
-      resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
+      getProviderCredential: (orgId, key) =>
+        this.repo.getProviderCredential(orgId, key),
+      resolveProviderName: (m, r) =>
+        normalizeProviderKey(m.llm ?? r.provider ?? ""),
       // Reuse the shared resolver so the member→role→default ladder (and
       // the fallback's member-model drop) stays identical to every other
       // call site — an inline copy previously drifted and leaked a
@@ -185,15 +132,15 @@ export class AiService {
         this.repo.listProviderCredentials(input.organizationId),
       listProviderModelsInUse: makeProviderModelsInUseLookup(
         this.repo,
-        input.organizationId,
+        input.organizationId
       ),
     });
 
     const reviewToolIds = [
-      'memory.write',
-      'memory.recall',
-      'memory.forget',
-      'procedure',
+      "memory.write",
+      "memory.recall",
+      "memory.forget",
+      "procedure",
     ] as const;
     const runId = `memory-review:${randomUUID()}`;
     const toolDefs = buildToolDefinitions(reviewToolIds, team, this.tools, {
@@ -204,7 +151,8 @@ export class AiService {
       repo: this.repo,
     }) as ToolSet;
 
-    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
+    const availableSkills =
+      this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
     const baseSystemPrompt = buildAgentSystemPrompt(
       team.workspace.root,
       organization.name,
@@ -217,56 +165,51 @@ export class AiService {
         .listMembers(input.organizationId)
         .filter((current) => current.id !== member.id),
       team.agents,
-      resolveVisiblePromptChannels(team.channels, this.repo, input.organizationId),
+      resolveVisiblePromptChannels(
+        team.channels,
+        this.repo,
+        input.organizationId
+      ),
       organization.organizationChart,
       availableSkills,
       Object.keys(toolDefs),
       [],
-      'channel',
+      "channel",
       undefined,
-      model,
+      model
     );
 
-    const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
-    const { system } = buildCacheableSystem({
+    const proceduresText = await loadProceduresForSystemPrompt(
+      team.workspace.root,
+      member.id
+    );
+    const {system} = buildCacheableSystem({
       baseSystem: baseSystemPrompt,
       proceduresText,
       baseScaffold: [
-        'This is a silent background memory-review turn.',
-        'Use only memory and self.procedure tools. Do not post, DM, reply, or address the user.',
-        'If nothing durable is worth saving, output exactly: Nothing to save.',
-      ].join('\n'),
+        "This is a silent background memory-review turn.",
+        "Use only memory and self.procedure tools. Do not post, DM, reply, or address the user.",
+        "If nothing durable is worth saving, output exactly: Nothing to save.",
+      ].join("\n"),
       availableToolIds: Object.keys(toolDefs),
     });
 
-    const recentThreadMessages = selectPromptContextMessages(this.repo.listMessages(
-      input.organizationId,
-      input.threadId,
-      undefined,
-      Math.max(input.contextSize ?? 10, 600),
-    ).data, input.contextSize ?? 10);
+    const recentThreadMessages = selectPromptContextMessages(
+      this.repo.listMessages(
+        input.organizationId,
+        input.threadId,
+        undefined,
+        Math.max(input.contextSize ?? 10, 600)
+      ).data,
+      input.contextSize ?? 10
+    );
     const messages = toModelMessages(recentThreadMessages, input.memberId);
-    const channelId = this.repo.getThread(input.organizationId, input.threadId)?.channelId;
-    const workspaceStateBlock = await buildWorkspaceStateBlock({
-      organizationId: input.organizationId,
-      memberId: member.id,
-      channelId,
-      threadId: input.threadId,
-      repo: this.repo,
-    });
-    if (workspaceStateBlock) {
-      messages.push({
-        role: 'user',
-        content: workspaceStateBlock,
-      });
-    }
     messages.push({
-      role: 'user',
+      role: "user",
       content: input.prompt,
     });
 
     const memDebugLogger = new AgentLoopLogger();
-    memDebugLogger.setWorkspaceRoot(team.workspace.root);
     memDebugLogger.setContext({
       agentId: input.memberId,
       threadId: input.threadId,
@@ -285,7 +228,7 @@ export class AiService {
         stopWhen: () => false,
         maxOutputTokens: 800,
         temperature: 0.2,
-        toolChoice: 'auto',
+        toolChoice: "auto",
         abortSignal: input.abortSignal,
       });
       memDebugLogger.setTokenUsage({
@@ -303,382 +246,5 @@ export class AiService {
     }
   }
 
-  async generateRunReply(
-    input: GenerateRunReplyInput,
-  ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
-    const team = requireTeam(this.teamStore, input.organizationId);
-    const organization = this.repo.getOrganization(input.organizationId);
-    if (!organization) {
-      throw new Error(`Organization not found: ${input.organizationId}`);
-    }
-
-    const member = this.repo.getMember(input.organizationId, input.agentId);
-    if (!member) {
-      throw new Error(`Member not found: ${input.agentId}`);
-    }
-
-    const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
-    if (!agent) {
-      throw new Error(`Agent not found: ${member.id}`);
-    }
-    const role = team.getRole(agent.roleName);
-    if (!role) {
-      throw new Error(`Role not found: ${agent.roleName}`);
-    }
-
-    const runRow = this.repo.getRun?.(input.organizationId, input.runId);
-    const sourceMessageId = (runRow?.sourceMessageId ?? undefined) as string | undefined;
-    const sourceMessage = sourceMessageId
-      ? this.repo.getMessage(input.organizationId, sourceMessageId)
-      : null;
-    const reasoningEffort = sourceMessage?.metadata?.reasoningEffort as ReasoningEffort | undefined;
-
-    const model = await resolveSpiritModel({
-      organizationId: input.organizationId,
-      memberId: input.agentId,
-      role: 'worker' as SpiritRole,
-      member,
-      team,
-      getProviderCredential: (orgId, key) => this.repo.getProviderCredential(orgId, key),
-      resolveProviderName: (m, r) => normalizeProviderKey(m.llm ?? r.provider ?? ''),
-      reasoningEffort,
-      // Reuse the shared resolver so the member→role→default ladder (and
-      // the fallback's member-model drop) stays identical to every other
-      // call site — an inline copy previously drifted and leaked a
-      // cross-provider model onto the fallback.
-      resolveModelId: defaultResolveModelId,
-      listConfiguredProviders: () =>
-        this.repo.listProviderCredentials(input.organizationId),
-      listProviderModelsInUse: makeProviderModelsInUseLookup(
-        this.repo,
-        input.organizationId,
-      ),
-    });
-
-    // Role configs store custom tools only. Baseline tools come from the
-    // registry every run, so adding channel.close does not require rewriting
-    // every onboarded agent.
-    const isDelegateTurn = isDelegateMessage(sourceMessage);
-    const wakeReasonForPalette = (runRow?.wakeReason ?? null) as WakeReason | null;
-    const wakeReplyPolicy = resolveWakeReplyPolicy({
-      threadId: input.threadId,
-      wakeReason: wakeReasonForPalette,
-      dmPeerIsAgent: isAgentOnlyDmThread(
-        input.threadId,
-        (memberId) => this.repo.getMember(input.organizationId, memberId)?.kind === AGENT_KIND,
-      ),
-    });
-    const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(ALWAYS_AVAILABLE_AGENT_TOOLS, wakeReplyPolicy);
-    const roleTools = filterToolsForWakeReplyPolicy(listEffectiveAgentToolIds(role.tools), wakeReplyPolicy);
-    const builtInToolDefs = buildToolDefinitions(
-      filterDeprecatedToolIds([...new Set([...roleTools, ...baseAlwaysAvailable])]),
-      team,
-      this.tools,
-      {
-        organizationId: input.organizationId,
-        runId: input.runId,
-        memberId: input.agentId,
-        threadId: input.threadId,
-        repo: this.repo,
-      },
-    ) as ToolSet;
-
-    // Attached MCPs layer on top of the built-in palette so wake-run
-    // agents (this code path) get the same tools that the spirit-run
-    // path has been getting all along. Without this, a member with a
-    // Playwright MCP attached wakes via @mention and the model sees
-    // only channel.* tools, so it (correctly) tells the user it has
-    // no Playwright tool. The resolver is late-bound at startup.
-    // Resolve the SpiritRole this wake actually belongs to. Without
-    // this, the resolver defaults to `'worker'` and any MCP attachment
-    // scoped `'supervisor'`-only would be silently invisible to the
-    // model — and `ToolServiceImpl.executeMcpTool` (which re-reads
-    // attachments by role at invocation time) would reject the call
-    // even if the model tried.
-    //
-    // Lookup MUST be role-agnostic. The earlier implementation used
-    // `listActiveSpiritsForMember`, which filters to `role = 'worker'`
-    // in SQL — so supervisor spirits never showed up and any
-    // supervisor wake reaching this path still resolved to the worker
-    // palette. `getSpiritByRunId` is keyed directly on `runs.run_id`
-    // and returns whichever role (worker or supervisor) owns the row.
-    let resolvedRole: SpiritRole = 'worker';
-    let resolvedTaskSessionId = '';
-    if (this.repo.getSpiritByRunId) {
-      const spirit = this.repo.getSpiritByRunId(input.organizationId, input.runId);
-      if (spirit) {
-        resolvedRole = spirit.role;
-        resolvedTaskSessionId = spirit.taskSessionId;
-      }
-    }
-
-    const mcpResolution = this.mcpToolResolver
-      ? await this.mcpToolResolver({
-          organizationId: input.organizationId,
-          memberId: input.agentId,
-          runId: input.runId,
-          threadId: input.threadId,
-          // Preserve the task session id so MCP tools that need one
-          // (audit linkage, per-task isolation) still get it. Empty
-          // string when there's no active spirit/task — the value is
-          // only used by tool runtime code that already handles the
-          // bare-wake case.
-          taskSessionId: resolvedTaskSessionId,
-          role: resolvedRole,
-        })
-      : { toolSet: {} as ToolSet, servers: [] };
-    const mcpToolDefs = mcpResolution.toolSet;
-    const attachedMcpServers = mcpResolution.servers;
-    const availableConnectors = mcpResolution.catalogText;
-    const toolDefs: ToolSet = isDelegateTurn
-      ? filterDelegateTurnToolSet({ ...builtInToolDefs, ...mcpToolDefs }, getDelegateKind(sourceMessage))
-      : { ...builtInToolDefs, ...mcpToolDefs };
-
-    // The "Available tools:" line in the system prompt is what some
-    // models actually read when deciding whether they CAN call a tool.
-    // Pass the FULL resolved palette (baseline + role + MCP namespaced
-    // ids) so the prompt matches the AI-SDK schema; otherwise the
-    // model can deny tools it actually has.
-    const availableToolIds = Object.keys(toolDefs);
-    // Main introduced a skills library: organisation-installed skills
-    // get threaded through `buildAgentSystemPrompt` so they appear in
-    // the system prompt alongside the role/tools listing. The lookup
-    // is optional on the repo so narrow test repos work without
-    // wiring the new method.
-    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
-    const baseSystemPrompt = buildAgentSystemPrompt(
-      team.workspace.root,
-      organization.name,
-      member.id,
-      member.name,
-      input.threadId,
-      agent,
-      role,
-      this.repo
-        .listMembers(input.organizationId)
-        .filter((current) => current.id !== member.id),
-      team.agents,
-      resolveVisiblePromptChannels(team.channels, this.repo, input.organizationId),
-      organization.organizationChart,
-      availableSkills,
-      availableToolIds,
-      attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
-      wakeReplyPolicy.conversationKind,
-      availableConnectors,
-      model,
-    );
-
-    // Bet 1 + Bet 7 — cache-stable system prompt assembly.
-    //
-    // The base system prompt + the agent's procedures.md + the base
-    // wake scaffold form Zone 1: invariant per (agent, thread). The
-    // per-wake mutations (anti-mirror line)
-    // are emitted SEPARATELY as user-role messages after the cache
-    // breakpoint, so they no longer bust the Anthropic prompt cache
-    // on every wake. The CI lint at packages/orchestrator/test/
-    // cache-stability.test.ts hashes this output across wake reasons
-    // to enforce the invariant.
-    const cultureChannelId = input.threadId
-      ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
-      : undefined;
-    const culture = await loadCultureForSystemPrompt({
-      workspaceRoot: team.workspace.root,
-      organizationId: input.organizationId,
-      memberId: member.id,
-      channelId: cultureChannelId,
-    });
-    if (culture.applied.length > 0) {
-      this.repo.recordProceduresApplied?.({
-        organizationId: input.organizationId,
-        runId: input.runId,
-        applied: culture.applied,
-      });
-    }
-    const { system } = buildCacheableSystem({
-      baseSystem: baseSystemPrompt,
-      lawText: culture.lawText,
-      proceduresText: culture.cultureText,
-      // Use the DM vs channel scaffold from the wake-reply policy
-      // (introduced by main as `wake-reply-policy.ts`). Per-thread
-      // stable, so it remains in the cacheable prefix; the wake-
-      // reason-dependent anti-mirror lines below
-      // are emitted as user-role messages and DON'T bust the cache.
-      baseScaffold: wakeReplyPolicy.scaffoldBlock,
-      // Bet 1b — gate memory/procedure guidance on tool availability
-      // so prompts without those tools stay clean.
-      availableToolIds,
-    });
-
-    const threadMessages = collectCursorPages((cursor) =>
-      this.repo.listMessages(input.organizationId, input.threadId, cursor, 600),
-    );
-    const promptHistoryMessages = selectPromptContextMessages(
-      sourceMessage ? threadMessages.filter((message) => message.id !== sourceMessage.id) : threadMessages,
-    );
-    const interruptCursor = createMessageCursor(promptHistoryMessages);
-
-    const contextMessages: ModelMessage[] = [
-      ...(input.summary ? [{ role: 'user' as const, content: input.summary }] : []),
-      ...(input.systemPromptSuffix ? [{ role: 'user' as const, content: input.systemPromptSuffix }] : []),
-    ];
-    // Factual thread-state injection. Gives the model ground truth
-    // about who was addressed, who already responded, and how it sits
-    // in the channel — instead of letting it invent claims like
-    // "already handled" or "addressed to someone else." Provider-
-    // agnostic (XML wrapper, works on Claude / DeepSeek / GPT / Gemini).
-    // Resolved from the wake's sourceMessageId when available so the
-    // "responders since wake" computation is correct on long threads.
-    const currentChannelId = input.threadId
-      ? this.repo.getThread(input.organizationId, input.threadId)?.channelId
-      : undefined;
-    const currentChannel = currentChannelId
-      ? this.repo.getChannel(input.organizationId, currentChannelId)
-      : undefined;
-    const threadStateBlock = buildThreadStateBlock({
-      messages: threadMessages,
-      currentMember: { id: member.id, name: member.name },
-      sourceMessageId,
-      threadId: input.threadId,
-      members: this.repo.listMembers(input.organizationId),
-      wakeReason: wakeReasonForPalette,
-      channelName: currentChannel?.name,
-    });
-    if (threadStateBlock) {
-      contextMessages.push({
-        role: 'user',
-        content: threadStateBlock,
-      });
-    }
-
-    // Workspace-state ground truth. Surfaces recent artifacts, channel
-    // decisions, and persistent memory inline so the model sees durable
-    // context at every wake.
-    const workspaceStateBlock = await buildWorkspaceStateBlock({
-      organizationId: input.organizationId,
-      memberId: member.id,
-      channelId: currentChannelId,
-      threadId: input.threadId,
-      repo: this.repo,
-    });
-    if (workspaceStateBlock) {
-      contextMessages.push({
-        role: 'user',
-        content: workspaceStateBlock,
-      });
-    }
-
-    // Stable wake context — persisted as a system message so it
-    // survives across restarts and loads as `role:'system'` at the
-    // start of the messages array. Only timezone + anti-mirror are
-    // stable; the current timestamp is emitted separately below.
-    const resolvedModelId = (model as { modelId?: unknown }).modelId;
-    const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
-    const isFragile = isMirrorFragileModel(modelIdString);
-    const wakeCtxInput = {
-      wakeReason: wakeReasonForPalette,
-      modelIdString,
-      isMirrorFragile: isFragile,
-    };
-    const existingWakeCtx = threadMessages.find(isWakeContextMessage);
-    if (!existingWakeCtx) {
-      try {
-        const stableCtx = buildStableWakeContext(wakeCtxInput);
-        const systemMsg = buildSystemMessage({
-          organizationId: input.organizationId,
-          threadId: input.threadId,
-          content: stableCtx,
-          metadata: { wakeContext: true },
-          createdAt: new Date(0).toISOString(), // epoch — always first chronologically
-        });
-        this.repo.saveMessage(systemMsg);
-      } catch {
-        // Non-critical — degraded wake still works; context will be
-        // rebuilt next wake and retried.
-      }
-    }
-
-    // Per-wake timestamp — the ONLY dynamic part of the wake context.
-    // Emitted as a user-role message at the tail, after the cache
-    // breakpoint, so the system prompt + history stay cached.
-    const wakeContextMessages = buildWakeContextMessages(wakeCtxInput);
-    contextMessages.push(...wakeContextMessages);
-    if (isDelegateTurn) {
-      contextMessages.push(...buildDelegateTurnContextMessages(getDelegateKind(sourceMessage)));
-    }
-    const messages = buildPromptMessages({
-      historyMessages: promptHistoryMessages,
-      currentMemberId: input.agentId,
-      runSteps: this.repo.listRunSteps?.(input.organizationId, input.runId) ?? [],
-      contextMessages,
-      currentRequestMessage: sourceMessage,
-    });
-    const systemPrompt = system;
-
-    // Multi-section deliverables (task lists, BRDs, PRDs, or file writing)
-    // routinely exceed the per-turn cap when pasted inline or written via
-    // tools. 4096 tokens across all wakes gives the model enough headroom.
-    const turnMaxOutputTokens = 4096;
-    const debugLogger = new AgentLoopLogger();
-    debugLogger.setWorkspaceRoot(team.workspace.root);
-    debugLogger.setContext({
-      agentId: input.agentId,
-      threadId: input.threadId,
-      organizationId: input.organizationId,
-      model,
-      systemPrompt,
-      messages,
-      tools: toolDefs,
-    });
-    try {
-      const result = await runAgentWithRetry({
-        model,
-        system: systemPrompt,
-        messages,
-        tools: toolDefs,
-        attachedMcpServers,
-        stopWhen: () => false,
-        maxOutputTokens: turnMaxOutputTokens,
-        temperature: wakeReplyPolicy.mandatoryReply ? 0.2 : DEFAULT_SPIRIT_TEMPERATURE,
-        toolChoice: 'auto',
-        abortSignal: input.abortSignal,
-        detectExternalPause: input.detectExternalPause,
-        onChunk: input.onChunk
-          ? (chunk) => {
-              debugLogger.handleChunk(chunk);
-              input.onChunk?.(chunk);
-            }
-          : (chunk) => debugLogger.handleChunk(chunk),
-        onStepFinish: input.onStepFinish
-          ? async (step, steps) => {
-              await debugLogger.handleStepFinish(step);
-              await input.onStepFinish?.(step, steps);
-            }
-          : (step) => debugLogger.handleStepFinish(step),
-        loadInterruptMessages: () =>
-          loadInterruptModelMessages({
-            repo: this.repo,
-            organizationId: input.organizationId,
-            threadId: input.threadId,
-            agentId: input.agentId,
-            cursor: interruptCursor,
-            runId: input.runId,
-          }),
-        logLabel: 'ai-service',
-        memberLabel: input.agentId,
-      });
-      debugLogger.setTokenUsage({
-        inputTokens: result.usage?.inputTokens,
-        outputTokens: result.usage?.outputTokens,
-        totalTokens: result.usage?.totalTokens,
-      });
-      debugLogger.flush().catch(() => undefined);
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      debugLogger.setError(message);
-      debugLogger.flush().catch(() => undefined);
-      throw err;
-    }
-  }
-
+  // generateRunReply removed — moved to SpiritServiceAgentRun
 }

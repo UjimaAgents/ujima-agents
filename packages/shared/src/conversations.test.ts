@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveChannelMemberIds } from './conversations.js';
+import { isOneToOneThread, isPrivateTaskThread, resolveChannelMemberIds } from './conversations.js';
 
 describe('resolveChannelMemberIds', () => {
   it('drops ids that are not in the active roster', () => {
@@ -14,5 +14,13 @@ describe('resolveChannelMemberIds', () => {
   it('deduplicates and sorts', () => {
     const active = new Set(['z', 'a']);
     expect(resolveChannelMemberIds(['z', 'a', 'z'], active)).toEqual(['a', 'z']);
+  });
+});
+
+describe('thread surface classifiers', () => {
+  it('treats private task command threads as one-to-one surfaces', () => {
+    expect(isPrivateTaskThread('task:d2518425-9d92-4834-ae50-434b8bb02665:p')).toBe(true);
+    expect(isOneToOneThread('task:d2518425-9d92-4834-ae50-434b8bb02665:p')).toBe(true);
+    expect(isOneToOneThread('task:org:slug')).toBe(false);
   });
 });

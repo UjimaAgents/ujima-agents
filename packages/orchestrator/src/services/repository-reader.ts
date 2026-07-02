@@ -607,25 +607,6 @@ export interface ApiRepository extends ConversationRepository {
     channelId?: string;
     updatedAt: string;
   }[];
-  /**
-   * Recent-artifacts projection — used by `<workspace-state>` to
-   * surface file paths written in the lookback window. Optional
-   * because narrow test repos don't implement it.
-   */
-  listRecentWorkspaceArtifacts?(input: {
-    organizationId: string;
-    sinceIso?: string;
-    memberId?: string;
-    channelId?: string;
-    limit?: number;
-  }): {
-    path: string;
-    writtenBy: string;
-    channelId?: string;
-    updatedAt: string;
-    sizeBytes: number;
-  }[];
-
   // Bet 6 — append-only decision log.
   appendDecisionLogEntry?(entry: DecisionLogEntry): DecisionLogEntry;
   listDecisionLogForChannel?(

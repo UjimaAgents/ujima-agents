@@ -1,5 +1,4 @@
 import {
-  emptyGovernancePolicy,
   organizationIdFromWorkspaceId,
   type AgentDef,
   type MCPDef,
@@ -8,7 +7,6 @@ import {
   type ToolRiskClass,
   type UjimaEvent,
   type GovernancePolicy,
-  type ToolPolicyState,
 } from '@ujima/shared';
 import type { UjimaDb } from '@ujima/context-store';
 import { openDb } from '@ujima/context-store';
@@ -28,6 +26,7 @@ import { noopLogger } from './logger';
 import type { WorkspaceStore } from './workspaces';
 import { createWorkspaceStore } from './workspaces';
 import { createPathResolver } from './path-resolver';
+import { getGovernancePolicyForOrg } from './repositories/governance-policy-store';
 
 export interface StartTaskInput {
   workspaceId: string;
@@ -147,35 +146,7 @@ export async function createRuntimeHost(deps: RuntimeHostDeps, config: RuntimeHo
 
   function loadOrganizationGovernancePolicy(organizationId: string): GovernancePolicy | undefined {
     try {
-      interface GovernanceRuleDbRow {
-        agent_id: string;
-        mcp_id: string;
-        tool_name: string;
-        state: ToolPolicyState;
-        reason: string | null;
-        updated_at: string;
-        updated_by: string | null;
-      }
-      const rows = db.raw
-        .prepare('SELECT * FROM governance_rules WHERE organization_id = ?')
-        .all(organizationId) as GovernanceRuleDbRow[];
-      const policy = emptyGovernancePolicy();
-
-      for (const row of rows) {
-        const agentId = row.agent_id;
-        if (!policy.agents[agentId]) {
-          policy.agents[agentId] = [];
-        }
-        policy.agents[agentId].push({
-          mcp_id: row.mcp_id,
-          tool_name: row.tool_name,
-          state: row.state,
-          reason: row.reason ?? undefined,
-          updated_at: row.updated_at,
-          updated_by: row.updated_by ?? undefined,
-        });
-      }
-      return policy;
+      return getGovernancePolicyForOrg(db.raw, organizationId);
     } catch (err) {
       logger.error('runtime-host: failed to resolve governance policy from database', {
         organizationId,

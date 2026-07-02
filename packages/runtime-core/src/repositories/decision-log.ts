@@ -59,9 +59,7 @@ export function appendDecisionLogEntry(
 
 /**
  * List recent decisions for a channel, excluding superseded entries.
- * Surfaced into the `<workspace-state>` block at wake time so the
- * model never has to re-derive a load-bearing decision after L1
- * compaction. Newest first.
+ * Newest first.
  */
 export function listDecisionLogForChannel(
   db: DbHandle,

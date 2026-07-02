@@ -40,9 +40,8 @@ describe('resolveWakeReplyPolicy — suppressPassTool matrix', () => {
   });
 
   it('human DM suppresses pass (forced reply contract)', () => {
-    expect(
-      resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: false }).suppressPassTool,
-    ).toBe(true);
+    const policy = resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: false });
+    expect(policy.suppressPassTool).toBe(true);
   });
 
   it('agent↔agent DM uses channel.close so the loop can terminate', () => {
@@ -50,6 +49,12 @@ describe('resolveWakeReplyPolicy — suppressPassTool matrix', () => {
     expect(policy.suppressPassTool).toBe(false);
     expect(policy.scaffoldBlock).toContain('channel.close');
     expect(policy.scaffoldBlock).toContain('ANOTHER AGENT');
+  });
+
+  it('private task command thread uses DM semantics', () => {
+    const policy = resolveWakeReplyPolicy({ threadId: 'task:run-1:p' });
+    expect(policy.conversationKind).toBe('dm');
+    expect(policy.suppressPassTool).toBe(true);
   });
 
   it('omitting dmPeerIsAgent preserves the legacy human-DM behaviour', () => {
@@ -70,8 +75,8 @@ describe('filterToolsForWakeReplyPolicy', () => {
     expect(filterToolsForWakeReplyPolicy(palette, policy)).toContain('channel.dm');
   });
 
-  it('keeps channel.close when the policy suppresses old pass', () => {
-    const policy = resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: false });
+  it('keeps channel.close in DMs', () => {
+    const policy = resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: true });
     expect(filterToolsForWakeReplyPolicy(palette, policy)).toContain('channel.close');
   });
 });

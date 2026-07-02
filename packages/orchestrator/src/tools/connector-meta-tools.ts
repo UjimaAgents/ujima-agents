@@ -590,33 +590,34 @@ export function buildConnectorMetaTools(
           ),
         );
       }
+      const invokeMeta: Parameters<typeof deps.tools.invoke>[0] = {
+        organizationId: deps.organizationId,
+        runId: deps.runId,
+        memberId: deps.memberId,
+        threadId: deps.threadId,
+        taskSessionId: deps.taskSessionId,
+        spiritRole: deps.spiritRole,
+        toolCallId: toolCallId ?? randomUUID(),
+        toolId: 'mcp',
+        action: 'mcp',
+        resourceType: 'mcp',
+        resourcePath: `${server.id}:${tool_name}`,
+        permissionMcpId: server.id,
+        permissionToolName: mcpPermissionToolName(server.id, tool_name),
+        input: {
+          mcpServerId: server.id,
+          mcpServerName: server.name,
+          toolName: tool_name,
+          args,
+        },
+      };
       // Dispatch through the standard ToolService gate. permissionMcpId
       // + the synthetic permissionToolName from mcpPermissionToolName
       // match the shape the legacy MCP-tool path already uses, so
       // existing governance policies and audit rows apply unchanged.
       let result: Awaited<ReturnType<typeof deps.tools.invoke>>;
       try {
-        result = await deps.tools.invoke({
-          organizationId: deps.organizationId,
-          runId: deps.runId,
-          memberId: deps.memberId,
-          threadId: deps.threadId,
-          taskSessionId: deps.taskSessionId,
-          spiritRole: deps.spiritRole,
-          toolCallId: toolCallId ?? randomUUID(),
-          toolId: 'mcp',
-          action: 'mcp',
-          resourceType: 'mcp',
-          resourcePath: `${server.id}:${tool_name}`,
-          permissionMcpId: server.id,
-          permissionToolName: mcpPermissionToolName(server.id, tool_name),
-          input: {
-            mcpServerId: server.id,
-            mcpServerName: server.name,
-            toolName: tool_name,
-            args,
-          },
-        });
+        result = await deps.tools.invoke(invokeMeta);
       } catch (err) {
         // Unexpected exception from the invoke layer itself (DB
         // failure, etc.). Record one completion row with the error

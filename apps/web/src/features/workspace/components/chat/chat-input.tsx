@@ -1164,7 +1164,7 @@ function ChatInputComponent({
         ) : null}
         <ConfirmDialog
           isOpen={clearConfirmation}
-          onClose={() => { if (!isCommanding) { setClearConfirmation(false); setContent(""); setError(null); } }}
+          onClose={() => { if (!isCommanding) { setClearConfirmation(false); setError(null); } }}
           title="Clear conversation"
           message="Older messages are summarized into one archive note and hidden from the thread. This can't be undone."
           confirmLabel="Clear"

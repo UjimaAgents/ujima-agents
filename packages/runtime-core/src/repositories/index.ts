@@ -203,10 +203,8 @@ import {
 } from './memory-entries.js';
 import {
   deleteWorkspaceFile as removeWorkspaceFile,
-  listRecentWorkspaceArtifacts as readRecentWorkspaceArtifacts,
   searchWorkspaceFiles as searchWorkspaceFilesByQuery,
   upsertWorkspaceFile as writeWorkspaceFile,
-  type RecentWorkspaceArtifact,
   type WorkspaceFileSearchHit,
 } from './workspace-files.js';
 import {
@@ -782,14 +780,6 @@ export class Repository {
     limit?: number;
     sinceIso?: string;
   }): WorkspaceFileSearchHit[] => searchWorkspaceFilesByQuery(this.db, input);
-  listRecentWorkspaceArtifacts = (input: {
-    organizationId: string;
-    sinceIso?: string;
-    memberId?: string;
-    channelId?: string;
-    limit?: number;
-  }): RecentWorkspaceArtifact[] => readRecentWorkspaceArtifacts(this.db, input);
-
   // Bet 6 — decision log
   appendDecisionLogEntry = (entry: DecisionLogEntry): DecisionLogEntry =>
     writeDecisionLogEntry(this.db, entry);

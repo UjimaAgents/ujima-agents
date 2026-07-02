@@ -20,7 +20,6 @@ export {
 } from './types';
 
 export { AiService } from './ai-service.js';
-export type { GenerateRunReplyInput } from './ai-service.js';
 export { buildMcpToolDefinitionsV2 } from './services/connector-spawn-v2.js';
 export type { SpiritMcpPool } from './services/spirit-types.js';
 export type { McpRuntimeConnection } from './services/mcp-runtime.js';

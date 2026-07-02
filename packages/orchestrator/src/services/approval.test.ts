@@ -358,7 +358,6 @@ describe('ApprovalService', () => {
     const run = { id: 'run-1', threadId: 'thread-1', status: 'waiting_for_approval' };
     const approvals = [makeApproval('ap-status', statusScope), makeApproval('ap-log', logScope)];
     const resolvedIds: string[] = [];
-    const savedRules: { reason: string }[] = [];
     let resumeScope: string | undefined;
     const repo = {
       listPendingApprovals: () => approvals.filter((a) => a.status === 'pending'),
@@ -370,7 +369,6 @@ describe('ApprovalService', () => {
         Object.assign(approval, { status, reason: reason ?? approval.reason, resolvedAt: '2026-05-04T00:01:00.000Z' });
         return approval;
       },
-      saveGovernanceRule: (rule: { reason: string }) => savedRules.push(rule),
       deleteApproval: () => undefined,
     } as never;
 
@@ -389,7 +387,6 @@ describe('ApprovalService', () => {
       resolution: 'allow_once',
     });
     expect(resolvedIds).toEqual(['ap-status']);
-    expect(savedRules).toEqual([]);
     expect(resumeScope).toBe(statusScope);
 
     approvals[0] = makeApproval('ap-status', statusScope);
@@ -403,7 +400,7 @@ describe('ApprovalService', () => {
       resolution: 'allow_always',
     });
     expect(resolvedIds).toEqual(['ap-status']);
-    expect(savedRules.at(-1)?.reason).toBe('grant:always_allow:scope=shell%3A%7B%22cwd%22%3A%22%2Fworkspace%22%2C%22command%22%3A%22git%22%2C%22args%22%3A%5B%22status%22%5D%7D;note=');
+    expect(approvals[0]?.reason).toBe('grant:always_allow:scope=shell%3A%7B%22cwd%22%3A%22%2Fworkspace%22%2C%22command%22%3A%22git%22%2C%22args%22%3A%5B%22status%22%5D%7D;note=');
 
     approvals[0] = makeApproval('ap-status', statusScope);
     approvals[1] = makeApproval('ap-log', logScope);
@@ -415,7 +412,8 @@ describe('ApprovalService', () => {
       resolution: 'allow_family',
     });
     expect(resolvedIds).toEqual(['ap-status', 'ap-log']);
-    expect(savedRules.at(-1)?.reason).toBe('grant:always_allow_family:scope=shell%3A%7B%22cwd%22%3A%22%2Fworkspace%22%2C%22command%22%3A%22git%22%7D;note=');
+    expect(approvals[0]?.reason).toBe('grant:always_allow_family:scope=shell%3A%7B%22cwd%22%3A%22%2Fworkspace%22%2C%22command%22%3A%22git%22%7D;note=');
+    expect(approvals[1]?.reason).toBe('grant:always_allow_family:scope=shell%3A%7B%22cwd%22%3A%22%2Fworkspace%22%2C%22command%22%3A%22git%22%7D;note=');
   });
 
 });

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { isDirectMessageThread, type Message, type ReasoningEffort, type SpiritRole } from "@ujima/shared";
+import { isOneToOneThread, type Message, type ReasoningEffort, type SpiritRole } from "@ujima/shared";
 import { selectLanguageModel } from '@ujima/llm';
 import { normalizeProviderKey, type AgentTeamHandle } from '@ujima/framework';
 import { generateText, tool } from 'ai';
@@ -541,7 +541,7 @@ export function buildToolDefinition(
             organizationId: ctx.organizationId,
             memberId: ctx.memberId,
             repo: ctx.repo,
-            conversationKind: isDirectMessageThread(ctx.threadId) ? 'dm' : 'channel',
+            conversationKind: isOneToOneThread(ctx.threadId) ? 'dm' : 'channel',
           })
         : toolDef.schema;
     return tool({

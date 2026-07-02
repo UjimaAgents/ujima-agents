@@ -1275,7 +1275,7 @@ export function ChannelView({
           </div>
         ) : null}
         {hasBlockingPrompts ? (
-          <div className="shrink-0 px-3 pt-1.5 pb-3">
+          <div className="shrink-0 px-3 pt-1.5 pb-2">
             <div className="space-y-2">
               {stoppableRunIds.length > 0 ? (
                 <div className="flex justify-end">
@@ -1313,35 +1313,34 @@ export function ChannelView({
               ) : null}
             </div>
           </div>
-        ) : (
-          <div className="shrink-0 px-3 pt-1.5 pb-3">
-                <ChatInput
-                organizationId={organizationId}
-                goalMode={goalMode}
-                onGoalModeChange={onGoalModeChange}
-                scheduleMode={scheduleMode}
-                onScheduleModeChange={setScheduleMode}
-                readOnly={isReadOnly}
-                reasoningProvider={reasoningModelSelection?.provider}
-                reasoningModelValue={reasoningModelSelection?.model}
-                reasoningEffort={composerReasoningEffort}
-                onReasoningEffortChange={handleReasoningEffortChange}
-                onCommand={handleComposerCommand}
-              placeholder={
-                isAgent
-                  ? `Message @${conversation.name} or type / for commands`
-                  : `Message #${conversation.name} or @agent · type / for commands`
-              }
-              inlineError={feed.error}
-              mentionSuggestions={mentionSuggestions}
-              replyTo={replyTo}
-              onCancelReply={handleCancelReply}
-              stoppableRunIds={stoppableRunIds}
-              onStopRuns={stopRuns}
-              onSend={handleSend}
-            />
-          </div>
-        )}
+        ) : null}
+        <div className="shrink-0 px-3 pt-1.5 pb-3">
+          <ChatInput
+            organizationId={organizationId}
+            goalMode={goalMode}
+            onGoalModeChange={onGoalModeChange}
+            scheduleMode={scheduleMode}
+            onScheduleModeChange={setScheduleMode}
+            readOnly={isReadOnly}
+            reasoningProvider={reasoningModelSelection?.provider}
+            reasoningModelValue={reasoningModelSelection?.model}
+            reasoningEffort={composerReasoningEffort}
+            onReasoningEffortChange={handleReasoningEffortChange}
+            onCommand={handleComposerCommand}
+            placeholder={
+              isAgent
+                ? `Message @${conversation.name} or type / for commands`
+                : `Message #${conversation.name} or @agent · type / for commands`
+            }
+            inlineError={feed.error}
+            mentionSuggestions={mentionSuggestions}
+            replyTo={replyTo}
+            onCancelReply={handleCancelReply}
+            stoppableRunIds={stoppableRunIds}
+            onStopRuns={stopRuns}
+            onSend={handleSend}
+          />
+        </div>
       </div>
 
       <div

@@ -19,7 +19,11 @@ function createSpiritRunService(
   ai: NonNullable<ConstructorParameters<typeof SpiritService>[4]>['ai'],
   tools: ConstructorParameters<typeof SpiritService>[3],
 ) {
-  return new SpiritService(teamStore, repo, realtime, tools, { conversations, ai });
+  const service = new SpiritService(teamStore, repo, realtime, tools, { conversations, ai });
+  if (ai?.generateRunReply) {
+    service.generateRunReply = ai.generateRunReply as typeof service.generateRunReply;
+  }
+  return service;
 }
 
 describe('SpiritService run path', () => {

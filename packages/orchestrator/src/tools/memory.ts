@@ -11,11 +11,8 @@ const MEMORY_UNAVAILABLE_MESSAGE = 'memory is not available';
  *
  * Two tools — `memory.write` (upsert a fact / preference) and
  * `memory.recall` (look it up later) — backed by the `memory_entries`
- * table. Scoped per-(org, member) by default. The auto-surfaced
- * `<persistent-memory>` block in the workspace-state context (Bet 3)
- * reads from this table, so an agent that writes "user prefers terse
- * replies on Mondays" sees it on the next wake without an explicit
- * recall call.
+ * table. Scoped per-(org, member) by default. Agents read it through
+ * `memory.recall` instead of hidden prompt injection.
  *
  * Key design points:
  *   - The agent owns its own memory. There is no cross-agent global
