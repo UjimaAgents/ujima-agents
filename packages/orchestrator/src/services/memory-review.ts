@@ -12,8 +12,7 @@ import type { AiService } from '../ai-service.js';
  * of our memory infrastructure depends on: agents write memory
  * because they are *prompted* to review it, not because they
  * spontaneously remember to. Without a nudge the `memory_entries`
- * table fills slowly or never; `<persistent-memory>` in the
- * workspace-state block stays empty; Bet 5 carries no payload.
+ * table fills slowly or never.
  *
  * Mechanism:
  *   - After a wake-run completes with a publishing terminator, the

@@ -1,5 +1,5 @@
 import type { ConversationKind, WakeReason } from '@ujima/shared';
-import { isDirectMessageThread, parseDmThreadId } from '@ujima/shared';
+import { isOneToOneThread, parseDmThreadId } from '@ujima/shared';
 
 export interface WakeReplyPolicy {
   conversationKind: ConversationKind;
@@ -56,8 +56,7 @@ export const SCAFFOLD_RULES = Object.freeze({
 const DM_WAKE_SCAFFOLD = [
   SCAFFOLD_RULES.readThreadState,
   'This is a direct message (1:1) thread. Messages from your conversation partner are addressed to you — reply when they ask you to do something or expect a response.',
-  'If the peer is another agent and the conversation has reached a natural stopping point, call channel.close reason "ack" instead of sending a filler reply.',
-  'Do not silently close a human DM because you were not @mentioned; that rule applies to shared channels only.',
+  'Do not silently close a human DM because you were not @mentioned; @mention rules apply to shared channels only.',
   'Use channel.reply to answer in this DM.',
 ].join('\n');
 
@@ -136,7 +135,7 @@ export function resolveWakeReplyPolicy(input: {
    */
   dmPeerIsAgent?: boolean;
 }): WakeReplyPolicy {
-  const conversationKind: ConversationKind = isDirectMessageThread(input.threadId) ? 'dm' : 'channel';
+  const conversationKind: ConversationKind = isOneToOneThread(input.threadId) ? 'dm' : 'channel';
   const mandatoryReply = input.wakeReason === 'mention';
   const isAgentDm = conversationKind === 'dm' && input.dmPeerIsAgent === true;
   const suppressPassTool =

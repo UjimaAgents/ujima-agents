@@ -16,6 +16,8 @@ export {
   normalizeToDottedToolName,
   normalizeStepTokenUsage,
   normalizeTokenUsage,
+  normalizedToolCalls,
+  normalizedToolResults,
   runAgentLoop,
   sanitizeModelMessages,
   stepHasFinalText,

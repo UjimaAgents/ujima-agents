@@ -1,5 +1,5 @@
 import type { Member, Message, WakeReason } from '@ujima/shared';
-import { AGENT_KIND, isDirectMessageThread } from '@ujima/shared';
+import { AGENT_KIND, isOneToOneThread } from '@ujima/shared';
 
 /**
  * Factual thread-state block injected into wake-triggered runs.
@@ -90,7 +90,7 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
     : [];
 
   const selfName = input.currentMember.name ?? input.currentMember.id;
-  const isDmThread = isDirectMessageThread(input.threadId);
+  const isDmThread = isOneToOneThread(input.threadId);
   const isChannelReadWake = input.wakeReason === 'channel-read';
 
   const selfAddressedExplicit = sourceMessage

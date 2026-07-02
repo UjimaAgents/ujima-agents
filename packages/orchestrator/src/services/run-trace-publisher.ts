@@ -1,17 +1,17 @@
 import { type MessageToolCall, type RunState } from '@ujima/shared';
-import type { AiService } from '../ai-service.js';
 import type { ConversationService, PublishMessageOptions } from './conversation.js';
 import { appendArtifactFileToolCall, buildArtifactFileMessage } from './artifact-file-card.js';
 import { buildAgentMessage } from './message-factory.js';
 import type { ApiRepository } from './repository-reader.js';
 import { findTerminatingTool, findTerminatingToolFromRunSteps, normalizeToDottedToolName } from './run-reply-guard.js';
+import type { runAgentLoop } from './agent-loop.js';
 import { stepPausesRun } from './agent-loop.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
 import { composedStepToolCalls, prepareAgentStepPublication } from './agent-step-publish.js';
 
 export { normalizeRunStepToolCalls } from '../utils/step-tool-calls.js';
 
-export type RunReplyResult = Awaited<ReturnType<AiService['generateRunReply']>>;
+export type RunReplyResult = Awaited<ReturnType<typeof runAgentLoop>>;
 export interface StreamedRunTrace {
   text: string;
   reasoning: string;

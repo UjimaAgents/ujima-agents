@@ -18,13 +18,39 @@ export interface AgentLoopStep {
   text?: string;
   toolCalls?: { toolCallId?: string; toolName?: string; input?: unknown; providerExecuted?: boolean }[];
   toolResults?: { toolCallId?: string; output?: unknown; result?: unknown }[];
+  /** @internal SDK-provided static tool calls — use `normalizedToolCalls()` instead. */
   staticToolCalls?: { toolName?: string; providerExecuted?: boolean }[];
+  /** @internal SDK-provided dynamic tool calls — use `normalizedToolCalls()` instead. */
   dynamicToolCalls?: { toolName?: string; providerExecuted?: boolean }[];
+  /** @internal SDK-provided static tool results — use `normalizedToolResults()` instead. */
   staticToolResults?: { toolName?: string; output?: unknown; result?: unknown }[];
+  /** @internal SDK-provided dynamic tool results — use `normalizedToolResults()` instead. */
   dynamicToolResults?: { toolName?: string; output?: unknown; result?: unknown }[];
+  /** @internal SDK-provided step content — use `normalizedToolCalls()` / `normalizedToolResults()` instead. */
   content?: { type?: string; text?: string; toolName?: string; output?: unknown; result?: unknown; providerExecuted?: boolean }[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   [key: string]: unknown;
+}
+
+export function normalizedToolCalls(
+  step: AgentLoopStep,
+): { toolCallId?: string; toolName?: string; input?: unknown; providerExecuted?: boolean }[] {
+  return [
+    ...(step.toolCalls ?? []),
+    ...(step.staticToolCalls ?? []).map((c) => ({ toolName: c.toolName, providerExecuted: c.providerExecuted })),
+    ...(step.dynamicToolCalls ?? []).map((c) => ({ toolName: c.toolName, providerExecuted: c.providerExecuted })),
+  ];
+}
+
+export function normalizedToolResults(
+  step: AgentLoopStep,
+): { toolCallId?: string; toolName?: string; output?: unknown; result?: unknown }[] {
+  return [
+    ...(step.toolResults ?? []),
+    ...(step.staticToolResults ?? []),
+    ...(step.dynamicToolResults ?? []),
+    ...(step.content ?? []).filter((c) => c.type === 'tool-result').map((c) => ({ output: c.output, result: c.result, toolCallId: undefined, toolName: c.toolName })),
+  ];
 }
 
 export interface AgentLoopChunk {
@@ -157,12 +183,7 @@ function classifyApiError(error: unknown): Error | null {
 }
 
 function stepToolResultItems(step: AgentLoopStep): { output?: unknown; result?: unknown }[] {
-  return [
-    ...(step.toolResults ?? []),
-    ...(step.staticToolResults ?? []),
-    ...(step.dynamicToolResults ?? []),
-    ...(step.content ?? []),
-  ];
+  return normalizedToolResults(step);
 }
 
 function toolResultPayload(result: { output?: unknown; result?: unknown }): unknown {
@@ -225,19 +246,11 @@ export function mergeInterruptMessages(
 }
 
 export function stepTerminatesRun(step: AgentLoopStep): boolean {
-  const items = [
-    ...(step.toolCalls ?? []),
-    ...(step.toolResults ?? []),
-    ...(step.staticToolCalls ?? []),
-    ...(step.dynamicToolCalls ?? []),
-    ...(step.staticToolResults ?? []),
-    ...(step.dynamicToolResults ?? []),
-    ...(step.content ?? []),
-  ];
-  for (const item of items) {
-    const record = item as { toolName?: string; output?: unknown };
-    if (RUN_TERMINATING_TOOL_NAMES.has(normalizeToDottedToolName(record.toolName ?? ''))) return true;
-    const output = toolResultPayload(record) as { status?: unknown } | undefined;
+  for (const item of normalizedToolCalls(step)) {
+    if (RUN_TERMINATING_TOOL_NAMES.has(normalizeToDottedToolName(item.toolName ?? ''))) return true;
+  }
+  for (const item of normalizedToolResults(step)) {
+    const output = toolResultPayload(item) as { status?: unknown } | undefined;
     if (
       output?.status === 'passed' ||
       output?.status === 'acked' ||
@@ -261,16 +274,7 @@ export function stepHasFinalText(step: AgentLoopStep): boolean {
 }
 
 function stepHasPendingToolCall(step: AgentLoopStep): boolean {
-  const calls = [
-    ...(step.toolCalls ?? []),
-    ...(step.staticToolCalls ?? []),
-    ...(step.dynamicToolCalls ?? []),
-  ];
-  if (calls.some((item) => (item as { providerExecuted?: boolean }).providerExecuted !== true)) return true;
-  return (step.content ?? []).some((item) => {
-    const record = item as { type?: string; providerExecuted?: boolean };
-    return record.type === 'tool-call' && record.providerExecuted !== true;
-  });
+  return normalizedToolCalls(step).some((item) => item.providerExecuted !== true);
 }
 
 export async function runAgentLoop(input: {

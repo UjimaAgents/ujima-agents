@@ -115,7 +115,7 @@ export class SpiritService extends SpiritServiceSupervisor {
       ...afterApprovedTools,
       status: 'running',
       step: 'running',
-      summary: 'Run resumed after approval',
+      summary: afterApprovedTools.summary,
     });
   }
 
@@ -492,16 +492,11 @@ export class SpiritService extends SpiritServiceSupervisor {
         threadId: run.threadId ?? '',
         wakeReason: run.wakeReason,
       });
-      const ai = this.ai;
-      if (!ai) {
-        throw new Error('Run execution is not wired into SpiritService');
-      }
-      const result = await ai.generateRunReply({
+      const result = await this.generateRunReply({
         organizationId: run.organizationId,
         agentId: run.agentId,
         threadId: run.threadId ?? '',
         runId: run.id,
-        summary: run.summary,
         systemPromptSuffix,
         abortSignal: abortController.signal,
         detectExternalPause: () => this.detectRunPauseForHuman(run.organizationId, run.id),
@@ -639,6 +634,12 @@ export class SpiritService extends SpiritServiceSupervisor {
         (await appendArtifactFileFromRunSteps(this.repo, run, team.workspace.root));
       const turnSnapshot = turn.snapshot();
       if (statuses.includes('waiting_for_approval')) {
+        turn.backfillTokens({
+          finalText: text,
+          lastText: turn.lastContentValue,
+          terminatingTool: null,
+          usage,
+        });
         return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
 
@@ -646,6 +647,12 @@ export class SpiritService extends SpiritServiceSupervisor {
         .listPendingApprovals(run.organizationId)
         .some((approval) => approval.runId === run.id);
       if (pendingApprovalExists) {
+        turn.backfillTokens({
+          finalText: text,
+          lastText: turn.lastContentValue,
+          terminatingTool: null,
+          usage,
+        });
         return this.waitForApproval(running, pendingApprovalRunSummary(this.repo, running.organizationId, running.id));
       }
 

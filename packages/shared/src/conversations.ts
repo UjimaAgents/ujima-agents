@@ -17,6 +17,14 @@ export function isDirectMessageThread(threadId: string | undefined): boolean {
   return !!threadId?.startsWith('dm:');
 }
 
+export function isPrivateTaskThread(threadId: string | undefined): boolean {
+  return !!threadId?.startsWith('task:') && threadId.endsWith(':p');
+}
+
+export function isOneToOneThread(threadId: string | undefined): boolean {
+  return isDirectMessageThread(threadId) || isPrivateTaskThread(threadId);
+}
+
 export interface DmThreadParticipants {
   participantA: string;
   participantB: string;

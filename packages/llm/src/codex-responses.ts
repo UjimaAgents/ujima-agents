@@ -120,7 +120,7 @@ async function requestWithFreshPool(
 ): Promise<Response> {
   let socket: WebSocket | null = null;
   const itemCache = getSessionCache(sessionId);
-  const prepared = await prepareRequest(request, withAuthHeaders(init, bearer, accountId, sessionId), itemCache);
+  const prepared = await prepareRequest(request, withAuthHeaders(init, bearer, accountId, sessionId));
   return fetchCodex(prepared.request, prepared.init, {
     getSocket: () => socket,
     setSocket: (next) => { socket = next; },
@@ -367,62 +367,27 @@ function objectMessage(value: unknown): string | undefined {
 async function prepareRequest(
   request: Parameters<typeof fetch>[0],
   init: Parameters<typeof fetch>[1],
-  itemCache: ItemCache,
 ): Promise<{ request: Parameters<typeof fetch>[0]; init: Parameters<typeof fetch>[1] }> {
   if (typeof init?.body === 'string') {
-    return { request, init: { ...init, body: rewriteBody(init.body, itemCache) } };
+    return { request, init: { ...init, body: rewriteBody(init.body) } };
   }
   if (!(request instanceof Request) || init?.body) return { request, init };
 
   const body = await request.clone().text();
   if (!body.trim().startsWith('{')) return { request, init };
-  return { request: new Request(request, { body: rewriteBody(body, itemCache) }), init };
+  return { request: new Request(request, { body: rewriteBody(body) }), init };
 }
 
-function rewriteBody(body: string, itemCache: ItemCache): string {
+function rewriteBody(body: string): string {
   try {
-    const json = replaceItemReferences(JSON.parse(body), itemCache) as {
+    const json = JSON.parse(body) as {
       max_output_tokens?: unknown;
-      previous_response_id?: unknown;
-      input?: unknown;
-      store?: unknown;
     };
-    json.store = false;
     delete json.max_output_tokens;
     return JSON.stringify(json);
   } catch {
     return body;
   }
-}
-
-function replaceItemReferences(value: unknown, itemCache: ItemCache): unknown {
-  if (Array.isArray(value)) return value.map((item) => replaceItemReferences(item, itemCache));
-  if (!value || typeof value !== 'object') return value;
-
-  const record = value as Record<string, unknown>;
-  if (record.type === 'item_reference' && typeof record.id === 'string') {
-    const cached = itemCache.get(record.id);
-    if (cached) return stripItemId(cached);
-  }
-
-  const next: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(record)) {
-    next[key] = replaceItemReferences(entry, itemCache);
-  }
-  return next;
-}
-
-function stripItemId(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripItemId);
-  if (!value || typeof value !== 'object') return value;
-
-  const record = value as Record<string, unknown>;
-  const next: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(record)) {
-    if (key === 'id') continue;
-    next[key] = stripItemId(entry);
-  }
-  return next;
 }
 
 function rememberCachedItems(value: unknown, itemCache: ItemCache): void {

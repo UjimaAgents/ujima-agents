@@ -338,6 +338,31 @@ export async function buildMcpToolDefinitionsV2(
         inputSchema: mcpToolInputSchema(entry.inputSchema),
         execute: async (rawArgs, { toolCallId }) => {
           const args = (rawArgs ?? {}) as Record<string, unknown>;
+          const invokeMeta: Parameters<typeof services.tools.invoke>[0] = {
+            organizationId: ctx.organizationId,
+            runId: ctx.runId,
+            memberId: ctx.memberId,
+            threadId: ctx.threadId,
+            taskSessionId: ctx.taskSessionId,
+            spiritRole: ctx.role,
+            toolCallId,
+            toolId: 'mcp',
+            action: 'mcp',
+            resourceType: 'mcp',
+            resourcePath: `${entry.serverId}:${entry.toolName}`,
+            permissionMcpId: entry.serverId,
+            permissionToolName: mcpPermissionToolName(
+              entry.serverId,
+              entry.toolName,
+            ),
+            input: {
+              mcpServerId: entry.serverId,
+              mcpServerName: entry.serverName,
+              toolName: entry.toolName,
+              args,
+            },
+          };
+
           // §12 mirror of the dispatch-tier emission shape in
           // connector-meta-tools.ts. Native tools route through the
           // same ToolService.invoke gate so the result branches
@@ -356,30 +381,7 @@ export async function buildMcpToolDefinitionsV2(
           });
           let result: Awaited<ReturnType<typeof services.tools.invoke>>;
           try {
-            result = await services.tools.invoke({
-              organizationId: ctx.organizationId,
-              runId: ctx.runId,
-              memberId: ctx.memberId,
-              threadId: ctx.threadId,
-              taskSessionId: ctx.taskSessionId,
-              spiritRole: ctx.role,
-              toolCallId,
-              toolId: 'mcp',
-              action: 'mcp',
-              resourceType: 'mcp',
-              resourcePath: `${entry.serverId}:${entry.toolName}`,
-              permissionMcpId: entry.serverId,
-              permissionToolName: mcpPermissionToolName(
-                entry.serverId,
-                entry.toolName,
-              ),
-              input: {
-                mcpServerId: entry.serverId,
-                mcpServerName: entry.serverName,
-                toolName: entry.toolName,
-                args,
-              },
-            });
+            result = await services.tools.invoke(invokeMeta);
           } catch (error) {
             audit.invocationCompleted({
               organizationId: ctx.organizationId,
