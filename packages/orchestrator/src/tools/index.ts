@@ -1,6 +1,7 @@
 import type { OrchestratorTool } from './types.js';
 import {
   channelAckTool,
+  channelCloseTool,
   channelDmTool,
   channelHandoffTool,
   channelListTool,
@@ -41,6 +42,7 @@ import { SUPERVISOR_TOOL_ALLOWLIST } from '@ujima/shared';
 export const ORCHESTRATOR_TOOLS = {
   'channel.post': channelPostTool,
   'channel.reply': channelReplyTool,
+  'channel.close': channelCloseTool,
   'channel.dm': channelDmTool,
   'channel.list': channelListTool,
   'channel.read': channelReadTool,
@@ -83,6 +85,8 @@ export {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   DEPRECATED_TOOL_ALIASES,
   filterDeprecatedToolIds,
+  listCustomRoleToolIds,
+  listEffectiveAgentToolIds,
   REMOVED_TOOL_IDS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from '@ujima/shared';

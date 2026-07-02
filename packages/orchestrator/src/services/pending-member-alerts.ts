@@ -1,7 +1,7 @@
 import type { RunState, WakeReason } from '@ujima/shared';
 import { clearRunInterruptCursor, getRunInterruptCursor } from '../utils/interrupt-run-state.js';
 
-export interface PendingMemberAlert {
+export interface PendingThreadAlert {
   organizationId: string;
   memberId: string;
   threadId: string;
@@ -13,26 +13,25 @@ export interface PendingMemberAlert {
   wakeReason: WakeReason;
 }
 
-const pendingByThread = new Map<string, PendingMemberAlert[]>();
+const pendingByThread = new Map<string, PendingThreadAlert[]>();
 
-function pendingKey(organizationId: string, memberId: string, threadId: string): string {
-  return `${organizationId}:${memberId}:${threadId}`;
+function pendingKey(organizationId: string, threadId: string): string {
+  return `${organizationId}:${threadId}`;
 }
 
-export function enqueuePendingMemberAlert(alert: PendingMemberAlert): void {
-  const key = pendingKey(alert.organizationId, alert.memberId, alert.threadId);
+export function enqueuePendingThreadAlert(alert: PendingThreadAlert): void {
+  const key = pendingKey(alert.organizationId, alert.threadId);
   const queue = pendingByThread.get(key) ?? [];
-  if (queue.some((pending) => pending.messageId === alert.messageId)) return;
+  if (queue.some((pending) => pending.memberId === alert.memberId && pending.messageId === alert.messageId)) return;
   queue.push(alert);
   pendingByThread.set(key, queue);
 }
 
-export function takePendingMemberAlert(
+export function takePendingThreadAlert(
   organizationId: string,
-  memberId: string,
   threadId: string,
-): PendingMemberAlert | undefined {
-  const key = pendingKey(organizationId, memberId, threadId);
+): PendingThreadAlert | undefined {
+  const key = pendingKey(organizationId, threadId);
   const queue = pendingByThread.get(key);
   if (!queue?.length) return undefined;
   const mentionIndex = queue.findIndex((pending) => pending.wakeReason === 'mention');
@@ -46,12 +45,11 @@ export function takePendingMemberAlert(
   return pending;
 }
 
-export function clearPendingMemberAlerts(
+export function clearPendingThreadAlerts(
   organizationId: string,
-  memberId: string,
   threadId: string,
 ): void {
-  pendingByThread.delete(pendingKey(organizationId, memberId, threadId));
+  pendingByThread.delete(pendingKey(organizationId, threadId));
 }
 
 const DRAINABLE_RUN_STATUSES = new Set<RunState['status']>([
@@ -61,12 +59,12 @@ const DRAINABLE_RUN_STATUSES = new Set<RunState['status']>([
   'waiting_for_input',
 ]);
 
-export async function drainPendingMemberAlertAfterRun(
+export async function drainPendingThreadAlertAfterRun(
   run: RunState,
-  wake: (input: PendingMemberAlert) => Promise<void>,
+  wake: (input: PendingThreadAlert) => Promise<void>,
 ): Promise<void> {
   if (run.status === 'cancelled') {
-    if (run.threadId) clearPendingMemberAlerts(run.organizationId, run.agentId, run.threadId);
+    if (run.threadId) clearPendingThreadAlerts(run.organizationId, run.threadId);
     clearRunInterruptCursor(run.id);
     return;
   }
@@ -77,7 +75,7 @@ export async function drainPendingMemberAlertAfterRun(
   const cursor = getRunInterruptCursor(run.id);
   try {
     while (true) {
-      const pending = takePendingMemberAlert(run.organizationId, run.agentId, run.threadId);
+      const pending = takePendingThreadAlert(run.organizationId, run.threadId);
       if (!pending) return;
       if (cursor && pending.messageCreatedAt) {
         const isAfterCursor =
@@ -93,7 +91,7 @@ export async function drainPendingMemberAlertAfterRun(
       queueMicrotask(() => {
         void wake(pending).catch((error) => {
           console.error(
-            'pending-member-alert successor failed',
+            'pending-thread-alert successor failed',
             error instanceof Error ? error.stack ?? error.message : String(error),
           );
         });
@@ -105,16 +103,16 @@ export async function drainPendingMemberAlertAfterRun(
   }
 }
 
-export function hasPendingMemberAlert(
+export function hasPendingThreadAlert(
   organizationId: string,
   memberId: string,
   threadId: string,
   messageId: string,
 ): boolean {
-  const key = pendingKey(organizationId, memberId, threadId);
-  return pendingByThread.get(key)?.some((pending) => pending.messageId === messageId) ?? false;
+  const key = pendingKey(organizationId, threadId);
+  return pendingByThread.get(key)?.some((pending) => pending.memberId === memberId && pending.messageId === messageId) ?? false;
 }
 
-export function clearPendingMemberAlertsForTests(): void {
+export function clearPendingThreadAlertsForTests(): void {
   pendingByThread.clear();
 }

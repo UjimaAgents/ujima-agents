@@ -15,7 +15,7 @@ import {
 import Link from "next/link";
 import { Avatar, RunningFigureIndicator } from "./chat/primitives";
 import type { BootstrapResponse } from "@ujima/api-schema";
-import { filterDeprecatedToolIds, slugifyMemberId } from "@ujima/shared";
+import { listCustomRoleToolIds, slugifyMemberId } from "@ujima/shared";
 import type { CreateAgentHandler, UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo, useEffect, useRef, memo, useCallback } from "react";
@@ -68,10 +68,7 @@ export interface WorkspaceSidebarProps {
       channels: string[];
       skills: string[];
     }[];
-    // Full org tool catalog (id → capability). Source for the
-    // agent-editor's tool chip picker so opt-in baseline tools
-    // (shell, download, filesystem, etc.) are selectable without
-    // typing the id into the CSV freeform input.
+    // Full org tool catalog (id → capability).
     tools?: Record<string, { id: string; name?: string; description?: string }>;
   } | null;
   goalMode: boolean;
@@ -179,7 +176,7 @@ export function buildAgentEditorDraft({
     description: role?.description ?? "",
     instructions: role?.instructions ?? "",
     workspaceScopes: role?.workspaceScopes ?? [],
-    tools: filterDeprecatedToolIds(role?.tools ?? []),
+    tools: listCustomRoleToolIds(role?.tools ?? []),
     channels: (role?.channels ?? ["general"])
       .map((channelName) => channels.find((channel) => channel.name === channelName)?.id)
       .filter((id): id is string => Boolean(id)),

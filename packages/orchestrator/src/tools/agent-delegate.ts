@@ -6,30 +6,28 @@ const DELEGATE_ACTIONS = ['spawn', 'status', 'wait', 'stop', 'read', 'send'] as 
 const DelegateKindSchema = z.enum(DELEGATE_KINDS);
 
 const AgentDelegateSchema = z.object({
-  kind: DelegateKindSchema.default('worker').describe('worker: edit/write tasks. explorer: read-only investigation.'),
+  kind: DelegateKindSchema.default('worker').describe('Use with spawn. worker = edit/write tasks. explorer = read-only investigation.'),
   action: z.enum(DELEGATE_ACTIONS).default('spawn').describe(
-    'spawn: run delegate tasks and wait for child results. status: check one by id. wait: block for results. stop: cancel. read: pull thread messages. send: follow-up DM.',
+    'spawn creates a new delegate. status checks one delegate_id. wait blocks on delegate_ids. stop cancels one delegate_id. read pulls thread messages. send follows up one delegate_id.',
   ),
-  to: z.string().min(1).optional().describe('Target agent name or id. When omitted or no agent matches, a temporary agent is created on-the-fly with a name derived from the `name` field or the `message`.'),
-  name: z.string().min(1).max(60).optional().describe('Name for a temporary (ephemeral) delegate agent. Used when `to` does not match an existing agent. Auto-generated from the first 60 chars of `message` if omitted.'),
-  message: z.string().min(1).optional().describe('Task message (spawn / send).'),
+  to: z.string().min(1).optional().describe('Target agent name or id for spawn. Must match an active agent and cannot be yourself.'),
+  message: z.string().min(1).optional().describe('Task message for spawn or send.'),
   delegates: z.array(z.object({
-    to: z.string().min(1).optional().describe('Target agent name or id. When omitted or no agent matches, a temporary agent is created.'),
-    name: z.string().min(1).max(60).optional().describe('Name for the temp agent. Auto-generated from message if omitted.'),
-    message: z.string().min(1).describe('Task message.'),
-    kind: DelegateKindSchema.optional().describe('worker: edit/write tasks. explorer: read-only investigation.'),
-  })).optional().describe('Multiple delegate tasks. Each entry returns its own delegate id and result. Same-agent tasks run serially.'),
-  delegate_id: z.string().optional().describe('Delegate message id (status / wait / stop / read / send).'),
-  delegate_ids: z.array(z.string()).optional().describe('Multiple delegate ids (wait).'),
-  timeout_ms: z.number().positive().optional().describe('Max wait time in ms (default 120s).'),
+    to: z.string().min(1).describe('Target agent name or id for spawn. Must match an active agent and cannot be yourself.'),
+    message: z.string().min(1).describe('Task message for that spawned delegate.'),
+    kind: DelegateKindSchema.optional().describe('Use only for spawn. worker = edit/write tasks. explorer = read-only investigation.'),
+  })).optional().describe('Batch spawn only. Each entry returns its own delegate id and result. Same-agent tasks run serially.'),
+  delegate_id: z.string().optional().describe('Single delegate id for status, stop, read, or send.'),
+  delegate_ids: z.array(z.string()).optional().describe('Delegate ids for wait.'),
+  timeout_ms: z.number().positive().optional().describe('Wait timeout in ms. Default 120s.'),
 });
 
 type AgentDelegateArgs = z.infer<typeof AgentDelegateSchema>;
 
-function normalizeSpawnArgs(args: AgentDelegateArgs): { to?: string; message: string; kind?: DelegateKind; name?: string }[] {
+function normalizeSpawnArgs(args: AgentDelegateArgs): { to: string; message: string; kind?: DelegateKind }[] {
   if (args.delegates && args.delegates.length > 0) return args.delegates;
-  if (args.message) return [{ to: args.to, message: args.message, kind: args.kind, name: args.name }];
-  throw new Error('spawn action requires a message (and optionally a target agent name).');
+  if (args.message && args.to) return [{ to: args.to, message: args.message, kind: args.kind }];
+  throw new Error('spawn action requires a target agent and message.');
 }
 
 function requireDelegateId(args: AgentDelegateArgs): string {
@@ -80,7 +78,6 @@ async function executeDelegate(ctx: ToolExecutionContext, args: AgentDelegateArg
           organizationId: orgId,
           fromMemberId: ctx.invocation.memberId,
           to: task.to,
-          name: task.name,
           message: task.message,
           kind: task.kind ?? args.kind,
           index,

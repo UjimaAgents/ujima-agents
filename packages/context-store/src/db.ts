@@ -90,7 +90,12 @@ function resolveDatabaseConstructor(): SqliteDatabaseCtor {
   }
 }
 
-const MIGRATIONS: {id: string; up: string}[] = [
+interface Migration {
+  id: string;
+  up: string | ((db: DbHandle) => void);
+}
+
+const MIGRATIONS: Migration[] = [
   {
     id: "001_initial",
     up: `
@@ -1646,6 +1651,22 @@ const MIGRATIONS: {id: string; up: string}[] = [
         ON self_improvement_reviews(organization_id, run_id);
     `,
   },
+  {
+    id: '055_message_tool_simplification',
+    up: migrateStoredTeamConfigTools,
+  },
+  {
+    id: "056_role_tool_storage_simplification",
+    up: migrateStoredTeamConfigTools,
+  },
+  {
+    id: "057_strip_baseline_role_tools",
+    up: migrateStoredTeamConfigTools,
+  },
+  {
+    id: "058_strip_all_baseline_role_tools",
+    up: migrateStoredTeamConfigTools,
+  },
 ];
 
 export interface DbOptions {
@@ -1762,7 +1783,11 @@ function runMigrations(db: DbHandle): void {
     }
     db.exec("BEGIN");
     try {
-      db.exec(m.up);
+      if (typeof m.up === "string") {
+        db.exec(m.up);
+      } else {
+        m.up(db);
+      }
       insert.run(m.id, Date.now());
       db.exec("COMMIT");
     } catch (err) {
@@ -1788,4 +1813,94 @@ function hasTable(db: DbHandle, table: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(table) as {name?: unknown} | undefined;
   return row?.name === table;
+}
+
+const TOOL_ID_REWRITES: Record<string, string | null> = {
+  "channel.pass": "channel.close",
+  "channel.ack": "channel.close",
+  "channel.post": null,
+  "channel.dm": null,
+  "channel.handoff": null,
+  message: null,
+};
+
+const BASELINE_AGENT_TOOL_IDS = new Set([
+  "procedure",
+  "channel.close",
+  "channel.reply",
+  "channel.recall",
+  "channel.read",
+  "channel.list",
+  "channel.set_member_mode",
+  "view",
+  "ls",
+  "glob",
+  "grep",
+  "write",
+  "edit",
+  "multiedit",
+  "shell",
+  "download",
+  "fetch",
+  "web_search",
+  "goal.start",
+  "goal.task.update",
+  "question.ask",
+  "memory.write",
+  "memory.recall",
+  "memory.forget",
+  "schedule",
+  "agent.delegate",
+  "skill.read",
+  "mcp",
+]);
+
+function rewriteToolList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const tools = value
+    .filter((tool): tool is string => typeof tool === "string")
+    .map((tool) => (tool in TOOL_ID_REWRITES ? TOOL_ID_REWRITES[tool] : tool))
+    .filter((tool): tool is string => typeof tool === "string" && tool.length > 0)
+    .filter((tool) => !BASELINE_AGENT_TOOL_IDS.has(tool));
+  return [...new Set(tools)];
+}
+
+function migrateStoredTeamConfigTools(db: DbHandle): void {
+  if (!hasTable(db, "workspace_settings")) return;
+  const rows = db
+    .prepare("SELECT organization_id, value FROM workspace_settings WHERE key = ?")
+    .all("team.config") as {organization_id: string; value: string}[];
+  const update = db.prepare(
+    "UPDATE workspace_settings SET value = ?, updated_at = ? WHERE organization_id = ? AND key = ?",
+  );
+  const updatedAt = new Date().toISOString();
+
+  for (const row of rows) {
+    let config: unknown;
+    try {
+      config = JSON.parse(row.value);
+    } catch {
+      continue;
+    }
+    if (!config || typeof config !== "object") continue;
+    const record = config as Record<string, unknown>;
+    const roles = Array.isArray(record.roles)
+      ? record.roles.map((role) => {
+          if (!role || typeof role !== "object") return role;
+          return {
+            ...(role as Record<string, unknown>),
+            tools: rewriteToolList((role as Record<string, unknown>).tools),
+          };
+        })
+      : record.roles;
+    const tools =
+      record.tools && typeof record.tools === "object" && !Array.isArray(record.tools)
+        ? Object.fromEntries(
+            Object.entries(record.tools as Record<string, unknown>)
+              .map(([tool, value]) => [tool in TOOL_ID_REWRITES ? TOOL_ID_REWRITES[tool] : tool, value] as const)
+              .filter((entry): entry is readonly [string, unknown] => typeof entry[0] === "string"),
+          )
+        : record.tools;
+    update.run(JSON.stringify({ ...record, roles, tools }), updatedAt, row.organization_id, "team.config");
+  }
 }

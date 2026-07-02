@@ -8,7 +8,7 @@ import {
   type AgentTeamHandle,
   type RoleConfig,
 } from '@ujima/framework';
-import { AGENT_KIND } from '@ujima/shared';
+import { AGENT_KIND, listCustomRoleToolIds } from '@ujima/shared';
 import { isPathInsideRoot } from '@ujima/shared/workspace';
 import { resolve } from 'node:path';
 import type { ApiRepository } from './repository-reader.js';
@@ -53,12 +53,12 @@ function normalizeRoleProvider(role: RoleConfig, baseRole: RoleConfig | undefine
   };
 }
 
-function normalizeRoleTools(role: RoleConfig, baseRole: RoleConfig | undefined, team: AgentTeamHandle | undefined): RoleConfig {
+function normalizeRoleTools(role: RoleConfig, team: AgentTeamHandle | undefined): RoleConfig {
   if (!team) return role;
-  const tools = role.tools.filter((tool) => team.tools[tool]);
+  const tools = listCustomRoleToolIds(role.tools).filter((tool) => team.tools[tool]);
   return {
     ...role,
-    tools: tools.length > 0 ? tools : (baseRole?.tools ?? role.tools),
+    tools,
   };
 }
 
@@ -87,7 +87,6 @@ function readOverrides(
                 baseRole,
                 team,
               ),
-              baseRole,
               team,
             ),
             workspaceRoot ?? '.',

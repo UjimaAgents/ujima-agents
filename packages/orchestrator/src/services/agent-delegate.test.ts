@@ -4,10 +4,10 @@ import { runAgentDelegateTurn } from './index.js';
 import { agentDelegateTool } from '../tools/agent-delegate.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
-import { clearPendingMemberAlertsForTests } from './pending-member-alerts.js';
+import { clearPendingThreadAlertsForTests } from './pending-member-alerts.js';
 
 beforeEach(() => {
-  clearPendingMemberAlertsForTests();
+  clearPendingThreadAlertsForTests();
 });
 
 const orgId = 'org-1';
@@ -72,8 +72,6 @@ function repoFixture(
     startedAt: '2026-05-31T10:00:00.000Z',
   } as RunState;
   // The delegate run is correlated to the delegate by agentId + sourceMessageId.
-  // For named targets that's agent-2; for temp agents it's the random id minted
-  // in saveMember, so track it dynamically and build the default run from it.
   let delegateTargetId = target.id;
   const finishedRuns = (): RunState[] =>
     options.runs ?? ([{
@@ -269,59 +267,25 @@ describe('agent delegation', () => {
     }));
   });
 
-  it('creates and retires a temp agent after the child task is terminal', async () => {
-    const { repo, conversations, createRun } = repoFixture();
-    const wakeMember = vi.fn();
-
-    const result = await runAgentDelegateTurn({
-      repo: repo as unknown as ApiRepository,
-      conversations: conversations as unknown as ConversationService,
-      wakeMember,
-      createRun,
-      organizationId: orgId,
-      fromMemberId: caller.id,
-      message: '   ',
-      runId: 'run-1',
-    });
-
-    expect(result).toMatchObject({
-      status: 'no_reply',
-      agent: 'Delegate',
-    });
-    expect(repo.saveMember).toHaveBeenCalledTimes(2);
-    expect(repo.saveMember).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        name: 'Delegate',
-        roleName: '@delegate/worker',
-      }),
-    );
-    expect(repo.saveMember).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        retiredAt: expect.any(String),
-      }),
-    );
-    expect(wakeMember).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not retire a temp agent immediately for non-blocking dispatch', async () => {
+  it('requires an existing target agent', async () => {
     const { repo, conversations, createRun } = repoFixture();
 
-    const result = await runAgentDelegateTurn({
-      repo: repo as unknown as ApiRepository,
-      conversations: conversations as unknown as ConversationService,
-      wakeMember: vi.fn(),
-      createRun,
-      organizationId: orgId,
-      fromMemberId: caller.id,
-      message: 'check this later',
-      runId: 'run-1',
-      mode: 'non_blocking',
-    });
+    await expect(
+      runAgentDelegateTurn({
+        repo: repo as unknown as ApiRepository,
+        conversations: conversations as unknown as ConversationService,
+        wakeMember: vi.fn(),
+        createRun,
+        organizationId: orgId,
+        fromMemberId: caller.id,
+        message: 'check this later',
+        runId: 'run-1',
+        mode: 'non_blocking',
+      }),
+    ).rejects.toThrow(/target is required/i);
 
-    expect(result.status).toBe('dispatched');
-    expect(repo.saveMember).toHaveBeenCalledTimes(1);
+    expect(repo.saveMember).not.toHaveBeenCalled();
+    expect(conversations.sendDirectMessage).not.toHaveBeenCalled();
   });
 
   it('rejects self-delegation', async () => {

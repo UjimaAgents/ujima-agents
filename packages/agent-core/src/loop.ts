@@ -3,6 +3,7 @@ import { streamText, type AssistantContent, type LanguageModel, type ModelMessag
 export const RUN_TERMINATING_TOOL_NAMES = new Set([
   'message',
   'channel.reply',
+  'channel.close',
   'channel.post',
   'channel.handoff',
   'channel.ack',

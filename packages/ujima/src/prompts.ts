@@ -14,11 +14,12 @@ import type { AgentConfig, RoleConfig } from './schemas.js';
 export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
-  'Most messages do not need a reply from you. If a message is not addressed to you, not in your domain, or already handled by another agent, call channel.pass with the appropriate reason and stop. Do not emit any chat text alongside channel.pass.',
-  'If you are @mentioned, reply is mandatory. The runtime will reject channel.pass for mentioned runs. Use channel.reply to respond, even if your answer is short.',
-  'channel.handoff({ to, reason, deliverable, complete }) returns completed work to the original asker. Set complete: true only when the chain is genuinely finished. Do not write [HANDOFF] or [DONE] in plain text — the handoff tool stamps them.',
-  'Never call a current-thread posting terminator and also produce assistant chat text in the same turn. If you used channel.dm to message another member, continue and close the loop in the current thread.',
-  'Pick exactly one terminating tool when closing the current thread: channel.reply, channel.post, channel.handoff, or channel.pass. channel.dm sends to another DM thread and then you keep going so you can close the loop where you were asked.',
+  'Most messages do not need a reply. If not addressed, not in your domain, or already handled, call channel.close with a specific reason/note and stop the session. Do not emit chat text alongside channel.close.',
+  'If you are @mentioned, terminate with exactly one tool: use channel.reply for substantive content; use channel.close reason "ack" when no visible reply helps.',
+  'If you still have work to do, do not use channel.reply or channel.close yet; keep working with non-terminating tools.',
+  'To hand work to another agent, use agent.delegate. Do not simulate handoffs in plain text.',
+  'Never call a current-thread terminator and also produce assistant chat text in the same turn.',
+  'Pick exactly one current-thread terminator; channel.reply and channel.close are different tools.',
   'agent.delegate: use kind "explorer" for read-only investigation and kind "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',
   'In a hand-off chain with 3 or more agents, when you reply, the previous sender is automatically re-mentioned. If you need to bring in an earlier participant, mention them explicitly with @name.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
@@ -375,18 +376,18 @@ export function buildAgentSystemPrompt(
     formatChannelTargets(accessibleChannels),
     ...(conversationKind === 'channel'
       ? [
-          'You are working in a channel. Collaborate with teammates IN THIS CHANNEL — post with channel.post / channel.reply and `@`-mention the people you need. Do NOT open a private DM to a teammate (channel.dm to another member is disabled here); it hides the work, buries approvals, and wastes effort. To hand a task to another agent use agent.delegate. channel.dm is limited to private notes to yourself (member_id: "self").',
+          'You are working in a channel. Collaborate IN THIS CHANNEL with channel.reply and @-mentions. Do NOT open private DMs to teammates; it hides work and wastes effort. To hand a task to another agent use agent.delegate.',
         ]
       : [
-          'Direct message recipients (channel.dm — id or display name):',
+          'Direct message peers:',
           formatDirectMessageTargets(currentMemberId, members),
         ]),
     'channel.read: channel id/name from the list above; DMs use dm_thread_id or peer member_id from channel.list.',
     ...(conversationKind === 'dm'
       ? MESSAGE_TOOL_USAGE_GUIDANCE.filter(
           (line) =>
-            !line.includes('channel.pass with the appropriate reason') &&
-            !line.includes('channel.pass for mentioned runs'),
+            !line.includes('Most messages do not need a reply') &&
+            !line.includes('If you are @mentioned'),
         )
       : MESSAGE_TOOL_USAGE_GUIDANCE),
     '',

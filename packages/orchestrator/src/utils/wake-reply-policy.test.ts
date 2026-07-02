@@ -45,10 +45,10 @@ describe('resolveWakeReplyPolicy — suppressPassTool matrix', () => {
     ).toBe(true);
   });
 
-  it('agent↔agent DM RESTORES pass so the loop can terminate', () => {
+  it('agent↔agent DM uses channel.close so the loop can terminate', () => {
     const policy = resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: true });
     expect(policy.suppressPassTool).toBe(false);
-    expect(policy.scaffoldBlock).toContain('channel.pass');
+    expect(policy.scaffoldBlock).toContain('channel.close');
     expect(policy.scaffoldBlock).toContain('ANOTHER AGENT');
   });
 
@@ -58,7 +58,7 @@ describe('resolveWakeReplyPolicy — suppressPassTool matrix', () => {
 });
 
 describe('filterToolsForWakeReplyPolicy', () => {
-  const palette = ['channel.reply', 'channel.dm', 'channel.pass', 'view'];
+  const palette = ['channel.reply', 'channel.dm', 'channel.close', 'view'];
 
   it('strips channel.dm on a channel wake (keep conversations in the channel)', () => {
     const policy = resolveWakeReplyPolicy({ threadId: CHANNEL_THREAD });
@@ -70,9 +70,9 @@ describe('filterToolsForWakeReplyPolicy', () => {
     expect(filterToolsForWakeReplyPolicy(palette, policy)).toContain('channel.dm');
   });
 
-  it('strips channel.pass when the policy suppresses it', () => {
+  it('keeps channel.close when the policy suppresses old pass', () => {
     const policy = resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: false });
-    expect(filterToolsForWakeReplyPolicy(palette, policy)).not.toContain('channel.pass');
+    expect(filterToolsForWakeReplyPolicy(palette, policy)).toContain('channel.close');
   });
 });
 

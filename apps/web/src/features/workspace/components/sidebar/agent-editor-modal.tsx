@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Avatar } from "../chat/primitives";
 import { FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
@@ -8,7 +8,7 @@ import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import { ChannelPicker } from "@/features/team/channel-picker";
 import { Select } from "@/components/ui/select";
 import type { BootstrapResponse } from "@ujima/api-schema";
-import { filterDeprecatedToolIds, TOOL_REGISTRY } from "@ujima/shared";
+import { listCustomRoleToolIds } from "@ujima/shared";
 import type { SelectedConversation } from "../../types";
 import type { RolePresetTemplate } from "../../../onboarding/types";
 import { defaultModelForProvider } from "../../../onboarding/types";
@@ -18,15 +18,9 @@ import {
   joinCsvValues,
   listCsvValues,
   PERSONALITY_OPTIONS,
-  uniqueSorted,
 } from "../workspace-sidebar";
 import type { UpdateAgentHandler } from "@/features/team/agent-mutations";
 import type { WorkspaceSidebarProps } from "../workspace-sidebar";
-
-type TeamRole = NonNullable<WorkspaceSidebarProps["teamSettings"]>["roles"][number];
-const ACTIVE_RUNTIME_TOOL_IDS = Object.keys(TOOL_REGISTRY).filter(
-  (toolId) => TOOL_REGISTRY[toolId]?.status === "active",
-);
 
 export function AgentEditorModal({
   agent,
@@ -53,36 +47,10 @@ export function AgentEditorModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const availableTools = useMemo(() => {
-    if (!draft) return [];
-    return uniqueSorted(
-      filterDeprecatedToolIds([
-        ...ACTIVE_RUNTIME_TOOL_IDS,
-        ...Object.keys(teamSettings?.tools ?? {}),
-        ...rolePresets.flatMap((preset) => preset.tools ?? []),
-        ...(teamSettings?.roles.flatMap((role: TeamRole) => role.tools ?? []) ?? []),
-        ...draft.tools,
-      ]),
-    );
-  }, [draft, rolePresets, teamSettings?.roles, teamSettings?.tools]);
-
   if (!agent || !draft) return null;
 
   const patchDraft = (patch: Partial<AgentEditorDraft>) => {
     setDraft((current) => (current ? { ...current, ...patch } : current));
-  };
-
-  const toggleTool = (tool: string) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const exists = current.tools.includes(tool);
-      return {
-        ...current,
-        tools: exists
-          ? current.tools.filter((item) => item !== tool)
-          : uniqueSorted([...current.tools, tool]),
-      };
-    });
   };
 
   return (
@@ -202,44 +170,6 @@ export function AgentEditorModal({
             />
           </FieldShell>
 
-          <FieldShell label="Tools" htmlFor="agentTools" hint="Select available tools, or type custom values">
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {availableTools.length > 0 ? (
-                  availableTools.map((tool) => {
-                    const selected = draft.tools.includes(tool);
-                    return (
-                      <button
-                        key={tool}
-                        type="button"
-                        onClick={() => toggleTool(tool)}
-                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                          selected
-                            ? "border-violet-500 bg-violet-50 text-violet-700 dark:border-violet-400 dark:bg-violet-500/20 dark:text-violet-200"
-                            : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                        }`}
-                        aria-pressed={selected}
-                      >
-                        {tool}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    No tools from presets or team settings.
-                  </p>
-                )}
-              </div>
-              <TextInput
-                id="agentTools"
-                value={joinCsvValues(draft.tools)}
-                onChange={(event) =>
-                  patchDraft({ tools: uniqueSorted(listCsvValues(event.target.value)) })
-                }
-              />
-            </div>
-          </FieldShell>
-
           <FieldShell label="Skills" htmlFor="agentSkills" hint="Comma-separated skill names">
             <TextInput
               id="agentSkills"
@@ -291,7 +221,7 @@ export function AgentEditorModal({
                     provider: draft.llm.trim(),
                     model: draft.model.trim(),
                     workspaceScopes: draft.workspaceScopes,
-                    tools: filterDeprecatedToolIds(draft.tools),
+                    tools: listCustomRoleToolIds(draft.tools),
                     channels: draft.channels
                       .map((channelId) => visibleChannels.find((channel) => channel.id === channelId)?.name)
                       .filter((channelName): channelName is string => Boolean(channelName)),

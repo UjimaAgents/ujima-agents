@@ -712,7 +712,11 @@ export class SpiritServiceBase {
     if (!runId) return detected;
     const persisted = this.repo.getRun(organizationId, runId);
     const persistedTerminator = persisted?.terminatingTool;
-    if (persistedTerminator === 'channel.ack' || persistedTerminator === 'channel.pass') {
+    if (
+      persistedTerminator === 'channel.close' ||
+      persistedTerminator === 'channel.ack' ||
+      persistedTerminator === 'channel.pass'
+    ) {
       return persistedTerminator;
     }
     return detected;

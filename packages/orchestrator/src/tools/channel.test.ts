@@ -390,24 +390,18 @@ describe('channel.* tools — toInvocation()', () => {
 
 // Regression: ALWAYS_AVAILABLE_AGENT_TOOLS includes the baseline
 // conversational primitives every agent needs, regardless of role
-// config. Without these, an agent whose role declares no `tools`
-// ends up with an empty palette and the model improvises (Gemini
-// emits tool-call syntax as prose). `channel.handoff` stays OPT-IN
-// (must be in role.tools) because it's a workflow primitive, not
-// a baseline conversational one.
+// config. Noisy cross-thread tools stay out of the baseline palette.
 describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
   it('contains the baseline conversational primitives, read-only workspace tools, and silent terminators', () => {
     expect([...ALWAYS_AVAILABLE_AGENT_TOOLS].sort()).toEqual(
       [
         'agent.delegate',
-        'channel.ack',
-        'channel.dm',
+        'channel.close',
         'channel.list',
-        'channel.pass',
-        'channel.post',
         'channel.read',
         'channel.recall',
         'channel.reply',
+        'channel.set_member_mode',
         'glob',
         'goal.start',
         'goal.task.update',
@@ -416,6 +410,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'memory.forget',
         'memory.recall',
         'memory.write',
+        'mcp',
         'question.ask',
         'schedule',
         'procedure',
@@ -432,8 +427,8 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
     );
   });
 
-  it.each(['channel.handoff'])(
-    'does NOT include %s (workflow primitive opt-in via role.tools)',
+  it.each(['channel.ack', 'channel.dm', 'channel.handoff', 'channel.pass', 'channel.post'])(
+    'does NOT include removed/noisy tool %s',
     (toolId) => {
       expect([...ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toContain(toolId);
     },

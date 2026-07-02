@@ -47,21 +47,16 @@ export const TOOL_REGISTRY: Record<string, ToolEntry> = {
   'procedure.view':       { id: 'procedure.view',       status: 'deprecated', alias: 'procedure' },
 
   // ── Channel ───────────────────────────────────────────────
-  'channel.pass': {
-    id: 'channel.pass', status: 'active', alwaysAvailable: true, supervisorAllowed: true, workerBlocked: true,
+  'channel.close': {
+    id: 'channel.close', status: 'active', alwaysAvailable: true, supervisorAllowed: true, workerBlocked: true,
   },
-  'channel.ack': {
-    id: 'channel.ack', status: 'active', alwaysAvailable: true, workerBlocked: true,
-  },
+  'channel.pass': { id: 'channel.pass', status: 'removed' },
+  'channel.ack': { id: 'channel.ack', status: 'removed' },
   'channel.reply': {
     id: 'channel.reply', status: 'active', alwaysAvailable: true, supervisorAllowed: true, workerBlocked: true,
   },
-  'channel.post': {
-    id: 'channel.post', status: 'active', alwaysAvailable: true, supervisorAllowed: true, workerBlocked: true,
-  },
-  'channel.dm': {
-    id: 'channel.dm', status: 'active', alwaysAvailable: true, supervisorAllowed: true, workerBlocked: true,
-  },
+  'channel.post': { id: 'channel.post', status: 'removed' },
+  'channel.dm': { id: 'channel.dm', status: 'removed' },
   'channel.recall': {
     id: 'channel.recall', status: 'active', alwaysAvailable: true, explorerDelegate: true,
   },
@@ -71,11 +66,9 @@ export const TOOL_REGISTRY: Record<string, ToolEntry> = {
   'channel.list': {
     id: 'channel.list', status: 'active', alwaysAvailable: true, supervisorAllowed: true, explorerDelegate: true,
   },
-  'channel.handoff': {
-    id: 'channel.handoff', status: 'active', supervisorAllowed: true, workerBlocked: true,
-  },
+  'channel.handoff': { id: 'channel.handoff', status: 'removed' },
   'channel.set_member_mode': {
-    id: 'channel.set_member_mode', status: 'active',
+    id: 'channel.set_member_mode', status: 'active', alwaysAvailable: true,
   },
 
   // ── Workspace — read ──────────────────────────────────────
@@ -112,6 +105,9 @@ export const TOOL_REGISTRY: Record<string, ToolEntry> = {
 
   // ── Skills ────────────────────────────────────────────────
   'skill.read': { id: 'skill.read', status: 'active', alwaysAvailable: true },
+
+  // ── MCP ───────────────────────────────────────────────────
+  mcp: { id: 'mcp', status: 'active', alwaysAvailable: true },
 
   // ── Removed ───────────────────────────────────────────────
   message:    { id: 'message',    status: 'removed' },
@@ -172,4 +168,13 @@ export function filterDeprecatedToolIds(toolIds: readonly string[]): string[] {
     return (DEPRECATED_TOOL_ALIASES as Record<string, string>)[toolId] ?? toolId;
   });
   return [...new Set(normalized.filter((toolId): toolId is string => toolId !== null))];
+}
+
+export function listEffectiveAgentToolIds(roleTools: readonly string[] = []): string[] {
+  return filterDeprecatedToolIds([...ALWAYS_AVAILABLE_AGENT_TOOLS, ...roleTools]);
+}
+
+export function listCustomRoleToolIds(roleTools: readonly string[] = []): string[] {
+  const baseline = new Set(ALWAYS_AVAILABLE_AGENT_TOOLS);
+  return filterDeprecatedToolIds(roleTools).filter((toolId) => !baseline.has(toolId));
 }
