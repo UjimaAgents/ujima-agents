@@ -90,7 +90,10 @@ function resolveDatabaseConstructor(): SqliteDatabaseCtor {
   }
 }
 
-type Migration = {id: string; up: string | ((db: DbHandle) => void)};
+interface Migration {
+  id: string;
+  up: string | ((db: DbHandle) => void);
+}
 
 const MIGRATIONS: Migration[] = [
   {
