@@ -313,7 +313,7 @@ export class WorkspaceService {
     baseConfig.channels = sourceChannels;
     baseConfig.agents = sourceAgents;
     if (sourcePolicies) baseConfig.policies = sourcePolicies;
-    if (sourceRoles.length) baseConfig.roles = sourceRoles as any;
+    if (sourceRoles.length) baseConfig.roles = sourceRoles;
 
     if (copyOptions.roles || copyOptions.agents) {
       const channelNames = new Set(baseConfig.channels.map((channel) => channel.name));
