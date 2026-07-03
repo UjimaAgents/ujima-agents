@@ -321,6 +321,8 @@ export class SpiritService extends SpiritServiceSupervisor {
       summary: 'Stopped by user',
       endedAt: cancelledAt,
     });
+    this.runAbortControllers.get(key)?.abort();
+    this.runAbortControllers.delete(key);
     const spirit = this.repo.getSpiritByRunId?.(organizationId, runId) ?? null;
     if (spirit && isLiveSpiritStatus(spirit.status)) {
       const cancelledSpirit: Spirit = {
@@ -355,10 +357,6 @@ export class SpiritService extends SpiritServiceSupervisor {
         this.getRooms(cancelled),
       );
     }
-
-    this.runAbortControllers.get(key)?.abort();
-    this.runAbortControllers.delete(key);
-
     this.invokeRunTerminalHook(cancelled);
 
     return cancelled;
@@ -501,6 +499,8 @@ export class SpiritService extends SpiritServiceSupervisor {
         abortSignal: abortController.signal,
         detectExternalPause: () => this.detectRunPauseForHuman(run.organizationId, run.id),
         onChunk: (chunk) => {
+          if (abortController.signal.aborted) return;
+          if (this.repo.getRun(run.organizationId, run.id)?.status === 'cancelled') return;
           if (chunk.kind === 'text') streamedTrace.text += chunk.delta;
           if (chunk.kind === 'reasoning') streamedTrace.reasoning += chunk.delta;
           this.emitRunChunk(
@@ -514,6 +514,8 @@ export class SpiritService extends SpiritServiceSupervisor {
           );
         },
         onStepFinish: async (_step, currentSteps) => {
+          if (abortController.signal.aborted) return;
+          if (this.repo.getRun(run.organizationId, run.id)?.status === 'cancelled') return;
           const unpersisted = currentSteps.slice(persistedStepCount);
           const terminatorState = { sawTerminatingTool };
           for (const s of unpersisted) {
@@ -693,11 +695,15 @@ export class SpiritService extends SpiritServiceSupervisor {
       }
 
       if (terminatingTool === 'channel.pass') {
+        const latestBeforeSilent = this.repo.getRun(run.organizationId, run.id);
+        if (latestBeforeSilent?.status === 'cancelled') return latestBeforeSilent;
         this.persistSilentTrace(running, reasoningContent);
         return this.completeSilentRun(running, 'passed', 'channel.pass', wakeReason);
       }
 
       if (terminatingTool === 'channel.ack') {
+        const latestBeforeSilent = this.repo.getRun(run.organizationId, run.id);
+        if (latestBeforeSilent?.status === 'cancelled') return latestBeforeSilent;
         this.persistSilentTrace(running, reasoningContent);
         return this.completeSilentRun(running, 'acked', 'channel.ack', wakeReason);
       }
@@ -722,6 +728,8 @@ export class SpiritService extends SpiritServiceSupervisor {
               this.getRooms(running),
             );
           }
+          const latestBeforeFail = this.repo.getRun(run.organizationId, run.id);
+          if (latestBeforeFail?.status === 'cancelled') return latestBeforeFail;
           return this.failRun(running, 'must_reply_failed: agent was @mentioned but did not reply');
         }
         this.realtime.emit(
@@ -735,14 +743,20 @@ export class SpiritService extends SpiritServiceSupervisor {
           },
           this.getRooms(running),
         );
+        const latestBeforeEmpty = this.repo.getRun(run.organizationId, run.id);
+        if (latestBeforeEmpty?.status === 'cancelled') return latestBeforeEmpty;
         return this.completeRun(running, 'empty', null);
       }
 
       if (terminatingTool && VISIBLE_TERMINATING_TOOLS.has(terminatingTool) && !artifactFileToolCall) {
+        const latestBeforeComplete = this.repo.getRun(run.organizationId, run.id);
+        if (latestBeforeComplete?.status === 'cancelled') return latestBeforeComplete;
         return this.completeRun(running, terminatingTool, terminatingTool);
       }
 
       const reply = text || 'Artifact updated.';
+      const latestBeforePublish = this.repo.getRun(run.organizationId, run.id);
+      if (latestBeforePublish?.status === 'cancelled') return latestBeforePublish;
       await publishRunReplyTrace({
         repo: this.repo,
         conversations: this.conversations,

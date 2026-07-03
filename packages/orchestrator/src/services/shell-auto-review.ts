@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel } from 'ai';
+import { generateText, streamText, type LanguageModel } from 'ai';
 import type { NormalizedShellScope } from './shell-scope.js';
 
 export interface ShellAutoReviewInput {
@@ -23,29 +23,51 @@ export class ShellAutoReviewService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REVIEW_TIMEOUT_MS);
       try {
-        const { text } = await generateText({
-          model: input.model,
-          system: [
-            'You are a security reviewer for shell commands requested by an AI agent.',
-            'Respond with a single JSON object only — no markdown fences, no prose.',
-            'Shape: {"decision":"approve"|"escalate","rationale":"short reason"}',
-            'Approve only when the command is clearly safe, scoped, and aligned with normal development work.',
-            'Escalate when the command is destructive, exfiltrates secrets, spans outside the workspace, or intent is unclear.',
-            'When uncertain, escalate.',
-          ].join('\n'),
-          prompt: [
-            `Agent: ${input.memberName}`,
-            `Role: ${input.roleName}`,
-            `Command: ${command}`,
-            input.scope.cwd ? `Working directory: ${input.scope.cwd}` : null,
-            input.policyReason ? `Policy note: ${input.policyReason}` : null,
-          ]
-            .filter(Boolean)
-            .join('\n'),
-          maxOutputTokens: 8_000,
-          abortSignal: controller.signal,
-        });
-
+        const text = isCodexResponsesModel(input.model)
+          ? await streamText({
+              model: input.model,
+              system: [
+                'You are a security reviewer for shell commands requested by an AI agent.',
+                'Respond with a single JSON object only — no markdown fences, no prose.',
+                'Shape: {"decision":"approve"|"escalate","rationale":"short reason"}',
+                'Approve only when the command is clearly safe, scoped, and aligned with normal development work.',
+                'Escalate when the command is destructive, exfiltrates secrets, spans outside the workspace, or intent is unclear.',
+                'When uncertain, escalate.',
+              ].join('\n'),
+              prompt: [
+                `Agent: ${input.memberName}`,
+                `Role: ${input.roleName}`,
+                `Command: ${command}`,
+                input.scope.cwd ? `Working directory: ${input.scope.cwd}` : null,
+                input.policyReason ? `Policy note: ${input.policyReason}` : null,
+              ]
+                .filter(Boolean)
+                .join('\n'),
+              maxOutputTokens: 512,
+              abortSignal: controller.signal,
+            }).text
+          : (await generateText({
+              model: input.model,
+              system: [
+                'You are a security reviewer for shell commands requested by an AI agent.',
+                'Respond with a single JSON object only — no markdown fences, no prose.',
+                'Shape: {"decision":"approve"|"escalate","rationale":"short reason"}',
+                'Approve only when the command is clearly safe, scoped, and aligned with normal development work.',
+                'Escalate when the command is destructive, exfiltrates secrets, spans outside the workspace, or intent is unclear.',
+                'When uncertain, escalate.',
+              ].join('\n'),
+              prompt: [
+                `Agent: ${input.memberName}`,
+                `Role: ${input.roleName}`,
+                `Command: ${command}`,
+                input.scope.cwd ? `Working directory: ${input.scope.cwd}` : null,
+                input.policyReason ? `Policy note: ${input.policyReason}` : null,
+              ]
+                .filter(Boolean)
+                .join('\n'),
+              maxOutputTokens: 512,
+              abortSignal: controller.signal,
+            })).text;
         const parsed = parseReviewerJson(text);
         if (!parsed) {
           return { decision: 'escalate', rationale: 'Reviewer returned unparseable JSON' };
@@ -55,10 +77,51 @@ export class ShellAutoReviewService {
         clearTimeout(timeout);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Reviewer failed';
+      const details = describeReviewError(error);
+      const message =
+        typeof details.message === 'string' && details.message.length > 0
+          ? details.message
+          : 'Reviewer failed';
+      console.info('[approval-auto-review]', {
+        status: 'error',
+        command,
+        roleName: input.roleName,
+        memberName: input.memberName,
+        error: details,
+      });
       return { decision: 'escalate', rationale: message };
     }
   }
+}
+
+function describeReviewError(error: unknown): Record<string, unknown> {
+  if (!error || typeof error !== 'object') {
+    return { message: String(error) };
+  }
+
+  const record = error as Record<string, unknown>;
+  const response = record.response as { status?: unknown; statusText?: unknown; body?: unknown } | undefined;
+  const cause = record.cause as Record<string, unknown> | Error | undefined;
+  return {
+    name: typeof record.name === 'string' ? record.name : undefined,
+    message: typeof record.message === 'string' ? record.message : String(record.message ?? ''),
+    stack: typeof record.stack === 'string' ? record.stack : undefined,
+    code: typeof record.code === 'string' ? record.code : undefined,
+    statusCode: typeof record.statusCode === 'number' ? record.statusCode : undefined,
+    responseStatus: response?.status,
+    responseStatusText: response?.statusText,
+    responseBody: typeof response?.body === 'string' ? response.body : undefined,
+    cause:
+      cause instanceof Error
+        ? { name: cause.name, message: cause.message }
+        : cause && typeof cause === 'object'
+          ? {
+              name: typeof cause.name === 'string' ? cause.name : undefined,
+              message: typeof cause.message === 'string' ? cause.message : undefined,
+              code: typeof cause.code === 'string' ? cause.code : undefined,
+            }
+          : cause,
+  };
 }
 
 function formatShellCommand(scope: NormalizedShellScope): string {
@@ -67,6 +130,11 @@ function formatShellCommand(scope: NormalizedShellScope): string {
   }
   const parts = [scope.command, ...(scope.args ?? [])].filter(Boolean);
   return parts.join(' ').trim() || '(empty command)';
+}
+
+function isCodexResponsesModel(model: LanguageModel): boolean {
+  const meta = model as { provider?: unknown };
+  return meta.provider === 'openai.responses';
 }
 
 export function parseReviewerJson(

@@ -8,7 +8,7 @@ export function LandingFooter() {
           Run your team locally.
         </h2>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
-          <PrimaryButton href="/onboarding">Get started</PrimaryButton>
+          <PrimaryButton href="/workspace">Get started</PrimaryButton>
           <SecondaryButton href="/login">Sign in</SecondaryButton>
         </div>
         <p className="mt-16 text-[13px] text-zinc-500 dark:text-zinc-600">

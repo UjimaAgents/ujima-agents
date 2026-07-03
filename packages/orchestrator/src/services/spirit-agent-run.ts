@@ -664,6 +664,26 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
         teamRoot: team.workspace.root,
         abortSignal: abortController.signal,
       });
+      const latestAfterLoop = this.repo.getRun(input.organizationId, runId);
+      if (latestAfterLoop?.status === 'cancelled') {
+        runState.cancel(latestAfterLoop.summary || 'Stopped by user');
+        const cancelled = this.saveTerminalSpirit(runState, running);
+        this.realtime.emit(
+          SocketEventNames.runCompleted,
+          { organizationId: input.organizationId, run: latestAfterLoop },
+          this.getRooms(latestAfterLoop),
+        );
+        this.emit(SocketEventNames.spiritCompleted, cancelled);
+        this.maybeFinalizeTaskSession(cancelled.organizationId, cancelled.taskSessionId, latestAfterLoop.summary);
+        return {
+          spirit: cancelled,
+          finalText: runState.lastText,
+          iterations: runState.iteration,
+          toolCalls: runState.toolCallCount,
+          tokensUsed: runState.totalTokens,
+          terminatingTool: null,
+        };
+      }
       const { steps, usage, streamedReasoning, persistedStepCount } = loopResult;
 
       // Compute token counts early so they're available when persisting

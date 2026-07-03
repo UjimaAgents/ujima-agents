@@ -286,25 +286,34 @@ export class WorkspaceService {
     }
 
     const { copyOptions } = input;
-    const baseConfig = createEmptyWorkspaceTeamConfig({
-      name: organizationName,
-      workspaceRoot,
-    });
     const providerKeys = [...new Set(copyOptions.providerKeys.map(normalizeProviderKey))];
     const providerNames = new Set([
       ...(copyOptions.providerConfigs ? Object.keys(sourceTeam.providers) : []),
       ...providerKeys,
     ]);
-    baseConfig.providers = Object.fromEntries(
-      [...providerNames].map((name) => [
-        name,
-        sourceTeam.providers[name] ?? ({ kind: name } as ProviderConfig),
-      ]),
-    );
+    const sourceChannels = copyOptions.channels ? [...sourceTeam.channels] : [];
+    const sourceTools = copyOptions.tools ? { ...sourceTeam.tools } : {};
+    const sourcePolicies = copyOptions.policies ? { ...sourceTeam.config.policies } : undefined;
+    const sourceRoles = copyOptions.roles || copyOptions.agents ? [...sourceTeam.roles] : [];
+    const sourceAgents = copyOptions.agents ? [...sourceTeam.agents] : [];
+    const sourceOrgChart = copyOptions.orgChart ? { ...sourceOrg.organizationChart.reportsTo } : {};
 
-    if (copyOptions.channels) baseConfig.channels = [...sourceTeam.channels];
-    if (copyOptions.tools) baseConfig.tools = { ...sourceTeam.tools };
-    if (copyOptions.policies) baseConfig.policies = { ...sourceTeam.config.policies };
+    const baseConfig = createEmptyWorkspaceTeamConfig({
+      name: organizationName,
+      workspaceRoot,
+      providers: Object.fromEntries(
+        [...providerNames].map((name) => [
+          name,
+          sourceTeam.providers[name] ?? ({ kind: name } as ProviderConfig),
+        ]),
+      ),
+      tools: sourceTools,
+      organizationChart: { reportsTo: sourceOrgChart },
+    });
+    baseConfig.channels = sourceChannels;
+    baseConfig.agents = sourceAgents;
+    if (sourcePolicies) baseConfig.policies = sourcePolicies;
+    if (sourceRoles.length) baseConfig.roles = sourceRoles as any;
 
     if (copyOptions.roles || copyOptions.agents) {
       const channelNames = new Set(baseConfig.channels.map((channel) => channel.name));
@@ -319,7 +328,6 @@ export class WorkspaceService {
         ),
       );
     }
-    if (copyOptions.agents) baseConfig.agents = [...sourceTeam.agents];
 
     const copiedAgentIds = new Set(baseConfig.agents.map((agent) => agent.name));
     const sourceOwnerIds = new Set(
@@ -360,7 +368,7 @@ export class WorkspaceService {
         templateMemberId: ownerMemberId,
       },
       organizationChart: { reportsTo },
-      credentialSourceOrganizationId: ownerOrganizationId,
+      credentialSourceOrganizationId: sourceOrganizationId,
       copyProviderKeys: providerKeys,
     });
 

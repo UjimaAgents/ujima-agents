@@ -3,7 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createOpenAI } from '@ai-sdk/openai';
-import type { LanguageModel } from 'ai';
+import type { LanguageModelV3 } from '@ai-sdk/provider';
+import { defaultSettingsMiddleware, wrapLanguageModel, type LanguageModel } from 'ai';
 import WebSocket from 'ws';
 
 type FetchHeaders = NonNullable<Parameters<typeof fetch>[1]>['headers'];
@@ -15,47 +16,6 @@ const RESPONSES_WS_PROTOCOL = 'responses_websockets=2026-02-06';
 const CODEX_WS_OPEN_RETRIES = 2;
 const CODEX_WS_IDLE_TIMEOUT_MS = 5 * 60_000;
 let refreshPromise: Promise<StoredCodexToken | null> | null = null;
-
-
-
-interface ItemCache {
-  get(key: string): unknown;
-  set(key: string, value: unknown): void;
-}
-
-class SizeLimitedMap<K, V> {
-  private map = new Map<K, V>();
-  private keys: K[] = [];
-  constructor(private maxSize: number) {}
-
-  get(key: K): V | undefined {
-    return this.map.get(key);
-  }
-
-  set(key: K, value: V): void {
-    if (!this.map.has(key)) {
-      this.keys.push(key);
-      if (this.keys.length > this.maxSize) {
-        const oldest = this.keys.shift();
-        if (oldest !== undefined) {
-          this.map.delete(oldest);
-        }
-      }
-    }
-    this.map.set(key, value);
-  }
-}
-
-const globalSessionCaches = new SizeLimitedMap<string, SizeLimitedMap<string, unknown>>(100);
-
-function getSessionCache(sessionId: string): SizeLimitedMap<string, unknown> {
-  let cache = globalSessionCaches.get(sessionId);
-  if (!cache) {
-    cache = new SizeLimitedMap<string, unknown>(5000);
-    globalSessionCaches.set(sessionId, cache);
-  }
-  return cache;
-}
 
 interface CodexResponsesOptions {
   modelId: string;
@@ -79,11 +39,21 @@ interface StoredCodexAuth {
 }
 
 export function createCodexResponsesModel(options: CodexResponsesOptions): LanguageModel {
-  return createOpenAI({
+  const model = createOpenAI({
     apiKey: CODEX_DUMMY_API_KEY,
     baseURL: options.baseUrl ?? CODEX_RESPONSES_BASE_URL,
     fetch: codexFetch(options.accessToken),
   }).responses(options.modelId);
+  return wrapLanguageModel({
+    model: model as LanguageModelV3,
+    middleware: defaultSettingsMiddleware({
+      settings: {
+        providerOptions: {
+          openai: { store: false },
+        },
+      },
+    }),
+  }) as LanguageModel;
 }
 
 function codexFetch(accessToken: string): typeof fetch {
@@ -119,12 +89,10 @@ async function requestWithFreshPool(
   sessionId: string,
 ): Promise<Response> {
   let socket: WebSocket | null = null;
-  const itemCache = getSessionCache(sessionId);
   const prepared = await prepareRequest(request, withAuthHeaders(init, bearer, accountId, sessionId));
   return fetchCodex(prepared.request, prepared.init, {
     getSocket: () => socket,
     setSocket: (next) => { socket = next; },
-    itemCache,
   });
 }
 
@@ -155,25 +123,79 @@ export function stableCodexSessionId(accessToken: string, accountId: string | un
 async function fetchCodex(
   request: Parameters<typeof fetch>[0],
   init: Parameters<typeof fetch>[1],
-  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void; itemCache: ItemCache },
+  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void },
 ): Promise<Response> {
   const url = new URL(request instanceof Request ? request.url : String(request));
-  if (init?.method !== 'POST' || !url.pathname.endsWith('/responses')) return fetch(request, init);
-  if (typeof init.body !== 'string') return fetch(request, init);
+  if (init?.method !== 'POST' || !url.pathname.endsWith('/responses')) return logNonOkResponse(url, await fetch(request, init));
+  if (typeof init.body !== 'string') return logNonOkResponse(url, await fetch(request, init));
 
   const body = JSON.parse(init.body) as { stream?: unknown };
-  if (body.stream !== true) return fetch(request, init);
+  if (body.stream !== true) return logNonOkResponse(url, await fetch(request, init));
 
   return streamSocket(url, init.headers, pool, body, init.signal ?? undefined);
+}
+
+async function logNonOkResponse(url: URL, response: Response): Promise<Response> {
+  if (response.ok) return response;
+  try {
+    const bodyText = await response.clone().text();
+    console.error('[codex-response-error]', {
+      url: url.toString(),
+      status: response.status,
+      statusText: response.statusText,
+      message: extractResponseMessage(bodyText) ?? bodyText.slice(0, 2000),
+    });
+  } catch (error) {
+    console.error('[codex-response-error]', {
+      url: url.toString(),
+      status: response.status,
+      statusText: response.statusText,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return response;
+}
+
+function extractResponseMessage(bodyText: string): string | null {
+  const trimmed = bodyText.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const message =
+      typeof parsed.message === 'string'
+        ? parsed.message
+        : typeof parsed.error === 'string'
+          ? parsed.error
+          : typeof parsed.detail === 'string'
+            ? parsed.detail
+            : typeof parsed.title === 'string'
+              ? parsed.title
+              : null;
+    if (message) return message;
+    const nested = parsed.error;
+    if (nested && typeof nested === 'object') {
+      const record = nested as Record<string, unknown>;
+      return (
+        (typeof record.message === 'string' && record.message) ||
+        (typeof record.detail === 'string' && record.detail) ||
+        null
+      );
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 async function openSocket(
   url: URL,
   headersInit: FetchHeaders | undefined,
   pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void },
+  signal: AbortSignal | undefined,
 ): Promise<WebSocket> {
   const current = pool.getSocket();
   if (current?.readyState === WebSocket.OPEN) return current;
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
   const headers = normalizeHeaders(headersInit);
   headers['openai-beta'] ??= RESPONSES_WS_PROTOCOL;
@@ -185,17 +207,27 @@ async function openSocket(
       socket.terminate();
       reject(new Error('Codex WebSocket connect timed out'));
     }, 15_000);
-    socket.once('open', () => {
+    const cleanup = () => {
       clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      socket.terminate();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    socket.once('open', () => {
+      cleanup();
       pool.setSocket(socket);
       resolve();
     });
     socket.once('error', (error: Error) => {
-      clearTimeout(timeout);
+      cleanup();
       reject(error);
     });
     socket.once('close', (code: number, reason: Buffer) => {
-      clearTimeout(timeout);
+      cleanup();
       reject(new Error(`Codex WebSocket closed before open (${code}: ${reason.toString()})`));
     });
   });
@@ -205,7 +237,7 @@ async function openSocket(
 function streamSocket(
   url: URL,
   headers: FetchHeaders | undefined,
-  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void; itemCache: ItemCache },
+  pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void },
   body: Record<string, unknown>,
   signal: AbortSignal | undefined,
 ): Response {
@@ -239,9 +271,17 @@ function streamSocket(
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       };
+      const abort = () => {
+        if (done) return;
+        done = true;
+        cleanup();
+        invalidate();
+        socket?.terminate();
+        controller.error(new DOMException('Aborted', 'AbortError'));
+      };
       const fail = (error: Error) => {
         if (done) return;
-        if (frameCount === 0 && attempts <= CODEX_WS_OPEN_RETRIES && resend) {
+        if (!signal?.aborted && frameCount === 0 && attempts <= CODEX_WS_OPEN_RETRIES && resend) {
           cleanup();
           invalidate();
           socket?.terminate();
@@ -265,7 +305,6 @@ function streamSocket(
         controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, '\ndata: ')}\n\n`));
         const event = safeJson(text);
         if (!event) return;
-        rememberCachedItems(event, pool.itemCache);
         const terminalError = codexTerminalError(event);
         if (terminalError) {
           fail(terminalError);
@@ -279,14 +318,18 @@ function streamSocket(
       const onClose = (code: number, reason: Buffer) => {
         if (!done) fail(new Error(`Codex WebSocket closed (${code}: ${reason.toString()})`));
       };
-      const onAbort = () => fail(new DOMException('Aborted', 'AbortError'));
+      const onAbort = () => abort();
 
       const { stream: _stream, background: _background, ...payload } = body;
       const send = async () => {
         let lastError: Error | undefined;
         for (; attempts <= CODEX_WS_OPEN_RETRIES; attempts += 1) {
           try {
-            socket = await openSocket(url, headers, pool);
+            socket = await openSocket(url, headers, pool, signal);
+            if (signal?.aborted) {
+              abort();
+              return;
+            }
             socket.on('message', onMessage);
             socket.once('error', onError);
             socket.once('close', onClose);
@@ -388,21 +431,6 @@ function rewriteBody(body: string): string {
   } catch {
     return body;
   }
-}
-
-function rememberCachedItems(value: unknown, itemCache: ItemCache): void {
-  if (Array.isArray(value)) {
-    for (const entry of value) rememberCachedItems(entry, itemCache);
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-
-  const record = value as Record<string, unknown>;
-  if (typeof record.id === 'string' && typeof record.type === 'string' && !record.type.startsWith('response.')) {
-    itemCache.set(record.id, record);
-  }
-
-  for (const entry of Object.values(record)) rememberCachedItems(entry, itemCache);
 }
 
 function authPath(): string {
