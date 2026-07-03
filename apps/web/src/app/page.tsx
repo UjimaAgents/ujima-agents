@@ -5,8 +5,11 @@ import { redirect } from "next/navigation";
 export default async function Home() {
   try {
     const bootstrap = await getServerBootstrap();
+    if (bootstrap.auth.authenticated) {
+      redirect("/workspace");
+    }
     if (bootstrap.onboardingStatus === "ready") {
-      redirect(bootstrap.auth.authenticated ? "/workspace" : "/login");
+      redirect("/login");
     }
   } catch {
     // If the daemon is unavailable, keep the public landing page visible

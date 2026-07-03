@@ -301,7 +301,6 @@ export class WorkspaceService {
     const baseConfig = createEmptyWorkspaceTeamConfig({
       name: organizationName,
       workspaceRoot,
-      agents: sourceAgents,
       providers: Object.fromEntries(
         [...providerNames].map((name) => [
           name,
@@ -312,6 +311,7 @@ export class WorkspaceService {
       organizationChart: { reportsTo: sourceOrgChart },
     });
     baseConfig.channels = sourceChannels;
+    baseConfig.agents = sourceAgents;
     if (sourcePolicies) baseConfig.policies = sourcePolicies;
     if (sourceRoles.length) baseConfig.roles = sourceRoles as any;
 
