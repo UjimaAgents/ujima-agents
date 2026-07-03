@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "bun@1.3.11",
   "description": "Framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution.",
-  "trustedDependencies": [],
+  "trustedDependencies": ["better-sqlite3"],
   "workspaces": [
     "apps/*",
     "packages/*"
