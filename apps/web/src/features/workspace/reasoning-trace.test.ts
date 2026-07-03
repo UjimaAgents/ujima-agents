@@ -7,6 +7,71 @@ import {
 import { collapseRunChunkActivities } from "./run-chunk-activity";
 
 describe("reasoning-trace ordering", () => {
+  it("renders multiedit calls as diffs instead of raw args JSON", () => {
+    const organizationId = "org-1";
+    const threadId = "thread-1";
+    const agentId = "agent-1";
+    const run: RunState = {
+      id: "run-1",
+      organizationId,
+      agentId,
+      threadId,
+      status: "completed",
+      step: "completed",
+      summary: "done",
+    };
+    const activity: ActivityEvent[] = [
+      {
+        event_id: "tool:called:run-1:tc-1",
+        type: "tool_called",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:08.000Z",
+        order: 1,
+        payload: {
+          runId: run.id,
+          threadId,
+          agentId,
+          toolCall: {
+            toolCallId: "tc-1",
+            toolName: "multiedit",
+            args: {
+              resourcePath: "/app/a.ts",
+              edits: [{ oldString: "const a = false;", newString: "const a = true;" }],
+            },
+          },
+        },
+      },
+      {
+        event_id: "tool:result:run-1:tc-1",
+        type: "tool_result",
+        publisher: agentId,
+        timestamp: "2026-05-04T19:07:09.000Z",
+        order: 2,
+        payload: {
+          runId: run.id,
+          threadId,
+          agentId,
+          toolResult: { toolCallId: "tc-1", result: "Saved.", isError: false },
+        },
+      },
+    ];
+
+    const step = buildReasoningTraceSteps({
+      threadId,
+      conversationName: "general",
+      conversationType: "channel",
+      members: [{ id: agentId, name: "Agent", kind: "agent" }],
+      activity,
+      runs: [run],
+      organizationId,
+    }).find((item) => item.filesystem);
+
+    expect(step?.filesystem?.body).toContain("--- /app/a.ts");
+    expect(step?.filesystem?.body).toContain("-const a = false;");
+    expect(step?.filesystem?.body).toContain("+const a = true;");
+    expect(step?.filesystem?.body).not.toContain('"edits"');
+  });
+
   it("collapses consecutive run_chunk events before trace derivation", () => {
     const collapsed = collapseRunChunkActivities([
       {

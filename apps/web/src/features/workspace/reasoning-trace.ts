@@ -348,6 +348,38 @@ function extractContentFromResult(result: unknown): string | undefined {
   }
 }
 
+function diffLines(prefix: "+" | "-", value: string): string[] {
+  return value.split(/\r?\n/).map((line) => `${prefix}${line}`);
+}
+
+function proposedEditDiff(path: string, oldString: string, newString: string, startLine?: number): string {
+  const oldLines = oldString.split(/\r?\n/).length;
+  const newLines = newString.split(/\r?\n/).length;
+  const header = startLine === undefined ? "@@" : `@@ -${startLine},${oldLines} +${startLine},${newLines} @@`;
+  return [`--- ${path}`, `+++ ${path}`, header, ...diffLines("-", oldString), ...diffLines("+", newString)].join("\n");
+}
+
+function proposedToolDiff(name: string, path: string, parsed: ReturnType<typeof inferToolAction>): string | undefined {
+  if (!path) return undefined;
+  if (name === "write" && parsed.content !== undefined) {
+    const lines = Math.max(1, parsed.content.split(/\r?\n/).length);
+    return [`--- ${path}`, `+++ ${path}`, `@@ -0,0 +1,${lines} @@`, ...diffLines("+", parsed.content)].join("\n");
+  }
+  if (name === "edit" && parsed.oldString !== undefined && parsed.newString !== undefined) {
+    return proposedEditDiff(path, parsed.oldString, parsed.newString, parsed.startLine);
+  }
+  if (name !== "multiedit" || !parsed.edits?.length) return undefined;
+  const body = parsed.edits
+    .map((edit) =>
+      edit.oldString !== undefined && edit.newString !== undefined
+        ? proposedEditDiff(path, edit.oldString, edit.newString, parsed.startLine)
+        : "",
+    )
+    .filter(Boolean)
+    .join("\n");
+  return body || undefined;
+}
+
 function extractTruncatedContentField(text: string): string | undefined {
   for (const field of ["content", "body", "text", "output"]) {
     const marker = `"${field}"`;
@@ -1420,7 +1452,14 @@ function buildToolStep(
                       ? parsed.url ?? argsPreview
                       : undefined
         : undefined;
-    const resolved = bodyFromResult || pendingBody;
+    const proposedDiff =
+      name === "write" || name === "edit" || name === "multiedit"
+        ? proposedToolDiff(name, parsed.resourcePath ?? "", parsed)
+        : undefined;
+    const hasResultDiff = bodyFromResult.trimStart().startsWith("--- ");
+    const resolved = proposedDiff && !isError && (!hasResultDiff || !hasResult || pendingCompletion)
+      ? proposedDiff
+      : bodyFromResult || pendingBody;
     filesystem = {
       action: name === "write" || name === "edit" || name === "multiedit" || name === "download" ? "write" : "read",
       resourcePath: parsed.resourcePath ?? "",

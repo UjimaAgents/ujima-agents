@@ -1210,4 +1210,71 @@ describe('SpiritService run path', () => {
     expect(messages[0].reasoningContent).toBe('Checking the component tree.');
     expect(messages[0].metadata).toMatchObject({ runId, stoppedTrace: true });
   });
+
+  it('does not publish a late model reply after stop', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-stop-late-reply-1';
+    const agentId = 'Quinn Mason';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId: 'thread-1',
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      getRun: () => run,
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: 'channel-1' }),
+      listRunSteps: () => [],
+    } as never;
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [{ name: 'backend-engineer', title: 'BE', instructions: '.', tools: ['shell'] }],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      { publishMessage: (message: any) => messages.push(message) } as never,
+      {
+        generateRunReply: async () => {
+          service.cancelRun(organizationId, runId);
+          return { text: 'late final reply', toolResults: [], steps: [] };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('cancelled');
+    expect(messages).toHaveLength(0);
+  });
 });

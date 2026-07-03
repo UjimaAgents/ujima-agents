@@ -18,7 +18,7 @@ export function HeroSection() {
             {hero.body}
           </p>
           <div className="landing-hero-enter landing-hero-delay-3 mt-10 flex justify-center">
-            <PrimaryButton href="/onboarding">{hero.primaryCta}</PrimaryButton>
+            <PrimaryButton href="/workspace">{hero.primaryCta}</PrimaryButton>
           </div>
         </div>
       </LandingContainer>

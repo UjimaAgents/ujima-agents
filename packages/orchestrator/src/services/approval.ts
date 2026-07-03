@@ -309,6 +309,21 @@ export class ApprovalService {
         !approvalIds.has(approval.id) &&
         (approvalIds.add(approval.id), true),
     );
+    console.info('[approval-selection]', {
+      organizationId: input.organizationId,
+      approvalId: input.approvalId,
+      runId: existing?.runId,
+      status: input.status,
+      resolution: input.resolution ?? (input.status === 'rejected' ? 'reject' : 'allow_once'),
+      resolverMemberId: input.resolverMemberId,
+      resourceType: existing?.resourceType,
+      action: existing?.action,
+      resourcePath: existing?.resourcePath,
+      rawScope,
+      persistedScope,
+      resumeApprovalScope,
+      matchedApprovalCount: approvals.length,
+    });
     const originalReasonById = new Map(approvals.map((approval) => [approval.id, approval.reason]));
     const resolvedApprovals =
       input.status === 'rejected'

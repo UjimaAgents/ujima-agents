@@ -285,6 +285,90 @@ describe('createPermissionGatedToolService', () => {
 });
 
 describe('ToolServiceImpl goal mode', () => {
+  it('uses auto-review approval instead of creating a human approval', async () => {
+    let approvals = 0;
+    let modelResolves = 0;
+    let reviews = 0;
+    const team = loadAgentTeam({
+      name: 'Auto Review Org',
+      workspace: { root: process.cwd() },
+      policies: { shellApprovalMode: 'auto_review' },
+      providers: { openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] } },
+      roles: [{
+        name: 'engineer',
+        title: 'Engineer',
+        instructions: 'Build.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['.'],
+        tools: ['shell'],
+        channels: ['general'],
+      }],
+      agents: [{ name: 'Agent', roleName: 'engineer' }],
+      channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+    } as Record<string, unknown>);
+    const store = createTeamStore();
+    store.setTeam(team, 'org-1');
+
+    const service = new ToolServiceImpl(
+      store,
+      {
+        getRun: () => ({ id: 'run-1', threadId: 'thread-1', status: 'running' }),
+        getOrganization: () => ({ id: 'org-1', workspace: { root: process.cwd() } }),
+        getWorkspaceMember: () => null,
+        saveWorkspaceMember: (workspaceMember: unknown) => workspaceMember,
+        getMember: () => ({
+          id: 'agent-1',
+          organizationId: 'org-1',
+          kind: 'agent',
+          roleName: 'engineer',
+          name: 'Agent',
+          shellApprovalMode: 'auto_review',
+        }),
+        getLatestHumanMessageInThread: () => null,
+        hasApprovalGrant: () => false,
+        saveAuditEvent: () => undefined,
+        listRunSteps: () => [],
+        saveRunStep: () => undefined,
+      } as never,
+      { requestApproval: () => { approvals++; return { id: 'approval-1' }; } },
+      {} as never,
+      {} as never,
+      { emit: () => undefined } as never,
+      {} as never,
+      new ApprovedRunScopeTracker(),
+      undefined,
+      () => {
+        modelResolves++;
+        return {} as never;
+      },
+      {
+        review: async () => {
+          reviews++;
+          return { decision: 'approve', rationale: 'safe test command' };
+        },
+      },
+    );
+
+    const result = await service.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      threadId: 'thread-1',
+      toolCallId: 'tool-1',
+      toolId: 'shell',
+      action: 'execute',
+      resourceType: 'shell',
+      resourcePath: process.cwd(),
+      input: { command: 'printf ok', cwd: process.cwd() },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(approvals).toBe(0);
+    expect(modelResolves).toBe(1);
+    expect(reviews).toBe(1);
+  });
+
   it('does not approval-gate trusted goal tools in goal mode', async () => {
     let approvals = 0;
     let updates = 0;

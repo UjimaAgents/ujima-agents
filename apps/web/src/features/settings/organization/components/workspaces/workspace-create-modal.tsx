@@ -98,10 +98,10 @@ function WorkspaceCreateModalActive({
   const [isPickingRoot, setIsPickingRoot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rootPickError, setRootPickError] = useState<string | null>(null);
-  const [copyKeysEnabled, setCopyKeysEnabled] = useState(false);
+  const [copyKeysEnabled, setCopyKeysEnabled] = useState(isExplicitDuplicate);
   const [selectedProviders, setSelectedProviders] = useState<Record<string, boolean>>({});
   const [copyOptions, setCopyOptions] = useState<Omit<DuplicateCopyOptions, "providerKeys">>({
-    providerConfigs: false,
+    providerConfigs: true,
     agents: true,
     roles: true,
     channels: false,
@@ -159,7 +159,7 @@ function WorkspaceCreateModalActive({
     if (!trimmedName || !trimmedRoot) return;
 
     const copyProviders = copyKeysEnabled
-      ? providersWithKeys.filter((provider) => selectedProviders[provider] === true)
+      ? providersWithKeys.filter((provider) => selectedProviders[provider] ?? true)
       : [];
 
     setSaving(true);
@@ -220,6 +220,7 @@ function WorkspaceCreateModalActive({
                 checked={duplicateEnabled}
                 onChange={(e) => {
                   setDuplicateEnabled(e.target.checked);
+                  if (e.target.checked) setCopyKeysEnabled(true);
                   if (!e.target.checked) setSelectedSourceId("");
                 }}
                 className="rounded border-zinc-300"
@@ -238,6 +239,7 @@ function WorkspaceCreateModalActive({
                       setRootPath(
                         ws.root_path ? ws.root_path.replace(/\/+$/, "") + "-copy" : "",
                       );
+                      setCopyKeysEnabled(true);
                     }
                   }}
                   options={[
@@ -303,7 +305,7 @@ function WorkspaceCreateModalActive({
                     <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
                       <input
                         type="checkbox"
-                        checked={selectedProviders[provider] ?? false}
+                        checked={selectedProviders[provider] ?? true}
                         onChange={(e) =>
                           setSelectedProviders((prev) => ({
                             ...prev,
