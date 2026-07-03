@@ -59,6 +59,6 @@
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^1.0.15",
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "12.9.0"
   }
 }
