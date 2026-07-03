@@ -261,7 +261,7 @@
     "@ujima/runtime-core": "workspace:*",
     "@ujima/shared": "workspace:*",
     "ai": "^6.0.168",
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "12.9.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",

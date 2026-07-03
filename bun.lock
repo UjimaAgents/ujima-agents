@@ -6,7 +6,7 @@
       "name": "ujima-agents",
       "dependencies": {
         "@ai-sdk/deepseek": "^1.0.15",
-        "better-sqlite3": "^12.9.0",
+        "better-sqlite3": "12.9.0",
       },
       "devDependencies": {
         "@eslint/js": "^9.9.0",
@@ -49,7 +49,7 @@
         "@ujima/permissions": "workspace:*",
         "@ujima/runtime-core": "workspace:*",
         "@ujima/shared": "workspace:*",
-        "better-sqlite3": "^12.9.0",
+        "better-sqlite3": "12.9.0",
         "chalk": "^5.6.2",
         "fastify": "^4.28.1",
         "fastify-type-provider-zod": "^2.0.0",
@@ -100,7 +100,7 @@
         "@ujima/runtime-core": "workspace:*",
         "@ujima/shared": "workspace:*",
         "ai": "^6.0.168",
-        "better-sqlite3": "^12.9.0",
+        "better-sqlite3": "12.9.0",
       },
       "devDependencies": {
         "@electron/rebuild": "^4.0.3",
@@ -209,7 +209,7 @@
       "version": "0.0.60",
       "dependencies": {
         "@ujima/shared": "workspace:*",
-        "better-sqlite3": "^12.9.0",
+        "better-sqlite3": "12.9.0",
       },
       "devDependencies": {
         "@types/better-sqlite3": "^7.6.11",
@@ -222,7 +222,7 @@
         "ujima": "./dist/cli.js",
       },
       "dependencies": {
-        "better-sqlite3": "^12.9.0",
+        "better-sqlite3": "12.9.0",
       },
     },
     "packages/event-bus": {
@@ -348,6 +348,7 @@
     },
   },
   "trustedDependencies": [
+    "better-sqlite3",
     "sharp",
     "unrs-resolver",
   ],
@@ -1054,7 +1055,7 @@
 
     "baseline-browser-mapping": ["baseline-browser-mapping@2.10.33", "", { "bin": { "baseline-browser-mapping": "dist/cli.cjs" } }, "sha512-bA6+tcSLpz2tIEdDXZPpPTIuxBcC4+w6SieaYyfigIa4h8GlFxbA17v22Vx3JUtuZQj9SgOsnbK+aTBzyDyEuw=="],
 
-    "better-sqlite3": ["better-sqlite3@12.10.0", "", { "dependencies": { "bindings": "^1.5.0", "prebuild-install": "^7.1.1" } }, "sha512-CyzaZRQKyHkB2ZInfTTl2nvT33EbDpjkLEbE8/Zck3Ll6O0qqvuGdrJ45HgtH+HykRg88ITY3AdreBGN70aBSQ=="],
+    "better-sqlite3": ["better-sqlite3@12.9.0", "", { "dependencies": { "bindings": "^1.5.0", "prebuild-install": "^7.1.1" } }, "sha512-wqUv4Gm3toFpHDQmaKD4QhZm3g1DjUBI0yzS4UBl6lElUmXFYdTQmmEDpAFa5o8FiFiymURypEnfVHzILKaxqQ=="],
 
     "binaryextensions": ["binaryextensions@6.11.0", "", { "dependencies": { "editions": "^6.21.0" } }, "sha512-sXnYK/Ij80TO3lcqZVV2YgfKN5QjUWIRk/XSm2J/4bd/lPko3lvk0O4ZppH6m+6hB2/GTu+ptNwVFe1xh+QLQw=="],
 
