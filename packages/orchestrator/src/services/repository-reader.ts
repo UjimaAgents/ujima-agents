@@ -706,3 +706,79 @@ export interface ApiRepository extends ConversationRepository {
     updatedBy?: string;
   }): GovernanceRuleRow;
 }
+
+// ── Narrow port types ─────────────────────────────────────────────
+// Each picks only the methods its domain needs from ApiRepository.
+// Services should migrate from ApiRepository to the narrowest port.
+
+export type RunStore = Pick<
+  ApiRepository,
+  | 'saveRun'
+  | 'getRun'
+  | 'listRuns'
+  | 'listActiveRuns'
+  | 'listThreadRuns'
+  | 'saveRunStep'
+  | 'listRunSteps'
+  | 'findActiveRunForMemberThread'
+>;
+
+export type MemberStore = Pick<
+  ApiRepository,
+  | 'getOrganization'
+  | 'listOrganizations'
+  | 'saveOrganization'
+  | 'saveWorkspaceSetting'
+  | 'getWorkspaceSetting'
+  | 'deleteWorkspaceSetting'
+  | 'saveMember'
+  | 'saveWorkspaceMember'
+  | 'getMember'
+  | 'listMembers'
+  | 'getWorkspaceMember'
+  | 'listWorkspaceMembers'
+  | 'saveSpirit'
+  | 'getSpirit'
+  | 'getSpiritByTriple'
+  | 'getSpiritByRunId'
+  | 'listActiveSpiritsForMember'
+  | 'listSpiritsForSession'
+  | 'getTaskSession'
+>;
+
+export type MessageStore = Pick<
+  ApiRepository,
+  | 'saveMessage'
+  | 'updateMessage'
+  | 'getMessage'
+  | 'findMessageByClientId'
+  | 'getLatestHumanMessageInThread'
+  | 'listMessages'
+  | 'listChannelMessages'
+  | 'searchChannelMessages'
+  | 'countMessagesSince'
+  | 'countUncompactedMessageChars'
+  | 'replaceMessageMentions'
+  | 'getThread'
+  | 'ensureThread'
+  | 'getAttachment'
+  | 'listMessageAttachments'
+  | 'saveAttachment'
+  | 'deleteAttachment'
+  | 'linkAttachmentsToMessage'
+>;
+
+export type ChannelStore = Pick<
+  ApiRepository,
+  | 'saveChannel'
+  | 'getChannel'
+  | 'listAllChannels'
+  | 'listChannels'
+  | 'setChannelMembers'
+  | 'deleteChannel'
+  | 'setChannelMemberMode'
+  | 'getChannelMemberMode'
+  | 'listChannelMemberModes'
+  | 'listChannelMemberModesForChannel'
+  | 'deleteChannelMemberMode'
+>;

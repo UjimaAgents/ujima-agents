@@ -55,20 +55,22 @@ export interface RunContext {
   isDelegateTurn: boolean;
 }
 
-const PRIOR_THREAD_RUN_LIMIT = 8;
-
-function recentThreadRunSteps(input: {
+export function visibleHistoryRunSteps(input: {
   repo: ApiRepository;
   organizationId: string;
-  threadId: string;
+  historyMessages: readonly Message[];
   currentRunId: string;
 }): RunStep[] {
-  const runs = input.repo.listThreadRuns(input.organizationId, input.threadId, undefined, PRIOR_THREAD_RUN_LIMIT).data;
   const seen = new Set<string>();
+  const runIds = new Set<string>();
   const steps: RunStep[] = [];
-  for (const run of runs) {
-    if (run.id === input.currentRunId) continue;
-    for (const step of input.repo.listRunSteps(input.organizationId, run.id)) {
+  for (const message of input.historyMessages) {
+    const runId = message.metadata?.runId;
+    if (!runId || runId === input.currentRunId) continue;
+    runIds.add(runId);
+  }
+  for (const runId of runIds) {
+    for (const step of input.repo.listRunSteps(input.organizationId, runId)) {
       if (seen.has(step.toolCallId)) continue;
       seen.add(step.toolCallId);
       steps.push(step);
@@ -174,7 +176,7 @@ export async function buildRunContext(input: RunContextInput): Promise<RunContex
   }
 
   const runSteps = [
-    ...recentThreadRunSteps({ repo, organizationId, threadId, currentRunId: runId }),
+    ...visibleHistoryRunSteps({ repo, organizationId, historyMessages: promptHistoryMessages, currentRunId: runId }),
     ...(repo.listRunSteps?.(organizationId, runId) ?? []),
   ];
   const messages = buildPromptMessages({

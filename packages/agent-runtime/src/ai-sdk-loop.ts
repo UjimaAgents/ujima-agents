@@ -36,7 +36,6 @@ export interface AiSdkLoopInputs {
    * so the system prompt stays cache-stable. */
   contextMessages?: ModelMessage[];
   maxIterations: number;
-  maxToolResultChars?: number;
   abortSignal?: AbortSignal;
   emitEvent?: (event: UjimaEvent) => Promise<void> | void;
   onStream?: (event: UjimaEvent) => void;
@@ -63,8 +62,6 @@ export interface AiSdkLoopOutcome {
    */
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
 }
-
-const DEFAULT_MAX_TOOL_RESULT_CHARS = 12_000;
 
 // Control-flow sentinels. streamText treats `execute` throwing as an error
 // returned to the model; we instead use these to force a non-model-visible
@@ -101,41 +98,6 @@ function genEventId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function truncateToolContent(content: unknown, maxChars: number): unknown {
-  if (maxChars <= 0) {
-    return '[tool output truncated]';
-  }
-
-  if (typeof content === 'string') {
-    return truncateText(content, maxChars);
-  }
-
-  const serialized = safeStringify(content);
-  if (serialized.length <= maxChars) {
-    return content;
-  }
-
-  return {
-    truncated: true,
-    summary: `Tool output exceeded ${maxChars} chars and was truncated.`,
-    preview: truncateText(serialized, maxChars),
-  };
-}
-
-function truncateText(value: string, maxChars: number): string {
-  if (value.length <= maxChars) return value;
-  const omitted = value.length - maxChars;
-  return `${value.slice(0, maxChars)}\n...[truncated ${omitted} chars]`;
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
 export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOutcome> {
   const {
     agent,
@@ -149,7 +111,6 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
     systemPrompt,
     userPrompt,
     maxIterations,
-    maxToolResultChars = DEFAULT_MAX_TOOL_RESULT_CHARS,
     abortSignal,
     emitEvent,
     onStream,
@@ -300,9 +261,9 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
               sessionId,
             });
             if (result.isError) {
-              return { error: truncateToolContent(result.content, maxToolResultChars) };
+              return { error: result.content };
             }
-            return truncateToolContent(result.content, maxToolResultChars);
+            return result.content;
           } catch (err) {
             const duration = Date.now() - start;
             const message = err instanceof Error ? err.message : String(err);

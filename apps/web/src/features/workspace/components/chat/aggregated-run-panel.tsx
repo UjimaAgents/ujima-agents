@@ -172,8 +172,7 @@ function getToolHeaderAndCleanDetail(op: AggregatedOperation, sections: DetailSe
   let filteredSections = JSON.parse(JSON.stringify(sections)) as DetailSection[];
 
   // Find target and status in key-value items
-  for (let sIdx = 0; sIdx < filteredSections.length; sIdx++) {
-    const sec = filteredSections[sIdx];
+  for (const sec of filteredSections) {
     if (sec.type === "key-value" && sec.items) {
       const targetKeys = ["task", "key", "procedure", "query", "name", "prompt", "message", "command", "commandline", "cmd"];
       const matchIdx = sec.items.findIndex((item: DetailItem) => targetKeys.includes(item.key.toLowerCase()));
@@ -375,6 +374,212 @@ function renderValue(key: string, val: string) {
   );
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isUuidLike(value: string | undefined): boolean {
+  if (!value) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function cleanMessageMeta(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || isUuidLike(trimmed)) return undefined;
+  return trimmed;
+}
+
+function normalizeToolInput(op: AggregatedOperation): Record<string, unknown> | undefined {
+  const input = recordValue(op.toolInput);
+  const nested = recordValue(input?.input);
+  return nested ?? input;
+}
+
+function messageToolSummary(op: AggregatedOperation): string {
+  const tool = op.toolName ?? "";
+  if (tool === "channel.reply") return "Replied";
+  if (tool === "channel.dm") return "Sent direct message";
+  if (tool === "channel.post") return "Posted message";
+  if (tool === "channel.close") return "Closed thread";
+  if (tool === "channel.pass") return "Stood down";
+  if (tool === "channel.ack") return "Acknowledged";
+  if (tool === "channel.handoff") return "Handed off";
+  return "Message action";
+}
+
+function MessageToolPane({ op }: { op: AggregatedOperation }) {
+  const input = normalizeToolInput(op);
+  const result = recordValue(op.toolResult);
+  const tool = op.toolName ?? "";
+  const title = semanticToolTitle(tool);
+  const body =
+    stringValue(input?.message) ??
+    stringValue(input?.content) ??
+    stringValue(input?.text) ??
+    stringValue(input?.body) ??
+    stringValue(input?.value) ??
+    stringValue(input?.note) ??
+    stringValue(input?.reason) ??
+    stringValue(result?.message) ??
+    stringValue(result?.error);
+  const target =
+    cleanMessageMeta(stringValue(input?.member_id)) ??
+    cleanMessageMeta(stringValue(input?.channel_id)) ??
+    cleanMessageMeta(stringValue(input?.message_id));
+  const targetLabel =
+    tool === "channel.dm"
+      ? "Recipient"
+      : tool === "channel.post"
+        ? "Channel"
+        : tool === "channel.reply"
+          ? "Reply"
+          : tool === "channel.close"
+            ? "Reason"
+            : "Target";
+
+  return (
+    <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-3 text-xs">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-sm text-foreground/90">{title}</div>
+          {target ? <div className="mt-0.5 text-[11px] text-foreground/50">{targetLabel}: {target}</div> : null}
+        </div>
+        {op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
+      </div>
+      {body ? (
+        <div className="mt-2 rounded-md bg-background/60 px-3 py-2 text-sm leading-6 text-foreground/80">
+          {body}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function memoryEntries(result: Record<string, unknown> | undefined): string[] {
+  const entries = result?.entries;
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => {
+      const record = recordValue(entry);
+      return stringValue(record?.value) ?? stringValue(record?.content);
+    })
+    .filter((value): value is string => Boolean(value));
+}
+
+function MemoryToolPane({ op }: { op: AggregatedOperation }) {
+  const input = normalizeToolInput(op);
+  const result = recordValue(op.toolResult);
+  const tool = op.toolName ?? "";
+  const title = semanticToolTitle(tool);
+  const query =
+    stringValue(input?.query) ??
+    stringValue(input?.key_prefix) ??
+    stringValue(input?.key);
+  const body =
+    tool === "memory.recall"
+      ? undefined
+      : stringValue(input?.value) ??
+        stringValue(input?.content) ??
+        stringValue(input?.body) ??
+        stringValue(result?.message) ??
+        stringValue(result?.error);
+  const recalled = tool === "memory.recall" ? memoryEntries(result) : [];
+  const emptyRecall = tool === "memory.recall" && recalled.length === 0;
+
+  return (
+    <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-3 text-xs">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-sm text-foreground/90">{title}</div>
+          {query ? <div className="mt-0.5 text-[11px] text-foreground/50">{semanticTargetLabel(tool)}: {query}</div> : null}
+        </div>
+        {op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
+      </div>
+      {body ? (
+        <div className="mt-2 rounded-md bg-background/60 px-3 py-2 text-sm leading-6 text-foreground/80">
+          {body}
+        </div>
+      ) : null}
+      {recalled.length > 0 ? (
+        <div className="mt-2 rounded-md bg-background/60 px-3 py-2 text-sm leading-6 text-foreground/80">
+          {recalled.map((item, index) => (
+            <div key={`${op.id}-memory-${index}`}>{item}</div>
+          ))}
+        </div>
+      ) : null}
+      {emptyRecall ? (
+        <div className="mt-2 text-[11px] text-foreground/50">No matching memories found.</div>
+      ) : null}
+    </div>
+  );
+}
+
+export function SemanticToolPane({ op }: { op: AggregatedOperation }) {
+  const input = normalizeToolInput(op);
+  const result = recordValue(op.toolResult);
+  const tool = op.toolName ?? "";
+  const title = semanticToolTitle(tool);
+  const target =
+    stringValue(input?.key) ??
+    stringValue(input?.query) ??
+    stringValue(input?.member_id) ??
+    stringValue(input?.message_id) ??
+    stringValue(input?.reason) ??
+    stringValue(input?.status);
+  const body =
+    stringValue(input?.body) ??
+    stringValue(input?.value) ??
+    stringValue(input?.content) ??
+    stringValue(result?.message) ??
+    stringValue(result?.error);
+  const resultStatus = stringValue(result?.status);
+  const meta = [
+    target ? { key: semanticTargetLabel(tool), val: target } : null,
+    resultStatus ? { key: "Status", val: resultStatus } : null,
+  ].filter((item): item is DetailItem => Boolean(item));
+
+  return (
+    <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2 text-xs">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-foreground/85">{title}</div>
+          {target ? <div className="mt-0.5 truncate text-[11px] text-foreground/45">{target}</div> : null}
+        </div>
+        {op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
+      </div>
+      {body ? <div className="mt-2 rounded-md bg-background/60 px-2 py-1.5 text-foreground/70">{body}</div> : null}
+      {meta.length > 0 ? <PrettyToolDetail sections={[{ type: "key-value", items: meta }]} /> : null}
+    </div>
+  );
+}
+
+function semanticTargetLabel(toolName: string): string {
+  if (toolName === "channel.dm") return "Recipient";
+  if (toolName === "channel.reply") return "Reply";
+  if (toolName === "channel.close") return "Reason";
+  if (toolName.startsWith("memory.")) return toolName === "memory.recall" ? "Query" : "Key";
+  return "Target";
+}
+
+function semanticToolTitle(toolName: string): string {
+  if (toolName === "channel.reply") return "Replied";
+  if (toolName === "channel.dm") return "Sent DM";
+  if (toolName === "channel.close") return "Closed";
+  if (toolName === "channel.pass") return "Passed";
+  if (toolName === "channel.ack") return "Acknowledged";
+  if (toolName === "channel.handoff") return "Handed off";
+  if (toolName === "channel.post") return "Posted";
+  if (toolName === "memory.write") return "Wrote memory";
+  if (toolName === "memory.recall") return "Recalled memory";
+  if (toolName === "memory.forget") return "Forgot memory";
+  return toolName || "Tool";
+}
+
 export function TraceMarkdown({ content, tone = "text-foreground/70" }: { content: string; tone?: string }) {
   return <Markdown content={content} className={`trace-step-text ${tone}`} />;
 }
@@ -533,10 +738,13 @@ export function AggregatedRunPanel({
     counts.question && `asked ${counts.question} ${plural(counts.question, "question")}`,
     counts.procedure && `updated procedures ${counts.procedure} ${plural(counts.procedure, "time")}`,
     counts.schedule && `updated schedules ${counts.schedule} ${plural(counts.schedule, "time")}`,
-    counts.message && `sent ${counts.message} ${plural(counts.message, "message")}`,
+    counts.message && `${counts.message} ${plural(counts.message, "message action")}`,
     counts.tool && `called ${counts.tool} ${plural(counts.tool, "tool")}`,
   ].filter(Boolean);
-  const summaryText = summaryParts.join(", ");
+  const summaryText =
+    operations.length === 1 && operations[0]?.type === "message"
+      ? messageToolSummary(operations[0])
+      : summaryParts.join(", ");
 
   const toggle = (id: string) => (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -672,7 +880,15 @@ export function AggregatedRunPanel({
               );
             }
 
-            if (op.type === "memory" || op.type === "goal" || op.type === "question" || op.type === "procedure" || op.type === "schedule" || op.type === "delegate" || op.type === "message" || op.type === "tool") {
+            if (op.type === "message") {
+              return <MessageToolPane key={op.id} op={op} />;
+            }
+
+            if (op.type === "memory") {
+              return <MemoryToolPane key={op.id} op={op} />;
+            }
+
+            if (op.type === "goal" || op.type === "question" || op.type === "procedure" || op.type === "schedule" || op.type === "delegate" || op.type === "tool") {
               return (
                 <ExpandableRow
                   key={op.id}
@@ -693,4 +909,3 @@ export function AggregatedRunPanel({
     </div>
   );
 }
-

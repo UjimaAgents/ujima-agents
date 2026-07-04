@@ -16,39 +16,43 @@ import { AsyncMutex } from '../utils/async-mutex.js';
 import { AiService } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { ApprovalService } from './approval.js';
-import { AuthService } from './auth.js';
-import { BootstrapService } from './bootstrap.js';
+import { createAuthDomain, type AuthDomainOutput } from './auth-domain.js';
+import { createNotificationsDomain, type NotificationsDomainOutput } from './notifications-domain.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService, type ConversationServiceOptions } from './conversation.js';
 import { buildConversationSummaryViaLlm } from './conversation-summary.js';
 import { GoalSystemService } from './goal-system.js';
-import { MemoryReviewService } from './memory-review.js';
-import { TrajectoryService } from './trajectory.js';
-import { McpRegistryService } from './mcp-registry.js';
+import { createSchedulerDomain, type SchedulerDomainOutput } from './scheduler-domain.js';
+import { createAdminDomain, type AdminDomainOutput } from './admin-domain.js';
+import type { MemoryReviewService } from './memory-review.js';
+import type { TrajectoryService } from './trajectory.js';
+import type { McpRegistryService } from './mcp-registry.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
 import { findRegistryEntry } from '@ujima/mcp-client';
 import { join } from 'node:path';
 import { findRegistryMatch } from './connector-catalog.js';
-import { captureToolResultAttachments, cleanupExpiredAgentAttachments } from './agent-attachment-capture.js';
+import { captureToolResultAttachments } from './agent-attachment-capture.js';
 import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
-import { createTierCurationService, type TierCurationService } from './tier-curation.js';
-import { GovernanceService } from './governance-service.js';
-import { PluginRegistryService } from './plugin-registry.js';
-import { DEFAULT_SKILL_URLS, OnboardingService } from './onboarding.js';
+import type { TierCurationService } from './tier-curation.js';
+import type { GovernanceService } from './governance-service.js';
 import {
   drainPendingThreadAlertAfterRun,
   enqueuePendingThreadAlert,
   hasPendingThreadAlert,
   type PendingThreadAlert,
 } from './pending-member-alerts.js';
+import type { AuthService } from './auth.js';
+import type { BootstrapService } from './bootstrap.js';
+import type { OnboardingService } from './onboarding.js';
+import type { PluginRegistryService } from './plugin-registry.js';
 import type { ApiRepository } from './repository-reader.js';
-import { SettingsService } from './settings.js';
-import { WorkspaceService, type WorkspaceCatalog } from './workspace.js';
+import type { SettingsService } from './settings.js';
+import { type WorkspaceService, type WorkspaceCatalog } from './workspace.js';
 import { SpiritService, type ModelResolver, type SpiritMcpPool } from './spirit.js';
-import { SchedulerService } from './scheduler.js';
-import { NotificationService } from './notification.js';
-import { TaskSessionService } from './task-session.js';
+import type { SchedulerService } from './scheduler.js';
+import type { NotificationService } from './notification.js';
+import type { TaskSessionService } from './task-session.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { TeamStore } from './team-store.js';
 import type { DelegateKind } from '../utils/delegate-turn.js';
@@ -317,6 +321,16 @@ function threadHasActiveRun(
   return repo.listActiveRuns(organizationId).some((run) => run.threadId === threadId);
 }
 
+type WakeSequencingMode = 'parallel' | 'serialized';
+
+function resolveWakeSequencing(
+  input: WakeMemberInput,
+  repo: WakeMemberDeps['repo'],
+): WakeSequencingMode {
+  const sourceMessage = repo.getMessage?.(input.organizationId, input.messageId);
+  return sourceMessage?.senderKind === AGENT_KIND ? 'serialized' : 'parallel';
+}
+
 function latestDelegateReply(
   repo: Pick<ApiRepository, 'listMessages'>,
   organizationId: string,
@@ -581,19 +595,7 @@ export async function wakeMemberWithFailureEvents(
     return;
   }
 
-  if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
-    enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
-    return;
-  }
-
-  // One thread speaks at a time. The mutex closes the check/create window
-  // across all agents in that conversation.
-  await createRunMutex.run(createRunMutexKey(input), async () => {
-    if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
-      enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
-      return;
-    }
-
+  const createWakeRun = async (): Promise<void> => {
     let run: Awaited<ReturnType<SpiritService['createRun']>>;
     try {
       run = await deps.runs.createRun({
@@ -619,6 +621,27 @@ export async function wakeMemberWithFailureEvents(
         run.id,
       );
     }
+  };
+
+  const sequencing = resolveWakeSequencing(input, deps.repo);
+  if (sequencing === 'parallel') {
+    await createWakeRun();
+    return;
+  }
+
+  if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
+    enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+    return;
+  }
+
+  // Agent-originated turns speak one at a time. The mutex closes the
+  // check/create window across all agents in that conversation.
+  await createRunMutex.run(createRunMutexKey(input), async () => {
+    if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
+      enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+      return;
+    }
+    await createWakeRun();
   });
 }
 
@@ -1450,104 +1473,28 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     await wakeMemberWithFailureEvents(wakeMemberDeps, input);
   };
 
-  const auth = new AuthService(context.repo);
-  const bootstrap = new BootstrapService(context.repo, context.teamStore, auth);
-  // pluginRegistry is constructed early so OnboardingService can reference it
-  // for default-skill seeding at org creation time.
-  const pluginRegistry = new PluginRegistryService(
-    context.repo,
-    context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
-  );
-  const onboarding = new OnboardingService(context.repo, context.teamStore, pluginRegistry);
-  // Single named dependency for the org-IDs source used by the
-  // attachment-cleanup sweep. Declaring it as a typed local
-  // function makes the contract explicit at the bootstrap
-  // boundary instead of duck-typing through context.repo at
-  // every call site.
-  const getOrganizationIdsForSweep: () => string[] = () =>
-    context.repo.listOrganizations().map((org) => org.id);
+  const authDomain = createAuthDomain({
+    repo: context.repo,
+    teamStore: context.teamStore,
+    workspaces: context.workspaces,
+    archiveRoot: context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
+  });
+  const { auth, bootstrap, onboarding, workspaces, pluginRegistry, getOrganizationIdsForSweep, probeIds } = authDomain;
 
-  // Probe at bootstrap so a misconfigured Repository fails at
-  // services boot with a clear error rather than silently no-oping
-  // at the first scheduler tick.
-  const probeIds = getOrganizationIdsForSweep();
-  if (!Array.isArray(probeIds)) {
-    throw new Error(
-      'ApiServicesContext.repo.listOrganizations must return an array of organizations',
-    );
-  }
-
-  // Seed default skills for orgs missing any DEFAULT_SKILL_URLS entry.
-  // Checks each URL independently via getPluginInstallBySourceUrl so an
-  // org with one skill still gets the remaining defaults installed.
-  // Best-effort and fire-and-forget — a network error should never
-  // delay service startup.
-  void (async () => {
-    if (!pluginRegistry) return;
-    for (const orgId of probeIds) {
-      for (const url of DEFAULT_SKILL_URLS) {
-        try {
-          const existing =
-            context.repo.getPluginInstallBySourceUrl?.(orgId, url) ?? null;
-          if (existing) continue;
-          await pluginRegistry.installFromUrl({
-            organizationId: orgId,
-            createdBy: '__startup_sweep__',
-            sourceUrl: url,
-          });
-        } catch (err) {
-          console.warn(
-            `[startup] failed to seed default skill from ${url} for org ${orgId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-    }
-  })();
-
-  // Bet 1c (Hermes review) — post-turn memory-review counter.
-  // Counter ticks per completed run; threshold-hit spawns a
-  // restricted memory-only review fork (stub for follow-up wiring).
-  const memoryReview = new MemoryReviewService(
-    context.teamStore,
-    context.repo,
+  const schedulerDomain = createSchedulerDomain({
+    repo: context.repo,
+    teamStore: context.teamStore,
+    realtime: context.realtime,
+    conversations,
+    spirits,
     tools,
     ai,
-  );
-
-  const scheduler = new SchedulerService(context.repo, conversations, context.realtime, {
-    onHeartbeat: async (job) => {
-      if (!job.channelId) return;
-      await spirits.createRun({
-        organizationId: job.organizationId,
-        agentId: job.memberId,
-        threadId: job.channelId,
-        summary: `Heartbeat: ${job.name}`,
-        wakeReason: 'heartbeat',
-      });
-    },
-    onSelfImprovement: async (job) => {
-      if (!job.channelId) return;
-      await memoryReview?.runManual({
-        organizationId: job.organizationId,
-        memberId: job.memberId,
-        channelId: job.channelId,
-        triggerType: 'manual',
-      });
-    },
-    onTick: async () => {
-      await goals.sweepAllPendingTasks();
-      // No try/catch. The bootstrap probe above validated the
-      // dependency; the scheduler's own tick-level handler covers
-      // transient failures (DB blip, etc.) without crashing the
-      // cron loop.
-      cleanupExpiredAgentAttachments({
-        repo: context.repo,
-        attachmentStoreRoot,
-        organizationIds: getOrganizationIdsForSweep(),
-      });
-    },
+    goals,
+    attachmentStoreRoot,
+    getOrganizationIdsForSweep,
   });
-  const notifications = new NotificationService(context.repo);
+  const { memoryReview, scheduler, trajectory } = schedulerDomain;
+  const { notifications } = createNotificationsDomain({ repo: context.repo });
   handleMessagePublished = (msg) => {
     if (msg.senderId !== '__ujima_scheduler__') {
       const id = msg.channelId ?? msg.threadId;
@@ -1588,15 +1535,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       approvalId: input.approvalId,
     });
   });
-  const settings = new SettingsService(context.repo, context.teamStore, approvalsImpl);
-  const workspaces = new WorkspaceService(
-    context.repo,
-    context.teamStore,
-    context.workspaces,
-    auth,
-  );
-  const taskSessions = new TaskSessionService(context.repo, conversations, spirits);
-  const mcpRegistry = new McpRegistryService(context.repo);
+  const adminDomain = createAdminDomain({
+    repo: context.repo,
+    teamStore: context.teamStore,
+    approvals: approvalsImpl,
+    conversations,
+    spirits,
+  });
+  const { settings, taskSessions, mcpRegistry, tierCuration, governance } = adminDomain;
 
   // PR 11 — wire the §17.5.6 attachment-request resolution handler.
   // On approve, write the attachment row (channel or per-agent) via
@@ -1760,15 +1706,14 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     }
   });
 
-  const tierCuration = createTierCurationService({ repo: context.repo });
-  const governance = new GovernanceService(context.repo);
+  // tierCuration and governance are already constructed inside createAdminDomain.
   // pluginRegistry is already constructed above, near OnboardingService.
 
   // Bet 5 (Hermes review) — trajectory JSONL projection. One JSONL
   // line per completed run, gated by env var. Fire-and-forget, no
   // schema, no service dependencies: pure projection over runs +
   // run_steps + messages tables we already keep.
-  const trajectory = new TrajectoryService();
+  // trajectory is already constructed inside createSchedulerDomain.
 
   // Late-bind the run-completed hook. The single hook routes to
   // drain-pending-member-alert, memory-review's turn counter, and

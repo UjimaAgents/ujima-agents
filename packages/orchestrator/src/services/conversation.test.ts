@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ChannelSchema,
   ConversationThreadSchema,
@@ -9,10 +9,15 @@ import {
   decodeCursor,
   encodeCursor,
 } from '@ujima/shared';
+import type { Message } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { ConversationService } from './conversation.js';
 
-function createConversationFixture(options: { autoCompactConversations?: boolean } = {}) {
+function createConversationFixture(options: {
+  autoCompactConversations?: boolean;
+  summarizeConversation?: (messages: Message[], mode: 'summary' | 'archive') => Promise<string>;
+  summarizeConversationTimeoutMs?: number;
+} = {}) {
   const organization = OrganizationSchema.parse({
     id: 'org-1',
     name: 'Org',
@@ -218,8 +223,9 @@ function createConversationFixture(options: { autoCompactConversations?: boolean
       alerts.push(input.memberId);
       alertWakeReasons.push({ memberId: input.memberId, wakeReason: input.wakeReason });
     },
-    summarizeConversation: async (messages, mode) =>
-      `${mode === 'archive' ? '[[CONVERSATION_ARCHIVE_V1]]' : '[[CONVERSATION_SUMMARY_V2]]'} # AI summarized ${messages.length} messages.`,
+    summarizeConversation: options.summarizeConversation ?? (async (messages, mode) =>
+      `${mode === 'archive' ? '[[CONVERSATION_ARCHIVE_V1]]' : '[[CONVERSATION_SUMMARY_V2]]'} # AI summarized ${messages.length} messages.`),
+    summarizeConversationTimeoutMs: options.summarizeConversationTimeoutMs,
     contextWindowTokens: () => 1_000,
     autoCompactConversations: options.autoCompactConversations,
   });
@@ -608,6 +614,57 @@ describe('ConversationService @all mentions', () => {
     expect(compactedSource?.metadata?.compactedInto).toBe(summary?.id);
     expect(stored.data.some((message) => message.metadata?.compactedInto)).toBe(true);
     expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(503);
+  });
+
+  it('clears conversation history through the AI archive summarizer', async () => {
+    const summarizeConversation = vi.fn(async (_messages: Message[], mode: 'summary' | 'archive') =>
+      `${mode === 'archive' ? '[[CONVERSATION_ARCHIVE_V1]]' : '[[CONVERSATION_SUMMARY_V2]]'} # AI summarized.`,
+    );
+    const { repo, service } = createConversationFixture({ summarizeConversation });
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'clear me',
+    });
+
+    const result = await service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'clear',
+    });
+
+    expect(summarizeConversation).toHaveBeenCalledWith(expect.any(Array), 'archive');
+    expect(result.summaryMessage?.content).toContain('[[CONVERSATION_ARCHIVE_V1]]');
+    const source = repo.listMessages('org-1', 'general').data.find((message) => message.content === 'clear me');
+    expect(source?.metadata?.compactedInto).toBe(result.summaryMessage?.id);
+  });
+
+  it('times out summarize without compacting source messages', async () => {
+    const { repo, service } = createConversationFixture({
+      summarizeConversation: () => new Promise(() => undefined),
+      summarizeConversationTimeoutMs: 5,
+    });
+    service.sendMessage({
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'human-1',
+      content: 'summarize me',
+    });
+
+    await expect(service.archiveConversation({
+      organizationId: 'org-1',
+      threadId: 'general',
+      memberId: 'human-1',
+      mode: 'summarize',
+    })).rejects.toThrow('Conversation summary timed out');
+
+    const messages = repo.listMessages('org-1', 'general').data;
+    expect(messages.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'))).toBe(false);
+    expect(messages.find((message) => message.content === 'summarize me')?.metadata?.compactedInto).toBeUndefined();
   });
 
 });

@@ -1572,6 +1572,8 @@ function buildToolStep(
     id: `tool:${toolCallId}:${call?.event_id ?? ""}:${result?.event_id ?? ""}`,
     title: line.title,
     toolName: name,
+    toolInput: mergedPayload?.toolCall?.args,
+    toolResult: resultBody?.toolResult?.result,
     detail: hasRich
       ? ""
       : formatStructuredToolDetail(
