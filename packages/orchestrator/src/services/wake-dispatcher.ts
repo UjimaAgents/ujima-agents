@@ -9,7 +9,9 @@ import {
   type AgentOnlyMember,
   type Channel,
   type Message,
+  type MessageMention,
   type WakeReason,
+  type WakeSuppressedReason,
 } from '@ujima/shared';
 import { isVacuousAck } from './mirror-guard.js';
 import type { RealtimeService } from './context.js';

@@ -21,6 +21,12 @@ export const SELF_NOTE_COMPACTION_BATCH_SIZE = 100;
 export const SELF_NOTE_RECENT_RAW_COUNT = 15;
 export const SELF_NOTE_COMPACTION_TRIGGER = 500;
 export const CONVERSATION_COMPACTION_BATCH_SIZE = 100;
+/** Number of most recent user-triggered turns to preserve intact during compaction. */
+export const CONVERSATION_TAIL_TURNS = 2;
+/** Minimum token budget to reserve for preserving recent turns during compaction. */
+export const CONVERSATION_PRESERVE_RECENT_TOKENS_MIN = 2_000;
+/** Maximum token budget to reserve for preserving recent turns during compaction. */
+export const CONVERSATION_PRESERVE_RECENT_TOKENS_MAX = 8_000;
  
 
 export interface CompactionContext {
@@ -319,16 +325,56 @@ export function listUncompactedConversationMessages(
   );
 }
 
+/**
+ * Find the message index of the start of the "tail" — the most recent
+ * N user-triggered turns that should be preserved intact during compaction.
+ * Returns the index (from the full `messages` array) where the tail begins,
+ * or 0 if all messages should be compacted.
+ */
+export function tailStartIndex(
+  messages: Message[],
+  exclusionMarkers: string[],
+  tailTurns: number,
+): number {
+  if (tailTurns <= 0 || messages.length === 0) return 0;
+  let found = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!msg || isMessageWithAnyMarker(msg, exclusionMarkers)) continue;
+    // Count any message that looks user-initiated (not system, not compaction summary)
+    if (msg.kind !== 'system') {
+      found++;
+      if (found >= tailTurns) return i;
+    }
+  }
+  return 0;
+}
+
 export function selectCompactionBatch(input: {
   messages: Message[];
   summaryMarker: string;
   compactedMarker: string;
   batchSize: number;
   mode: ConversationCompactionMode;
+  tailTurns?: number;
 }): { activeSummaries: Message[]; compactable: Message[] } {
   const activeSummaries = listActiveCompactionSummaries(input.messages, input.summaryMarker);
   const uncompacted = listUncompactedConversationMessages(input.messages, input);
-  const compactable = uncompacted.slice(0, input.batchSize);
+  // Only preserve tail turns in summary mode (archive mode does a full clear).
+  const effectiveTailTurns = input.mode === 'summary' ? (input.tailTurns ?? CONVERSATION_TAIL_TURNS) : 0;
+  const excludeMarkers = uncompactedExclusionMarkers(input);
+  const tailIdx = tailStartIndex(input.messages, excludeMarkers, effectiveTailTurns);
+
+  let compactable: Message[];
+  if (tailIdx > 0) {
+    // Only compact messages before the tail
+    const beforeTailIds = new Set(
+      input.messages.slice(0, tailIdx).map((m) => m.id),
+    );
+    compactable = uncompacted.filter((m) => beforeTailIds.has(m.id)).slice(0, input.batchSize);
+  } else {
+    compactable = uncompacted.slice(0, input.batchSize);
+  }
   return { activeSummaries, compactable };
 }
 

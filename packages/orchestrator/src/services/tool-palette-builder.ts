@@ -157,9 +157,11 @@ export class ToolPaletteBuilder {
           repo: this.deps.repo,
           tools: this.deps.tools,
           approvals: this.deps.attachmentApprovalRequester
-            ? { requestAttachmentApproval: this.deps.attachmentApprovalRequester as (...args: never[]) => unknown }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ? { requestAttachmentApproval: this.deps.attachmentApprovalRequester as any }
             : undefined,
-          attachmentCapture: this.deps.attachmentCapture as (...args: never[]) => unknown ?? undefined,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          attachmentCapture: this.deps.attachmentCapture as any ?? undefined,
         },
         ctx,
       );

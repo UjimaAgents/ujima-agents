@@ -70,12 +70,30 @@ Study how opencode (anomalyco/opencode) handles conversation compaction and summ
 - Strip media attachments from the replayed message
 - Add an explanatory note about the compaction
 
-## Task Breakdown
+## Progress
 
-| # | Task | Files | Depends On |
-|---|------|-------|------------|
-| 1 | Structured Summary Template | `conversation-summary.ts`, `conversation-compact.ts` | — |
-| 2 | Tail Preservation | `conversation-compact.ts`, `repository-reader.ts` (config) | 1 |
-| 3 | Iterative Summary Updates | `conversation-compact.ts`, `conversation-summary.ts` | 1 |
-| 4 | Tool Output Pruning | `conversation-compact.ts`, `spirit-agent-run.ts` | — |
-| 5 | Overflow Replay | `conversation-compact.ts`, `conversation.ts` | 1, 2 |
+### ✅ Task 1: Structured Summary Template
+- Replaced `ConversationSummaryFacts` interface fields: `context`/`decisions`/`openQuestions` → `objective`/`importantDetails`/`completed`/`active`/`blocked`
+- Updated `extractSummary()` zod schema, prompt, and return mapping
+- Updated `mergeSummaryPartials()` to match new fields
+- Updated `buildConversationSummaryViaLlm()` section output
+- Updated `buildConversationClearSummary()` sections
+- Self-note summary unchanged (has its own format)
+
+### ✅ Task 2: Tail Preservation
+- Added `CONVERSATION_TAIL_TURNS` (default 2), `CONVERSATION_PRESERVE_RECENT_TOKENS_MIN/MAX` constants
+- Added `tailStartIndex()` — walks backwards to find the Nth user-initiated turn from the end, skipping compaction markers
+- Updated `selectCompactionBatch()` — accepts optional `tailTurns` parameter, filters compactable messages to only those before the tail index
+- Only the "head" (messages before the tail) gets summarized; recent turns remain intact
+
+### ⬜ Task 3: Iterative Summary Updates
+- When a previous summary exists, inject it into the summarization prompt
+- The model updates rather than recreates the summary
+
+### ⬜ Task 4: Tool Output Pruning
+- Before compacting, scan run steps for old tool outputs
+- Truncate outputs older than N turns to save token budget
+
+### ⬜ Task 5: Overflow Replay
+- When compaction is triggered by context overflow, auto-replay the triggering user message
+- Strip media attachments from the replayed message
