@@ -79,4 +79,41 @@ describe('conversation-summary', () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
+  it('passes the rolling previous summary back into later summary chunks', async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          objective: ['first chunk'],
+          importantDetails: ['detail one'],
+          completed: ['done one'],
+          active: ['active one'],
+          blocked: [],
+          nextActions: ['next one'],
+        }),
+      } as never)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          objective: ['second chunk'],
+          importantDetails: ['detail two'],
+          completed: ['done two'],
+          active: ['active two'],
+          blocked: [],
+          nextActions: ['next two'],
+        }),
+      } as never);
+
+    await buildConversationSummaryViaLlm({
+      model: { provider: 'anthropic' } as never,
+      messages: Array.from({ length: 36 }, (_, index) =>
+        makeMessage(`message-${index}`, `2026-05-08T09:${String(index).padStart(2, '0')}:00.000Z`),
+      ),
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(generateText).mock.calls[0]?.[0].system).not.toContain('PREVIOUS summary');
+    expect(vi.mocked(generateText).mock.calls[1]?.[0].system).toContain('PREVIOUS summary');
+    expect(vi.mocked(generateText).mock.calls[1]?.[0].system).toContain('"objective"');
+    expect(streamText).not.toHaveBeenCalled();
+  });
+
 });

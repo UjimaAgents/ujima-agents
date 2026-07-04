@@ -221,21 +221,20 @@ export async function buildConversationSummaryViaLlm(
     filteredCount: filtered.length,
     chunkCount: chunks.length,
   });
-  const partials: ConversationSummaryFacts[] = [];
+  let previousSummary: string | undefined;
+  let facts: ConversationSummaryFacts | undefined;
   for (const [index, messages] of chunks.entries()) {
     const transcript = transcriptFor(messages);
-    partials.push(
-      await extractSummary(input.model, transcript, maxBullets, {
-        mode,
-        chunkIndex: index,
-        chunkCount: chunks.length,
-        messageCount: messages.length,
-      }),
-    );
+    const summary = await extractSummary(input.model, transcript, maxBullets, {
+      mode,
+      chunkIndex: index,
+      chunkCount: chunks.length,
+      messageCount: messages.length,
+    }, previousSummary);
+    facts = facts ? mergeSummaryPartials([facts, summary], maxBullets) : summary;
+    previousSummary = JSON.stringify(facts, null, 2);
   }
-  const first = partials[0];
-  if (!first) throw new Error("Conversation summarization produced no result.");
-  const facts = partials.length === 1 ? first : mergeSummaryPartials(partials, maxBullets);
+  if (!facts) throw new Error("Conversation summarization produced no result.");
   const archive = mode === "archive";
   const workStateBullets = [
     `- Completed: ${nonEmpty(facts.completed, "(none)").join("; ")}`,
@@ -302,13 +301,13 @@ async function extractSummary(
       isCodexResponsesModel(model)
         ? await streamText({
             model,
-            system: SUMMARY_JSON_SYSTEM_PROMPT,
+            system,
             prompt,
             maxOutputTokens: 2_048,
           }).text
         : (await generateText({
             model,
-            system: SUMMARY_JSON_SYSTEM_PROMPT,
+            system,
             prompt,
             maxOutputTokens: 2_048,
           })).text

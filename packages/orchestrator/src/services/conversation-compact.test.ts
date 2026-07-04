@@ -92,6 +92,28 @@ describe('conversation-compact selection', () => {
     expect(uncompacted.map((message) => message.id)).toEqual(['msg-visible']);
   });
 
+  it('preserves whole recent incoming turns, not just the last raw messages', () => {
+    const messages = [
+      makeMessage('user-1', { id: 'user-1', senderId: 'human-1', senderKind: 'human', kind: 'human' }),
+      makeMessage('assistant-1', { id: 'assistant-1', senderId: 'agent-1', senderKind: 'agent', kind: 'agent', metadata: { runId: 'run-1' } }),
+      makeMessage('user-2', { id: 'user-2', senderId: 'human-1', senderKind: 'human', kind: 'human' }),
+      makeMessage('assistant-2', { id: 'assistant-2', senderId: 'agent-1', senderKind: 'agent', kind: 'agent', metadata: { runId: 'run-2' } }),
+      makeMessage('user-3', { id: 'user-3', senderId: 'human-1', senderKind: 'human', kind: 'human' }),
+    ];
+
+    const batch = selectCompactionBatch({
+      messages,
+      summaryMarker: CONVERSATION_SUMMARY_MARKER,
+      compactedMarker: CONVERSATION_COMPACTED_MARKER,
+      batchSize: 100,
+      mode: 'summary',
+      tailTurns: 2,
+      selfMemberId: 'agent-1',
+    });
+
+    expect(batch.compactable.map((message) => message.id)).toEqual(['user-1', 'assistant-1']);
+  });
+
   it('counts visible run-step replay payloads in prompt token estimates', () => {
     const bigOutput = 'x'.repeat(8_000);
     const messages = [

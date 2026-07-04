@@ -198,6 +198,7 @@ async function executeDelegate(ctx: ToolExecutionContext, args: AgentDelegateArg
     // ── status ────────────────────────────────────────────────────────
     case 'status': {
       const ids = resolveTaskIdsOrThrow(args);
+      if (ids.length === 0) throw new Error('status requires task_id or task_ids.');
       if (ids.length === 1) {
         const [id] = ids;
         if (!id) throw new Error('status requires task_id or task_ids.');

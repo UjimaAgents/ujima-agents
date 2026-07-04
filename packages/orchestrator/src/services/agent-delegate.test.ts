@@ -521,4 +521,23 @@ describe('agent delegation', () => {
     });
   });
 
+  it('agent.delegate status rejects missing task ids', async () => {
+    await expect(agentDelegateTool.execute({
+      invocation: {
+        organizationId: orgId,
+        runId: 'run-1',
+        memberId: caller.id,
+        toolCallId: 'tool-1',
+        toolId: 'agent.delegate',
+        action: 'execute',
+        resourceType: 'mcp',
+        input: {
+          action: 'status',
+        },
+      } as never,
+      repo: {} as never,
+      getDelegateStatus: vi.fn(),
+    } as never)).rejects.toThrow('status requires task_id or task_ids.');
+  });
+
 });

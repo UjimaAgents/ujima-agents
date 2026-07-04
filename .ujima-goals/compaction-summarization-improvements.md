@@ -86,7 +86,7 @@ Study how opencode (anomalyco/opencode) handles conversation compaction and summ
 - Updated `selectCompactionBatch()` — accepts optional `tailTurns` parameter, filters compactable messages to only those before the tail index
 - Only the "head" (messages before the tail) gets summarized; recent turns remain intact
 
-### ⬜ Task 3: Iterative Summary Updates
+### ✅ Task 3: Iterative Summary Updates
 - When a previous summary exists, inject it into the summarization prompt
 - The model updates rather than recreates the summary
 

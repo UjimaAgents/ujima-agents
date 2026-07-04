@@ -335,14 +335,17 @@ export function tailStartIndex(
   messages: Message[],
   exclusionMarkers: string[],
   tailTurns: number,
+  selfMemberId?: string,
 ): number {
   if (tailTurns <= 0 || messages.length === 0) return 0;
   let found = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (!msg || isMessageWithAnyMarker(msg, exclusionMarkers)) continue;
-    // Count any message that looks user-initiated (not system, not compaction summary)
-    if (msg.kind !== 'system') {
+    // Preserve whole incoming turns by counting only messages not sent by the
+    // current agent. Once we find the Nth incoming turn, we keep everything
+    // from that point onward, including the assistant/tool work that followed.
+    if (msg.kind !== 'system' && (!selfMemberId || msg.senderId !== selfMemberId)) {
       found++;
       if (found >= tailTurns) return i;
     }
@@ -357,13 +360,14 @@ export function selectCompactionBatch(input: {
   batchSize: number;
   mode: ConversationCompactionMode;
   tailTurns?: number;
+  selfMemberId?: string;
 }): { activeSummaries: Message[]; compactable: Message[] } {
   const activeSummaries = listActiveCompactionSummaries(input.messages, input.summaryMarker);
   const uncompacted = listUncompactedConversationMessages(input.messages, input);
   // Only preserve tail turns in summary mode (archive mode does a full clear).
   const effectiveTailTurns = input.mode === 'summary' ? (input.tailTurns ?? CONVERSATION_TAIL_TURNS) : 0;
   const excludeMarkers = uncompactedExclusionMarkers(input);
-  const tailIdx = tailStartIndex(input.messages, excludeMarkers, effectiveTailTurns);
+  const tailIdx = tailStartIndex(input.messages, excludeMarkers, effectiveTailTurns, input.selfMemberId);
 
   let compactable: Message[];
   if (tailIdx > 0) {
@@ -398,6 +402,7 @@ async function compactThreadMessages(
     compactedMarker: input.compactedMarker,
     batchSize: input.batchSize,
     mode: input.mode ?? 'summary',
+    selfMemberId: input.senderId,
   });
   if (compactable.length === 0) {
     return { summaryMessage: null, compactedMessageIds: [] };
