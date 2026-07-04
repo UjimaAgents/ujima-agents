@@ -73,6 +73,7 @@ export * from "./goal-schemas.js";
 export * from "./goal-board-labels.js";
 export {
   SHARED_AGENT_SYSTEM_PROMPT,
+  TERMINATING_TOOL_USAGE_GUIDANCE,
   buildEnvironmentContext,
   buildEnvironmentTimestamp,
   buildEnvironmentTimezone,

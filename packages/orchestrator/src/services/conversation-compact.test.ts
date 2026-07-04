@@ -6,6 +6,7 @@ import {
   CONVERSATION_SUMMARY_MARKER,
 } from './conversation-summary.js';
 import {
+  estimatePromptReplayTokens,
   listActiveCompactionSummaries,
   listUncompactedConversationMessages,
   selectCompactionBatch,
@@ -91,5 +92,90 @@ describe('conversation-compact selection', () => {
     expect(uncompacted.map((message) => message.id)).toEqual(['msg-visible']);
   });
 
-});
+  it('counts visible run-step replay payloads in prompt token estimates', () => {
+    const bigOutput = 'x'.repeat(8_000);
+    const messages = [
+      makeMessage('agent used a tool', {
+        id: 'agent-msg',
+        senderId: 'agent-1',
+        senderKind: 'agent',
+        kind: 'agent',
+        metadata: { runId: 'run-1' },
+      }),
+    ];
 
+    const estimate = estimatePromptReplayTokens(
+      {
+        listRunSteps: () => [
+          {
+            id: 'step-1',
+            organizationId: 'org-1',
+            runId: 'run-1',
+            threadId: 'dm:agent-1:human-1',
+            agentId: 'agent-1',
+            toolCallId: 'call-1',
+            toolId: 'channel.read',
+            action: 'read',
+            resourceType: 'message',
+            resourcePath: 'dm:agent-1:human-1',
+            input: { channel_id: 'dm:agent-1:human-1' },
+            output: { data: [{ content: bigOutput }] },
+            status: 'ok',
+            createdAt: '2026-05-08T09:41:01.000Z',
+          },
+        ],
+      },
+      'org-1',
+      messages,
+    );
+
+    expect(estimate).toBeGreaterThan(2_000);
+  });
+
+  it('does not double-count run steps already stored on message tool calls', () => {
+    const message = makeMessage('agent used a tool', {
+      id: 'agent-msg',
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      metadata: { runId: 'run-1' },
+      toolCalls: [
+        {
+          toolCallId: 'call-1',
+          toolName: 'channel.read',
+          args: {},
+          result: { data: [{ content: 'short' }] },
+          isError: false,
+        },
+      ],
+    });
+
+    const estimate = estimatePromptReplayTokens(
+      {
+        listRunSteps: () => [
+          {
+            id: 'step-1',
+            organizationId: 'org-1',
+            runId: 'run-1',
+            threadId: 'dm:agent-1:human-1',
+            agentId: 'agent-1',
+            toolCallId: 'call-1',
+            toolId: 'channel.read',
+            action: 'read',
+            resourceType: 'message',
+            resourcePath: 'dm:agent-1:human-1',
+            input: {},
+            output: { data: [{ content: 'x'.repeat(8_000) }] },
+            status: 'ok',
+            createdAt: '2026-05-08T09:41:01.000Z',
+          },
+        ],
+      },
+      'org-1',
+      [message],
+    );
+
+    expect(estimate).toBeLessThan(200);
+  });
+
+});

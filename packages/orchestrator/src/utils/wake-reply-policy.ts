@@ -1,4 +1,4 @@
-import type { ConversationKind, WakeReason } from '@ujima/shared';
+import { TERMINATING_TOOL_USAGE_GUIDANCE, type ConversationKind, type WakeReason } from '@ujima/shared';
 import { isOneToOneThread, parseDmThreadId } from '@ujima/shared';
 
 export interface WakeReplyPolicy {
@@ -29,9 +29,10 @@ export const SCAFFOLD_RULES = Object.freeze({
   optionalBackpressure:
     'If <reply-obligation>optional-backpressure</reply-obligation>, the message was addressed to you but repeated agent-to-agent wake activity made a reply optional. Reply only with substantive new information; otherwise call channel.close and stop.',
   toolDefinitionsBase:
-    'channel.close = silent close when you have no useful visible reply. Use reason "ack" if addressed, otherwise use a stand-down reason. channel.reply = substantive visible content (an answer, artifact, question, or changed status).',
+    'channel.close = final silent close when you have no useful visible reply. Use reason "ack" if addressed, otherwise use a stand-down reason. channel.reply = final substantive visible content (an answer, artifact, question, or changed status).',
   toolDefinitionsChannel:
-    'channel.close = silent close when you have no useful visible reply. Use reason "ack" if addressed, otherwise use a stand-down reason. channel.reply = substantive visible content (an answer, artifact, question, or changed status).',
+    'channel.close = final silent close when you have no useful visible reply. Use reason "ack" if addressed, otherwise use a stand-down reason. channel.reply = final substantive visible content (an answer, artifact, question, or changed status).',
+  terminatorsAfterWork: TERMINATING_TOOL_USAGE_GUIDANCE[1],
   explicitAddressedBase:
     'If <you-explicitly-addressed>true</you-explicitly-addressed>, you must terminate via a tool. Use channel.reply ONLY when you have substantive content per the definition above; otherwise use channel.close with reason "ack". Acknowledging via channel.reply with paraphrased filler is treated as a missed reply.',
   explicitAddressedChannel:
@@ -58,6 +59,7 @@ const DM_WAKE_SCAFFOLD = [
   'This is a direct message (1:1) thread. Messages from your conversation partner are addressed to you — reply when they ask you to do something or expect a response.',
   'Do not silently close a human DM because you were not @mentioned; @mention rules apply to shared channels only.',
   'Use channel.reply to answer in this DM.',
+  SCAFFOLD_RULES.terminatorsAfterWork,
 ].join('\n');
 
 // Agent↔agent DM scaffold: a 1:1 between agents is exactly where the
@@ -66,6 +68,7 @@ const AGENT_DM_WAKE_SCAFFOLD = [
   SCAFFOLD_RULES.readThreadState,
   'This is a direct message (1:1) thread with ANOTHER AGENT, not a human.',
   'Reply only when you have substantive new information, a concrete deliverable, or a question that moves the work forward.',
+  SCAFFOLD_RULES.terminatorsAfterWork,
   'You are allowed — and expected — to call channel.close to stand down and break the loop. If you have no constructive/new response, call channel.close with a descriptive note immediately instead of sending a filler reply.',
 ].join('\n');
 
@@ -74,6 +77,7 @@ export const CHANNEL_WAKE_SCAFFOLD_LINES: readonly string[] = Object.freeze([
   SCAFFOLD_RULES.threadStateAuthoritative,
   SCAFFOLD_RULES.optionalBackpressure,
   SCAFFOLD_RULES.toolDefinitionsChannel,
+  SCAFFOLD_RULES.terminatorsAfterWork,
   SCAFFOLD_RULES.explicitAddressedChannel,
   SCAFFOLD_RULES.outOfScopeRedirect,
   SCAFFOLD_RULES.implicitAddressed,
@@ -97,6 +101,7 @@ export const BASE_WAKE_SCAFFOLD_LINES: readonly string[] = Object.freeze([
   // canonical exemplar and emit it through channel.ack even when
   // richer replies were warranted.
   SCAFFOLD_RULES.toolDefinitionsBase,
+  SCAFFOLD_RULES.terminatorsAfterWork,
   SCAFFOLD_RULES.explicitAddressedBase,
   SCAFFOLD_RULES.implicitAddressed,
   SCAFFOLD_RULES.notAddressed,

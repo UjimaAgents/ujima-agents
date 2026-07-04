@@ -1,8 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import {
-  AGENT_KIND,
   ChannelSchema,
-  MessageMentionSchema,
   SocketEventNames,
   channelRoom,
   encodeCursor,
@@ -13,11 +10,7 @@ import {
   type ChannelPassReason,
   type Message,
   type MessageMention,
-  buildMentionHandleRegistry,
   getDirectMessageThreadId,
-  scanMentionsInContent,
-  type WakeReason,
-  type WakeSuppressedReason,
   isAgentOnlyThread,
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
@@ -28,10 +21,12 @@ import type {
   ConversationRepository,
   PaginatedMessages,
 } from './repository-reader.js';
+import { MessageWriter } from './message-writer.js';
+import { MentionResolver } from './mention-resolver.js';
+import { WakeDispatcher } from './wake-dispatcher.js';
 import { requireOrganization } from '../utils/require-organization.js';
 import { evictStaleTimestamps } from '../utils/ttl-map.js';
 import { isVacuousAck, shouldSuppressForMirror } from './mirror-guard.js';
-import { normalizeToDottedToolName } from './run-reply-guard.js';
 import {
   compactSelfNotesIfNeeded,
   compactConversationIfNeeded,
@@ -47,91 +42,15 @@ import {
 } from './conversation-quota.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 
-/**
- * Strip a trailing parenthetical role/disambiguation suffix from a
- * member display name: "Layla Reds ( OSINT )" → "Layla Reds". Used to
- * register a bare-name mention alias so "@Layla Reds" resolves.
- */
-export function stripMentionSuffix(name: string): string {
-  return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
-}
-
-/**
- * Mention-handle entries for a member list: the id, the full display
- * name, AND — when unique — the name with its trailing parenthetical
- * suffix stripped. The suffix alias is what lets "@Layla Reds" resolve
- * to a member named "Layla Reds ( OSINT )": without it the scanner's
- * exact `startsWith(handle)` match fails (the typed text never contains
- * "( OSINT )"), so the agent is never treated as addressed and stands
- * down as a passive broadcast bystander. The alias is only registered
- * when exactly one member could answer to that base, so an ambiguous
- * base stays unaliased rather than silently resolving to the wrong
- * agent. A base is ambiguous if it collides with ANY other member's
- * base — whether that other member reaches it via its own stripped
- * suffix ("Layla Reds ( Sales )") OR via its plain full name ("Layla
- * Reds"). The plain-name case is the important one: last-write-wins in
- * buildMentionHandleRegistry would otherwise let a suffixed member
- * hijack the bare name of a differently-named plain member.
- */
-export function buildMemberMentionEntries(
-  members: readonly { id: string; name: string }[],
-  valueOf: (member: { id: string; name: string }) => string,
-): { handle: string; value: string }[] {
-  // For each candidate base (lowercased), the set of member ids that
-  // could be addressed by it — via either the full name or the
-  // suffix-stripped base. Size > 1 ⇒ ambiguous ⇒ no alias.
-  const ownersByBase = new Map<string, Set<string>>();
-  const addOwner = (base: string, id: string): void => {
-    const key = base.toLowerCase();
-    if (!key) return;
-    let owners = ownersByBase.get(key);
-    if (!owners) {
-      owners = new Set();
-      ownersByBase.set(key, owners);
-    }
-    owners.add(id);
-  };
-  for (const member of members) {
-    addOwner(member.name, member.id);
-    addOwner(stripMentionSuffix(member.name), member.id);
-  }
-
-  const entries: { handle: string; value: string }[] = [];
-  for (const member of members) {
-    const value = valueOf(member);
-    entries.push({ handle: member.id, value });
-    entries.push({ handle: member.name, value });
-    const stripped = stripMentionSuffix(member.name);
-    if (stripped && stripped.toLowerCase() !== member.name.toLowerCase()) {
-      const owners = ownersByBase.get(stripped.toLowerCase());
-      // Only alias when this member is the SOLE owner of the base.
-      if (owners && owners.size === 1 && owners.has(member.id)) {
-        entries.push({ handle: stripped, value });
-      }
-    }
-  }
-  return entries;
-}
+export { stripMentionSuffix, buildMemberMentionEntries } from './mention-resolver.js';
 
 const ATTACHMENT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
-const WAKEABLE_AGENT_DM_TERMINATORS = new Set([
-  'message',
-  'channel.reply',
-  'channel.post',
-  'channel.handoff',
-]);
 
 type ConversationMessageMetadata = NonNullable<Message['metadata']>;
 
-export type WakePolicy = 'default' | 'never';
-
-export interface PublishMessageOptions {
-  suppressDmAlerts?: boolean;
-  silent?: boolean;
-  skipMentionResolution?: boolean;
-  wakePolicy?: WakePolicy;
-}
+import type { PublishMessageOptions, MemberAlertInput } from './conversation-types.js';
+export type { WakePolicy, PublishMessageOptions, MemberAlertInput } from './conversation-types.js';
 
 export interface ArchivedChannelMessageStore {
   listChannelMessages(input: {
@@ -152,22 +71,6 @@ export interface ArchivedChannelMessageStore {
   }): Promise<PaginatedMessages>;
 }
 
-export interface MemberAlertInput {
-  organizationId: string;
-  memberId: string;
-  channelId?: string;
-  threadId: string;
-  messageId: string;
-  byMemberId: string;
-  reason: string;
-  /**
-   * Typed wake reason that drives mandatory-reply enforcement
-   * and observability. The free-form `reason` above is kept for
-   * backwards compatibility with existing realtime payloads.
-   */
-  wakeReason: WakeReason;
-}
-
 export interface ConversationServiceOptions {
   archiveStore?: ArchivedChannelMessageStore;
   onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
@@ -178,6 +81,7 @@ export interface ConversationServiceOptions {
     messages: Message[],
     mode: 'summary' | 'archive',
   ) => Promise<string>;
+  summarizeConversationTimeoutMs?: number;
   contextWindowTokens?: (organizationId: string, threadId: string) => number;
   autoCompactConversations?: boolean;
 }
@@ -187,6 +91,7 @@ export class ConversationService {
   private readonly onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
   private readonly summarizeConversation?: ConversationServiceOptions['summarizeConversation'];
+  private readonly summarizeConversationTimeoutMs: number;
   private readonly contextWindowTokens: NonNullable<ConversationServiceOptions['contextWindowTokens']>;
   private readonly autoCompactConversations: boolean;
   private readonly mentionFanoutCap: number;
@@ -196,6 +101,9 @@ export class ConversationService {
   private readonly pairMentionTracker: PairMentionTracker;
   private readonly lastMessageCreatedAtByThread = new Map<string, number>();
   private readonly compactingThreads = new Set<string>();
+  private readonly writer: MessageWriter;
+  private readonly mentionResolver: MentionResolver;
+  private readonly wakeDispatcher: WakeDispatcher;
 
   constructor(
     private readonly repo: ConversationRepository,
@@ -206,6 +114,7 @@ export class ConversationService {
     this.onMemberAlerted = options.onMemberAlerted;
     this.onMessagePublished = options.onMessagePublished;
     this.summarizeConversation = options.summarizeConversation;
+    this.summarizeConversationTimeoutMs = options.summarizeConversationTimeoutMs ?? 60_000;
     this.contextWindowTokens = options.contextWindowTokens ?? (() => 128_000);
     this.autoCompactConversations = options.autoCompactConversations ?? false;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
@@ -213,6 +122,30 @@ export class ConversationService {
     this.mentionQuota = new MentionQuota(this.mentionFanoutCap, this.mentionWindowMs);
     this.channelReadQuota = new ChannelReadQuota(100, 60_000);
     this.pairMentionTracker = new PairMentionTracker(3, 90_000);
+
+    this.mentionResolver = new MentionResolver(this.repo);
+
+    this.wakeDispatcher = new WakeDispatcher({
+      repo: this.repo,
+      realtime: this.realtime,
+      mentionQuota: this.mentionQuota,
+      channelReadQuota: this.channelReadQuota,
+      pairMentionTracker: this.pairMentionTracker,
+      onMemberAlerted: this.onMemberAlerted,
+      publishSystemMessage: (msg) => this.publishMessage(msg, []),
+    });
+
+    this.writer = new MessageWriter({
+      repo: this.repo,
+      realtime: this.realtime,
+      requireActiveChannel: (orgId, chId) => this.requireActiveChannel(orgId, chId),
+      resolveMessageMentions: (orgId, msg, ch) => this.mentionResolver.resolveMessageMentions(orgId, msg, ch),
+      resolveMentionNames: (orgId, content, ch) => this.mentionResolver.resolveMentionNames(orgId, content, ch),
+      getPublishRooms: (msg, ch) => this.getPublishRooms(msg, ch),
+      requireAttachments: (orgId, ids) => this.requireAttachments(orgId, ids),
+      nextMessageCreatedAt: (orgId, threadId, requestedAt) =>
+        this.nextMessageCreatedAt(orgId, threadId, requestedAt),
+    });
   }
 
   private nextMessageCreatedAt(organizationId: string, threadId: string, requestedAt: string): string {
@@ -415,80 +348,24 @@ export class ConversationService {
     attachmentIds?: string[],
     options?: PublishMessageOptions,
   ) {
+    const emittedMessage = this.writer.publishMessage(
+      message,
+      typedMentions,
+      attachmentIds,
+      { skipMentionResolution: options?.skipMentionResolution, silent: options?.silent },
+    );
+
     const channel = message.channelId
       ? this.requireActiveChannel(message.organizationId, message.channelId)
       : null;
     const resolvedMentions = options?.skipMentionResolution
       ? typedMentions ?? []
-      : typedMentions ?? this.resolveMessageMentions(message.organizationId, message, channel);
-    const existing = this.repo.getMessage(message.organizationId, message.id);
-    const finalMessage = buildMessage({
-      ...message,
-      createdAt:
-        existing?.createdAt ??
-        this.nextMessageCreatedAt(message.organizationId, message.threadId, message.createdAt),
-      mentions: uniqueMentionIds(resolvedMentions),
-      mentionNames: this.resolveMentionNames(message.organizationId, message.content, channel),
-    });
-    const messageAttachments = (finalMessage as { attachments?: { id: string }[] }).attachments ?? [];
-    const linkedAttachmentIds = attachmentIds ?? messageAttachments.map((attachment) => attachment.id);
-    if (linkedAttachmentIds.length > 0) {
-      this.requireAttachments(finalMessage.organizationId, linkedAttachmentIds);
-    }
-    if (existing) {
-      this.repo.updateMessage({
-        ...finalMessage,
-        createdAt: existing.createdAt,
-        editedAt: new Date().toISOString(),
-      });
-    } else {
-      // L10 — race-safe dedupe: when two concurrent POSTs share a
-      // clientMessageId and both pass the `findMessageByClientId`
-      // pre-flight, only one wins the UNIQUE partial index. The
-      // loser's saveMessage returns the *winner's* row (different
-      // `id`, since each request generates a fresh server-side
-      // uuid). When that happens we MUST NOT keep going: mention
-      // replacement, attachment linking, realtime emit, and wake
-      // fanout would all reference an id that was never persisted,
-      // and worse, would double-notify agents whose first wake
-      // fired when the winner committed.
-      const saved = this.repo.saveMessage(finalMessage);
-      if (saved.id !== finalMessage.id) {
-        return saved;
-      }
-    }
-    this.repo.replaceMessageMentions(finalMessage.id, resolvedMentions);
-    if (linkedAttachmentIds.length > 0) {
-      this.repo.linkAttachmentsToMessage(finalMessage.id, linkedAttachmentIds);
-    }
-    const emittedMessage =
-      linkedAttachmentIds.length > 0
-        ? buildMessage({
-            ...finalMessage,
-            attachments: this.repo.listMessageAttachments(finalMessage.id),
-          })
-        : finalMessage;
-
-    const rooms = this.getPublishRooms(emittedMessage, channel);
+      : typedMentions ?? this.mentionResolver.resolveMessageMentions(message.organizationId, message, channel);
 
     if (!options?.silent) {
-      this.realtime.emit(
-        channel?.kind === 'dm'
-          ? SocketEventNames.dmMessage
-          : emittedMessage.channelId
-            ? SocketEventNames.channelMessage
-            : SocketEventNames.threadMessage,
-        channel?.kind === 'dm'
-          ? { organizationId: emittedMessage.organizationId, message: emittedMessage }
-          : emittedMessage.channelId
-            ? { organizationId: emittedMessage.organizationId, channelId: emittedMessage.channelId, message: emittedMessage }
-            : { organizationId: emittedMessage.organizationId, threadId: emittedMessage.threadId, message: emittedMessage },
-        rooms,
-      );
-
-      const suppressWake = options?.wakePolicy === 'never' || this.shouldSuppressDmWake(emittedMessage, channel);
+      const suppressWake = options?.wakePolicy === 'never' || this.wakeDispatcher.shouldSuppressDmWake(emittedMessage, channel);
       if (!suppressWake) {
-        this.fanout('alertMentionedMembers', this.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
+        this.wakeDispatcher.fanout('alertMentionedMembers', this.wakeDispatcher.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
       }
       const dmMentionedRecipients = new Set(resolvedMentions.map((mention) => mention.memberId));
       const dmAlreadyWakesMentionedRecipient =
@@ -501,10 +378,10 @@ export class ConversationService {
         !dmAlreadyWakesMentionedRecipient &&
         !suppressWake
       ) {
-        this.fanout('alertDirectMessageParticipants', this.alertDirectMessageParticipants(emittedMessage, channel));
+        this.wakeDispatcher.fanout('alertDirectMessageParticipants', this.wakeDispatcher.alertDirectMessageParticipants(emittedMessage, channel));
       }
       if (!suppressWake) {
-        this.fanout('alertChannelReaders', this.alertChannelReaders(emittedMessage, channel, resolvedMentions));
+        this.wakeDispatcher.fanout('alertChannelReaders', this.wakeDispatcher.alertChannelReaders(emittedMessage, channel, resolvedMentions));
       }
 
       if (this.onMessagePublished) {
@@ -535,7 +412,11 @@ export class ConversationService {
         if (!this.summarizeConversation) {
           throw new Error('AI conversation summarizer is not configured.');
         }
-        return this.summarizeConversation(messages, mode);
+        return withTimeout(
+          this.summarizeConversation(messages, mode),
+          this.summarizeConversationTimeoutMs,
+          'Conversation summary timed out. Try again in a moment.',
+        );
       },
       contextWindowTokens: this.contextWindowTokens,
     };
@@ -570,85 +451,8 @@ export class ConversationService {
     });
   }
 
-  // Fire-and-forget alert fanout: the message is already published and
-  // the HTTP response is on its way, so a downstream throw (schema drift,
-  // realtime emit failure) must not become an unhandledRejection.
-  private fanout(label: string, promise: Promise<unknown>): void {
-    promise.catch((error) => {
-      console.error(
-        `conversation: ${label} failed`,
-        error instanceof Error ? error.stack ?? error.message : String(error),
-      );
-    });
-  }
-
-  private async alertChannelReaders(
-    message: Message,
-    channel: Channel | null,
-    mentions: MessageMention[],
-  ): Promise<void> {
-    if (!channel || (channel.kind !== 'general' && channel.kind !== 'group')) return;
-    if (message.senderKind !== 'human' || message.kind === 'system' || message.senderId === 'system') return;
-
-    const alreadyMentioned = new Set(mentions.map((mention) => mention.memberId));
-    const candidates = channel.memberIds.length === 0
-      ? this.repo.listMembers(message.organizationId)
-      : channel.memberIds
-          .map((memberId) => this.repo.getMember(message.organizationId, memberId))
-          .filter((member): member is NonNullable<typeof member> => member !== null);
-
-    const fanout: Promise<void>[] = [];
-    for (const member of candidates) {
-      if (member.kind !== AGENT_KIND) {
-        this.emitWakeSuppressed(message, channel, member.id, 'non-agent-member');
-        continue;
-      }
-      if (member.retiredAt) {
-        this.emitWakeSuppressed(message, channel, member.id, 'retired');
-        continue;
-      }
-      if (member.id === message.senderId) {
-        this.emitWakeSuppressed(message, channel, member.id, 'sender-self');
-        continue;
-      }
-      if (alreadyMentioned.has(member.id)) continue;
-      if (!this.channelReadQuota.consume(`${message.organizationId}:${member.id}:${channel.id}`)) {
-        this.emitWakeSuppressed(message, channel, member.id, 'quota');
-        continue;
-      }
-      const memberMode = this.repo.getChannelMemberMode(message.organizationId, channel.id, member.id);
-      if (memberMode === 'muted' || memberMode === 'temp_disable') {
-        this.emitWakeSuppressed(message, channel, member.id, 'mode-blocked');
-        continue;
-      }
-      if (memberMode === 'passive') {
-        this.emitWakeSuppressed(message, channel, member.id, 'mode-passive');
-        continue;
-      }
-      fanout.push(this.alertMember(message, member.id, channel, 'channel-read'));
-    }
-    await Promise.all(fanout);
-  }
-
-  private emitWakeSuppressed(
-    message: Message,
-    channel: Channel | null,
-    memberId: string,
-    reason: WakeSuppressedReason,
-  ): void {
-    this.realtime.emit(
-      SocketEventNames.wakeSuppressed,
-      {
-        organizationId: message.organizationId,
-        channelId: channel?.id,
-        threadId: message.threadId,
-        memberId,
-        messageId: message.id,
-        reason,
-        occurredAt: new Date().toISOString(),
-      },
-      [orgRoom(message.organizationId), memberRoom(memberId)],
-    );
+  private get fanout(): (label: string, promise: Promise<unknown>) => void {
+    return (label, promise) => this.wakeDispatcher.fanout(label, promise);
   }
 
   /**
@@ -1305,9 +1109,9 @@ export class ConversationService {
     if (existing.senderId !== input.editorId) {
       throw new Error(`Message "${input.messageId}" cannot be edited by "${input.editorId}"`);
     }
-    const explicitMentionIds = this.inferExplicitMentionIds(input.organizationId, existing);
+    const explicitMentionIds = this.mentionResolver.inferExplicitMentionIds(input.organizationId, existing);
     const channel = existing.channelId ? this.repo.getChannel(input.organizationId, existing.channelId) : null;
-    const typedMentions = this.resolveMentionRecords({
+    const typedMentions = this.mentionResolver.resolveMentionRecords({
       organizationId: input.organizationId,
       messageId: existing.id,
       content: input.content,
@@ -1343,235 +1147,6 @@ export class ConversationService {
     return updated;
   }
 
-  private async alertMentionedMembers(
-    message: Message,
-    mentions: MessageMention[],
-    channel: Channel | null,
-  ): Promise<void> {
-    const seen = new Set<string>();
-    const fanout: Promise<void>[] = [];
-    for (const mention of mentions) {
-      if (seen.has(mention.memberId)) continue;
-      seen.add(mention.memberId);
-
-      if (mention.memberId === message.senderId) {
-        continue;
-      }
-
-      const member = this.repo.getMember(message.organizationId, mention.memberId);
-      if (!member || member.kind !== AGENT_KIND || member.retiredAt) {
-        continue;
-      }
-
-      // Muted/temp_disable agents don't wake even on @mention
-      if (channel) {
-        const memberMode = this.repo.getChannelMemberMode(
-          message.organizationId,
-          channel.id,
-          member.id,
-        );
-        if (memberMode === 'muted' || memberMode === 'temp_disable') {
-          continue;
-        }
-      }
-
-      // Mention fan-out must not leak across channel boundaries.
-      //
-      // - `self` channels are private agent scratchpads; no fan-out at all.
-      //   Even an `@mention` in the owner's own self-channel never wakes
-      //   another agent.
-      // - Any channel with an explicit member roster (DMs always have one,
-      //   group/task-run usually do) only delivers mentions to enrolled
-      //   members. Without this check, an `@mention` inside a DM could wake
-      //   an arbitrary agent and hand them the private DM thread via
-      //   `onMemberAlerted`/`generateRunReply`.
-      // - Channels with an empty roster (open public channels) keep the
-      //   broad fan-out behaviour.
-      if (channel) {
-        if (channel.kind === 'self') continue;
-        if (channel.memberIds.length > 0 && !channel.memberIds.includes(member.id)) {
-          continue;
-        }
-      }
-
-      // Mention fan-out is what wakes dormant agents back into the org loop.
-      // We keep the limiter here, before realtime emission and before the
-      // follow-up run callback, so both delivery paths agree on whether a wake
-      // should happen for this member.
-      if (!this.mentionQuota.consume(`${message.organizationId}:${member.id}`)) {
-        this.publishMentionThrottledSystemMessage(message.organizationId, member.id, message.senderId);
-        continue;
-      }
-
-      // Bet 3 — per-pair back-pressure. If `from→to` has already
-      // fired the per-pair cap within the window, demote to
-      // channel-read so the recipient can `channel.pass` instead
-      // of being forced into another mandatory reply. Emit an
-      // observability event so the UI can show "X and Y are
-      // looping — wakes demoted".
-      const countInWindow =
-        message.senderKind === AGENT_KIND
-          ? this.pairMentionTracker.record(
-              `${message.organizationId}|${message.threadId}|${message.senderId}|${member.id}`,
-            )
-          : 0;
-      const wakeReason: WakeReason = countInWindow > 3 ? 'channel-read' : 'mention';
-      if (wakeReason === 'channel-read') {
-        this.emitEchoSuppressed({
-          organizationId: message.organizationId,
-          fromMemberId: message.senderId,
-          toMemberId: member.id,
-          channelId: channel?.id,
-          threadId: message.threadId,
-          countInWindow,
-        });
-      }
-
-      fanout.push(this.alertMember(message, member.id, channel, wakeReason));
-    }
-    await Promise.all(fanout);
-  }
-
-  /**
-   * Record a (from→to) mention wake in the per-pair window and
-   * return the count of wakes in the window AFTER recording this
-   * one. Caller compares against `pairMentionCap` to decide whether
-   * to demote.
-   */
-  private async alertMember(
-    message: Message,
-    memberId: string,
-    channel: Channel | null,
-    reason: WakeReason | string,
-  ): Promise<void> {
-    const member = this.repo.getMember(message.organizationId, memberId);
-    if (!member || member.kind !== 'agent' || member.retiredAt) {
-      return;
-    }
-
-    // Derive the typed wake reason. Callers in this file pass
-    // typed values directly; legacy callers may pass a
-    // MessageMentionKindSchema value — those default to 'mention'.
-    const wakeReason: WakeReason =
-      reason === 'mention' ||
-      reason === 'dm' ||
-      reason === 'channel-read' ||
-      reason === 'handoff' ||
-      reason === 'parent-thread'
-        ? reason
-        : 'mention';
-
-    this.realtime.emit(
-      SocketEventNames.memberAlerted,
-      {
-        organizationId: message.organizationId,
-        memberId: member.id,
-        channelId: channel?.id,
-        threadId: message.threadId,
-        messageId: message.id,
-        byMemberId: message.senderId,
-        reason: String(reason),
-      },
-      [memberRoom(member.id)],
-    );
-
-    await this.onMemberAlerted?.({
-      organizationId: message.organizationId,
-      memberId: member.id,
-      channelId: channel?.id,
-      threadId: message.threadId,
-      messageId: message.id,
-      byMemberId: message.senderId,
-      reason: String(reason),
-      wakeReason,
-    });
-  }
-
-  private async alertDirectMessageParticipants(
-    message: Message,
-    channel: Channel | null,
-  ): Promise<void> {
-    if (!channel || channel.kind !== 'dm') return;
-    const recipients = channel.memberIds.filter((memberId) => memberId !== message.senderId);
-    const sender = this.repo.getMember(message.organizationId, message.senderId);
-    await Promise.all(
-      recipients.map(async (recipientId) => {
-        // Muted/temp_disable agents don't receive DMs either
-        const memberMode = this.repo.getChannelMemberMode(
-          message.organizationId,
-          channel.id,
-          recipientId,
-        );
-        if (memberMode === 'muted' || memberMode === 'temp_disable') return;
-        const recipient = this.repo.getMember(message.organizationId, recipientId);
-        try {
-          const isAgentPair = sender?.kind === AGENT_KIND && recipient?.kind === AGENT_KIND;
-          const countInWindow = isAgentPair
-            ? this.pairMentionTracker.record(
-                `${message.organizationId}|${message.threadId}|${message.senderId}|${recipientId}`,
-              )
-            : 0;
-          const wakeReason: WakeReason = countInWindow > 1 ? 'channel-read' : 'dm';
-
-          if (wakeReason === 'channel-read') {
-            this.emitEchoSuppressed({
-              organizationId: message.organizationId,
-              fromMemberId: message.senderId,
-              toMemberId: recipientId,
-              channelId: channel?.id,
-              threadId: message.threadId,
-              countInWindow,
-            });
-          }
-
-          await this.alertMember(message, recipientId, channel, wakeReason);
-        } catch (error) {
-          console.warn('DM participant alert failed', {
-            organizationId: message.organizationId,
-            messageId: message.id,
-            recipientId,
-            error,
-          });
-        }
-      }),
-    );
-  }
-
-  private shouldSuppressDmWake(message: Message, channel: Channel | null): boolean {
-    if (!channel || channel.kind !== 'dm') return false;
-    if (message.kind !== AGENT_KIND) return false;
-    const members = channel.memberIds
-      .map((id) => this.repo.getMember(message.organizationId, id))
-      .filter((member) => member != null)
-      .map((member) => ({ id: member.id, kind: member.kind }));
-    if (!isAgentOnlyThread(message.threadId, members)) return false;
-    const handoff = (message.metadata as { handoff?: { complete?: boolean } } | undefined)?.handoff;
-    if (handoff?.complete === true || isVacuousAck(message.content)) return true;
-    if (message.toolCalls.length === 0) return message.content.trim().length === 0;
-    return !message.toolCalls.some((call) =>
-      WAKEABLE_AGENT_DM_TERMINATORS.has(normalizeToDottedToolName(call.toolName)),
-    );
-  }
-
-  private publishMentionThrottledSystemMessage(
-    organizationId: string,
-    memberId: string,
-    byMemberId: string,
-  ): void {
-    const channel = this.repo
-      .listAllChannels(organizationId)
-      .find((candidate) => candidate.name === 'general' || candidate.id === 'general');
-    if (!channel) return;
-
-    const systemMessage = buildSystemMessage({
-      organizationId,
-      threadId: channel.id,
-      channelId: channel.id,
-      content: `member.alert_throttled: mention delivery for "${memberId}" by "${byMemberId}" exceeded ${this.mentionFanoutCap} alerts in ${Math.floor(this.mentionWindowMs / 1000)}s`,
-    });
-    this.publishMessage(systemMessage, []);
-  }
-
   private getPublishRooms(message: Message, channel: Channel | null): string[] {
     if (channel?.kind === 'dm' || channel?.kind === 'self') {
       return [
@@ -1594,90 +1169,7 @@ export class ConversationService {
     message: Message,
     channel: Channel | null,
   ): MessageMention[] {
-    return this.resolveMentionRecords({
-      organizationId,
-      messageId: message.id,
-      content: message.content,
-      createdAt: message.createdAt,
-      channel,
-      senderKind: message.senderKind,
-      explicitMentionIds: message.mentions,
-    });
-  }
-
-  private resolveMentionRecords(input: {
-    organizationId: string;
-    messageId: string;
-    content: string;
-    createdAt: string;
-    channel: Channel | null;
-    senderKind: string;
-    explicitMentionIds?: string[];
-  }): MessageMention[] {
-    const mentionIds = this.resolveMentionIds(
-      input.organizationId,
-      input.content,
-      input.channel,
-      input.senderKind,
-      input.explicitMentionIds ?? [],
-    );
-    return mentionIds.map((memberId) =>
-      MessageMentionSchema.parse({
-        id: randomUUID(),
-        messageId: input.messageId,
-        memberId,
-        kind: 'mention',
-        createdAt: input.createdAt,
-      }),
-    );
-  }
-
-  private resolveMentionIds(
-    organizationId: string,
-    content: string,
-    channel: Channel | null,
-    senderKind: string,
-    explicitMentionIds: string[],
-  ): string[] {
-    const mentionIds = new Set<string>(explicitMentionIds);
-    const registry = buildMentionHandleRegistry(
-      this.memberMentionEntries(organizationId, (member) => member.id),
-    );
-
-    scanMentionsInContent(content, registry, {
-      allowAll: senderKind !== AGENT_KIND,
-      onAll: () => {
-        for (const memberId of this.resolveAllMentionIds(organizationId, channel)) {
-          mentionIds.add(memberId);
-        }
-      },
-    });
-
-    for (const memberId of registry.values) {
-      mentionIds.add(memberId);
-    }
-
-    return [...mentionIds];
-  }
-
-
-  private inferExplicitMentionIds(organizationId: string, message: Message): string[] {
-    // Older message rows only persist the flattened mention id set. On edit we
-    // preserve ids that were not already implied by the old body, then merge
-    // them with handles parsed from the new body to keep stored metadata in
-    // sync without introducing new alert fan-out.
-    const channel = message.channelId ? this.repo.getChannel(organizationId, message.channelId) : null;
-    const parsedFromBody = new Set(
-      this.resolveMentionIds(organizationId, message.content, channel, message.senderKind, []),
-    );
-    return message.mentions.filter((memberId) => !parsedFromBody.has(memberId));
-  }
-
-  private resolveAllMentionIds(organizationId: string, channel: Channel | null): string[] {
-    if (channel?.memberIds.length) {
-      return channel.memberIds;
-    }
-    return this.repo.listMembers(organizationId).map((member) => member.id);
+    return this.mentionResolver.resolveMessageMentions(organizationId, message, channel);
   }
 
   private resolveMentionNames(
@@ -1685,29 +1177,7 @@ export class ConversationService {
     content: string,
     channel: Channel | null,
   ): string[] {
-    const registry = buildMentionHandleRegistry(
-      this.memberMentionEntries(organizationId, (member) => member.name),
-    );
-
-    scanMentionsInContent(content, registry, {
-      allowAll: true,
-      skipAllInDm: channel?.kind === 'dm',
-      onAll: () => {
-        registry.values.add('all');
-      },
-    });
-
-    return [...registry.values];
-  }
-
-  private memberMentionEntries(
-    organizationId: string,
-    valueOf: (member: { id: string; name: string }) => string,
-  ): { handle: string; value: string }[] {
-    return buildMemberMentionEntries(
-      this.repo.listMembers(organizationId),
-      valueOf,
-    );
+    return this.mentionResolver.resolveMentionNames(organizationId, content, channel);
   }
 
   private decorateMessages(
@@ -1907,4 +1377,14 @@ function mergeRankedPaginatedMessages(
 
 function uniqueMentionIds(mentions: MessageMention[]): string[] {
   return [...new Set(mentions.map((mention) => mention.memberId))];
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }

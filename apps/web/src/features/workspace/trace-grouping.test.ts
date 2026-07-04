@@ -59,4 +59,49 @@ describe("groupTraceSteps", () => {
     expect(grouped[0]?.title).toBe("Carter Jordan · completed");
   });
 
+  it("preserves structured payloads for memory and message tool UX", () => {
+    const steps: TraceStepData[] = [
+      {
+        id: "tool:memory",
+        actorId: "carter-jordan",
+        actorName: "Carter Jordan",
+        title: "Carter Jordan called tool memory.write",
+        toolName: "memory.write",
+        toolInput: { key: "user.preference", value: "Concise" },
+        toolResult: { status: "ok" },
+        detail: "",
+        time: "00:00",
+        duration: "—",
+        status: "success",
+      },
+      {
+        id: "tool:reply",
+        actorId: "carter-jordan",
+        actorName: "Carter Jordan",
+        title: "Carter Jordan called tool channel.reply",
+        toolName: "channel.reply",
+        toolInput: { message_id: "msg-1", body: "Done" },
+        toolResult: { status: "sent" },
+        detail: "",
+        time: "00:00",
+        duration: "—",
+        status: "success",
+      },
+    ];
+
+    const grouped = groupTraceSteps(steps);
+    const operations = grouped[0]?.aggregatedOperations;
+
+    expect(operations?.[0]).toMatchObject({
+      type: "memory",
+      toolName: "memory.write",
+      toolInput: { key: "user.preference", value: "Concise" },
+    });
+    expect(operations?.[1]).toMatchObject({
+      type: "message",
+      toolName: "channel.reply",
+      toolInput: { message_id: "msg-1", body: "Done" },
+    });
+  });
+
 });

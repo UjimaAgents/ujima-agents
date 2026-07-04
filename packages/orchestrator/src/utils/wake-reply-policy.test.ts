@@ -44,6 +44,12 @@ describe('resolveWakeReplyPolicy — suppressPassTool matrix', () => {
     expect(policy.suppressPassTool).toBe(true);
   });
 
+  it('human DM scaffold tells agents to do required work before final reply/close', () => {
+    const policy = resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: false });
+    expect(policy.scaffoldBlock).toContain('If you still need tools or verification');
+    expect(policy.scaffoldBlock).toContain('Do not call channel.reply or channel.close as your first tool');
+  });
+
   it('agent↔agent DM uses channel.close so the loop can terminate', () => {
     const policy = resolveWakeReplyPolicy({ threadId: DM_THREAD, dmPeerIsAgent: true });
     expect(policy.suppressPassTool).toBe(false);

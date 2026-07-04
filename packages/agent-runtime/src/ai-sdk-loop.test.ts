@@ -205,6 +205,73 @@ describe('runAiSdkLoop', () => {
     expect(outcome.iterations).toBe(2);
   });
 
+  test('tool results are passed back to the model without runtime truncation', async () => {
+    const largeOutput = 'x'.repeat(20_000);
+    let secondPrompt = '';
+    const mcp = makeMcp();
+    mcp.callTool = async () => ({ isError: false, content: largeOutput });
+    const model = new MockLanguageModelV3({
+      doStream: async (options) => {
+        const hasToolResults = options.prompt.some((m) =>
+          Array.isArray(m.content)
+            ? m.content.some((c: { type?: string }) => c.type === 'tool-result')
+            : false,
+        );
+        if (!hasToolResults) {
+          return {
+            stream: simulateReadableStream<LanguageModelV3StreamPart>({
+              chunks: [
+                {
+                  type: 'tool-call',
+                  toolCallId: 'call-1',
+                  toolName: 'read_file',
+                  input: JSON.stringify({ path: 'big.txt' }),
+                },
+                {
+                  type: 'finish',
+                  usage: v3Usage(10, 5),
+                  finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
+                },
+              ],
+            }),
+          };
+        }
+        secondPrompt = JSON.stringify(options.prompt);
+        return {
+          stream: simulateReadableStream<LanguageModelV3StreamPart>({
+            chunks: [
+              { type: 'text-start', id: '2' },
+              { type: 'text-delta', id: '2', delta: 'done' },
+              { type: 'text-end', id: '2' },
+              {
+                type: 'finish',
+                usage: v3Usage(12, 3),
+                finishReason: { unified: 'stop' as const, raw: 'stop' },
+              },
+            ],
+          }),
+        };
+      },
+    });
+
+    await runAiSdkLoop({
+      agent,
+      taskId: 'task-large',
+      sessionId: 'session-large',
+      model,
+      mcp,
+      tools: await mcp.listTools(),
+      permissions: fakePermissions(new Map()).middleware,
+      audit: fakeAudit,
+      systemPrompt: 'You are a backend engineer.',
+      userPrompt: 'Read the big file.',
+      maxIterations: 2,
+    });
+
+    expect(secondPrompt).toContain(largeOutput);
+    expect(secondPrompt).not.toContain('[truncated]');
+  });
+
   test('approval gate: reject returns rejection text to the model; run still completes', async () => {
     const model = new MockLanguageModelV3({
       doStream: async (options) => {

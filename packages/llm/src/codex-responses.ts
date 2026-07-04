@@ -2,14 +2,21 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createOpenAI } from '@ai-sdk/openai';
-import type { LanguageModelV3 } from '@ai-sdk/provider';
-import { defaultSettingsMiddleware, wrapLanguageModel, type LanguageModel } from 'ai';
+import type { LanguageModel } from 'ai';
 import WebSocket from 'ws';
+import {
+  isOpenAIResponsesDoneEvent,
+  openAIResponsesTerminalError,
+  parseOpenAIResponsesEvent,
+  prepareOpenAIResponsesRequest,
+  shouldUseOpenAIResponsesSocket,
+  stripOpenAIResponsesTransportFields,
+  type OpenAIResponsesRequestBody,
+} from './protocols/openai-responses.js';
+import { OpenAIResponsesLanguageModel } from './protocols/openai-responses-language-model.js';
 
 type FetchHeaders = NonNullable<Parameters<typeof fetch>[1]>['headers'];
 const CODEX_RESPONSES_BASE_URL = 'https://chatgpt.com/backend-api/codex';
-const CODEX_DUMMY_API_KEY = 'ujima-codex-oauth';
 const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const OPENAI_AUTH_ISSUER = 'https://auth.openai.com';
 const RESPONSES_WS_PROTOCOL = 'responses_websockets=2026-02-06';
@@ -39,21 +46,12 @@ interface StoredCodexAuth {
 }
 
 export function createCodexResponsesModel(options: CodexResponsesOptions): LanguageModel {
-  const model = createOpenAI({
-    apiKey: CODEX_DUMMY_API_KEY,
-    baseURL: options.baseUrl ?? CODEX_RESPONSES_BASE_URL,
+  return new OpenAIResponsesLanguageModel(options.modelId, {
+    preserveItemIds: false,
+    supportsMaxOutputTokens: false,
+    url: `${options.baseUrl ?? CODEX_RESPONSES_BASE_URL}/responses`,
     fetch: codexFetch(options.accessToken),
-  }).responses(options.modelId);
-  return wrapLanguageModel({
-    model: model as LanguageModelV3,
-    middleware: defaultSettingsMiddleware({
-      settings: {
-        providerOptions: {
-          openai: { store: false },
-        },
-      },
-    }),
-  }) as LanguageModel;
+  }) as unknown as LanguageModel;
 }
 
 function codexFetch(accessToken: string): typeof fetch {
@@ -125,14 +123,10 @@ async function fetchCodex(
   init: Parameters<typeof fetch>[1],
   pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void },
 ): Promise<Response> {
+  const target = shouldUseOpenAIResponsesSocket(request, init);
   const url = new URL(request instanceof Request ? request.url : String(request));
-  if (init?.method !== 'POST' || !url.pathname.endsWith('/responses')) return logNonOkResponse(url, await fetch(request, init));
-  if (typeof init.body !== 'string') return logNonOkResponse(url, await fetch(request, init));
-
-  const body = JSON.parse(init.body) as { stream?: unknown };
-  if (body.stream !== true) return logNonOkResponse(url, await fetch(request, init));
-
-  return streamSocket(url, init.headers, pool, body, init.signal ?? undefined);
+  if (!target) return logNonOkResponse(url, await fetch(request, init));
+  return streamSocket(target.url, init?.headers, pool, target.body, init?.signal ?? undefined);
 }
 
 async function logNonOkResponse(url: URL, response: Response): Promise<Response> {
@@ -238,7 +232,7 @@ function streamSocket(
   url: URL,
   headers: FetchHeaders | undefined,
   pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void },
-  body: Record<string, unknown>,
+  body: OpenAIResponsesRequestBody,
   signal: AbortSignal | undefined,
 ): Response {
   const encoder = new TextEncoder();
@@ -303,14 +297,14 @@ function streamSocket(
         frameCount += 1;
         resetIdle();
         controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, '\ndata: ')}\n\n`));
-        const event = safeJson(text);
+        const event = parseOpenAIResponsesEvent(text);
         if (!event) return;
-        const terminalError = codexTerminalError(event);
+        const terminalError = openAIResponsesTerminalError(event);
         if (terminalError) {
           fail(terminalError);
           return;
         }
-        if (event.type === 'response.completed' || event.type === 'response.done') {
+        if (isOpenAIResponsesDoneEvent(event)) {
           finish();
         }
       };
@@ -320,7 +314,7 @@ function streamSocket(
       };
       const onAbort = () => abort();
 
-      const { stream: _stream, background: _background, ...payload } = body;
+      const payload = stripOpenAIResponsesTransportFields(body);
       const send = async () => {
         let lastError: Error | undefined;
         for (; attempts <= CODEX_WS_OPEN_RETRIES; attempts += 1) {
@@ -371,66 +365,15 @@ function normalizeHeaders(headersInit: FetchHeaders | undefined): Record<string,
   return record;
 }
 
-function safeJson(text: string): { type?: string } | null {
-  try {
-    const value = JSON.parse(text) as { type?: string };
-    return value && typeof value === 'object' ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 export function codexTerminalError(event: { type?: string } & Record<string, unknown>): Error | null {
-  if (event.type !== 'response.failed' && event.type !== 'response.incomplete' && event.type !== 'error') {
-    return null;
-  }
-  const message =
-    objectMessage(event.error) ??
-    objectMessage((event.response as { error?: unknown } | undefined)?.error) ??
-    objectMessage((event.response as { incomplete_details?: unknown } | undefined)?.incomplete_details) ??
-    (typeof event.message === 'string' ? event.message : undefined) ??
-    `Codex ${event.type}`;
-  const error = new Error(message);
-  error.name = 'AI_APICallError';
-  return error;
-}
-
-function objectMessage(value: unknown): string | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const record = value as Record<string, unknown>;
-  if (typeof record.code === 'string' && typeof record.message === 'string') {
-    return `${record.code}: ${record.message}`;
-  }
-  if (typeof record.message === 'string') return record.message;
-  if (typeof record.reason === 'string') return record.reason;
-  if (typeof record.code === 'string') return record.code;
-  return undefined;
+  return openAIResponsesTerminalError(event);
 }
 
 async function prepareRequest(
   request: Parameters<typeof fetch>[0],
   init: Parameters<typeof fetch>[1],
 ): Promise<{ request: Parameters<typeof fetch>[0]; init: Parameters<typeof fetch>[1] }> {
-  if (typeof init?.body === 'string') {
-    return { request, init: { ...init, body: rewriteBody(init.body) } };
-  }
-  if (!(request instanceof Request) || init?.body) return { request, init };
-
-  const body = await request.clone().text();
-  if (!body.trim().startsWith('{')) return { request, init };
-  return { request: new Request(request, { body: rewriteBody(body) }), init };
-}
-
-function rewriteBody(body: string): string {
-  try {
-    const json = JSON.parse(body) as {
-      max_output_tokens?: unknown;
-    };
-    delete json.max_output_tokens;
-    return JSON.stringify(json);
-  } catch {
-    return body;
-  }
+  return prepareOpenAIResponsesRequest(request, init);
 }
 
 function authPath(): string {

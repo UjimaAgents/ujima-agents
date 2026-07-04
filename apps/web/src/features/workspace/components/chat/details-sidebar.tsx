@@ -8,7 +8,7 @@ import { GrepToolPane } from "./grep-tool-pane";
 import { WebSearchToolPane } from "./web-search-tool-pane";
 import { SkillReadPane } from "./skill-read-pane";
 import { UnifiedDiffView } from "./unified-diff-view";
-import { AggregatedRunPanel, TraceMarkdown } from "./aggregated-run-panel";
+import { AggregatedRunPanel, SemanticToolPane, TraceMarkdown } from "./aggregated-run-panel";
 import { collectFileChanges } from "../../change-summary";
 import type { TraceStepData } from "./trace-types";
 
@@ -79,6 +79,20 @@ export const TraceStep = memo(function TraceStep({
       description={step.skillRead.description}
       output={step.skillRead.output}
       status={step.status}
+    />
+  ) : step.toolName?.startsWith("memory.") || step.toolName?.startsWith("channel.") || step.toolName === "message" ? (
+    <SemanticToolPane
+      op={{
+        id: step.id,
+        type: step.toolName.startsWith("memory.") ? "memory" : "message",
+        additions: 0,
+        deletions: 0,
+        status: step.status,
+        toolName: step.toolName,
+        toolInput: step.toolInput,
+        toolResult: step.toolResult,
+        detail: step.detail,
+      }}
     />
   ) : step.detail.trim() ? (
     <TraceMarkdown content={step.detail} tone="text-foreground/75" />

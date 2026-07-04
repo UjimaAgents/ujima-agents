@@ -1,5 +1,5 @@
-import type { Message } from '@ujima/shared';
-import type { PublishMessageOptions } from './conversation.js';
+import type { Message, RunStep } from '@ujima/shared';
+import type { PublishMessageOptions } from './conversation-types.js';
 import { buildSystemMessage } from './message-factory.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
 import {
@@ -10,7 +10,6 @@ import {
   CONVERSATION_SUMMARY_MARKER,
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
-  buildConversationClearSummary,
   buildSelfNoteSummary,
   isCompactionSummarySystemMessage,
   isSelfSummaryNote,
@@ -41,6 +40,7 @@ export interface CompactionContext {
     ): { data: Message[]; hasMore: boolean; nextCursor?: string };
     saveMessage(message: Message): Message;
     updateMessage(message: Message): Message;
+    listRunSteps?(organizationId: string, runId: string): RunStep[];
     countUncompactedMessageChars?(organizationId: string, threadId: string): number;
   };
   publishMessage(
@@ -121,14 +121,57 @@ export function conversationNeedsCompaction(
     );
   // Use actual token counts when available (stamped by persistMessageTokens),
   // falling back to an estimate from char length for older messages.
-  const usedTokens = rawMessages.reduce((total, message) => {
-    if (typeof message.inputTokens === 'number' && typeof message.outputTokens === 'number') {
-      return total + message.inputTokens + message.outputTokens;
-    }
-    return total + Math.ceil(message.content.length / 4);
-  }, 0);
+  const usedTokens = estimatePromptReplayTokens(repo, organizationId, rawMessages);
   const threshold = Math.floor(contextWindowTokens * 0.7);
   return usedTokens > threshold;
+}
+
+export function estimatePromptReplayTokens(
+  repo: Pick<CompactionContext['repo'], 'listRunSteps'>,
+  organizationId: string,
+  messages: readonly Message[],
+): number {
+  const knownToolCallIds = new Set<string>();
+  let total = 0;
+  for (const message of messages) {
+    for (const call of message.toolCalls) {
+      if (call.toolCallId) knownToolCallIds.add(call.toolCallId);
+    }
+    if (typeof message.inputTokens === 'number' && typeof message.outputTokens === 'number') {
+      total += message.inputTokens + message.outputTokens;
+      continue;
+    }
+    total += estimateTokensForValue(message.content);
+    if (message.toolCalls.length > 0) total += estimateTokensForValue(message.toolCalls);
+    if (message.reasoningContent) total += estimateTokensForValue(message.reasoningContent);
+  }
+
+  const runIds = new Set(
+    messages
+      .map((message) => message.metadata?.runId)
+      .filter((runId): runId is string => typeof runId === 'string' && runId.length > 0),
+  );
+  for (const runId of runIds) {
+    for (const step of repo.listRunSteps?.(organizationId, runId) ?? []) {
+      if (knownToolCallIds.has(step.toolCallId)) continue;
+      total += estimateTokensForValue(step.input);
+      if (step.output !== undefined) total += estimateTokensForValue(step.output);
+    }
+  }
+  return total;
+}
+
+function estimateTokensForValue(value: unknown): number {
+  return Math.ceil(stringifyForTokenEstimate(value).length / 4);
+}
+
+function stringifyForTokenEstimate(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value ?? '');
+  }
 }
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
@@ -328,12 +371,9 @@ async function compactThreadMessages(
     organizationId: input.organizationId,
     threadId: input.threadId,
     channelId: ctx.repo.getThread(input.organizationId, input.threadId)?.channelId ?? undefined,
-    content:
-      input.mode === 'archive'
-        ? buildConversationClearSummary(summarySources)
-        : input.mode
-          ? await ctx.summarizeConversation(summarySources, input.mode)
-          : buildSelfNoteSummary(summarySources),
+    content: input.mode
+      ? await ctx.summarizeConversation(summarySources, input.mode)
+      : buildSelfNoteSummary(summarySources),
     createdAt: now,
   });
   ctx.publishMessage(summaryMessage, [], undefined, {

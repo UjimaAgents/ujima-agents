@@ -26,6 +26,7 @@ const ASSET_REFERENCE_ICONS: Record<string, string> = {
   task: '<svg class="inline h-3.5 w-3.5 shrink-0 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>',
   culture: '<svg class="inline h-3.5 w-3.5 shrink-0 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>',
 };
+const INLINE_TOKEN_CLASS = "inline-flex h-[1.6em] align-middle items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0 text-xs font-medium leading-none text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
 
 function getFromCache<K, V>(cache: Map<K, V>, key: K): V | undefined {
   const val = cache.get(key);
@@ -106,7 +107,7 @@ export function highlightFileReferences(text: string): string {
     const name = path.split('/').pop() ?? path;
     const reference = `${h(kind)}:${h(path)}`;
     const fileRef = kind === 'file' || kind === 'folder' ? ` data-file-ref="${reference}"` : '';
-    return `<span class="inline-flex cursor-pointer items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"${fileRef} data-asset-ref="${reference}" title="${h(path)}">${icon}<span>${h(name)}</span></span>`;
+    return `<span class="${INLINE_TOKEN_CLASS} cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700"${fileRef} data-asset-ref="${reference}" title="${h(path)}">${icon}<span>${h(name)}</span></span>`;
   });
 }
 
@@ -131,7 +132,7 @@ export function highlightMentions(text: string, mentionNames: string[]): string 
     const mentionEnd = mentionStart + 1 + name.length;
     result += h(text.slice(cursor, matchStart));
     result += h(prefix);
-    result += `<span class="inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">@${h(name)}</span>`;
+    result += `<span class="${INLINE_TOKEN_CLASS}">@${h(name)}</span>`;
     cursor = mentionEnd;
   }
   result += h(text.slice(cursor));

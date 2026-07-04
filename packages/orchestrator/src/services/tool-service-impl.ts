@@ -54,7 +54,6 @@ import { ShellAutoReviewService, parseReviewerJson, type ShellAutoReviewDecision
 import { materializeMcpDef, type McpRuntimePool } from "./mcp-runtime.js";
 import { isServerAttachedToSpirit } from "../tools/connector-meta-tools.js";
 import type { ApprovedRunScopeTracker } from "../utils/approved-run-scopes.js";
-import { formatReadableToolOutput } from "../utils/tool-output.js";
 import { isPathScopedToolId, usesPathResolution } from "../path-scoped-tools.js";
 
 const REVIEW_TIMEOUT_MS = 30_000;
@@ -379,9 +378,8 @@ export class ToolServiceImpl implements ToolService {
           approvalScope,
         );
       }
-      const output = summarizeToolOutput(result);
       this.audit(preparedInvocation, "ok", { status: "completed" });
-      this.saveRunStep(preparedInvocation, "ok", output);
+      this.saveRunStep(preparedInvocation, "ok", result);
       const run = this.repo.getRun(preparedInvocation.organizationId, preparedInvocation.runId);
       const threadId = preparedInvocation.threadId ?? run?.threadId;
 
@@ -1109,28 +1107,6 @@ function isWaitingForInputResult(value: unknown): value is { status: "waiting_fo
     (value as { status?: unknown }).status === "waiting_for_input" &&
     typeof (value as { questionId?: unknown }).questionId === "string"
   );
-}
-
-export function summarizeToolOutput(value: unknown): unknown {
-  const output = value as { status?: unknown; stdout?: unknown; stderr?: unknown } | undefined;
-  const formatted = formatReadableToolOutput(value);
-  if (formatted) return truncateText(formatted);
-
-  if (output && typeof output.status === "string") return value;
-
-  if (!value || typeof value !== "object") return value;
-  if (typeof output?.stdout === "string" || typeof output?.stderr === "string") {
-    return {
-      stdout: truncateText(output.stdout),
-      stderr: truncateText(output.stderr),
-    };
-  }
-  return truncateText(JSON.stringify(value));
-}
-
-function truncateText(value: unknown): string {
-  const text = typeof value === "string" ? value : "";
-  return text.length > 4000 ? `${text.slice(0, 4000)}\n[truncated]` : text;
 }
 
 function readString(input: Record<string, unknown>, key: string): string | undefined {

@@ -16,7 +16,14 @@ function parseLineRange(meta: string): string | undefined {
 }
 
 function toolStepToOperation(step: TraceStepData): AggregatedOperation {
-  const base = { id: step.id, additions: 0, deletions: 0, status: step.status };
+  const base = {
+    id: step.id,
+    additions: 0,
+    deletions: 0,
+    status: step.status,
+    toolInput: step.toolInput,
+    toolResult: step.toolResult,
+  };
 
   if (step.filesystem) {
     const isWrite = step.filesystem.action === "write";

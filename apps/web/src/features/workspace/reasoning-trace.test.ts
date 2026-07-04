@@ -19,6 +19,7 @@ describe("reasoning-trace ordering", () => {
       status: "completed",
       step: "completed",
       summary: "done",
+      startedAt: "2026-05-04T19:07:08.000Z",
     };
     const activity: ActivityEvent[] = [
       {

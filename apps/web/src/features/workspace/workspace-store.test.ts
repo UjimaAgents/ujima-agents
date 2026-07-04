@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { RunState } from "@ujima/shared/browser";
 import {
   isAgentOnlyThread,
   mergeConversationUnreadCounts,
   normalizeConversationSelection,
-  selectActiveAgentChats,
   useWorkspaceStore,
   type WorkspaceChannel,
   type WorkspaceMember,
@@ -122,12 +120,3 @@ describe("workspace-store helpers", () => {
 
 });
 
-function run(input: Pick<RunState, "id" | "agentId" | "threadId" | "status">): RunState {
-  return {
-    organizationId: "org",
-    step: "",
-    summary: "",
-    startedAt: new Date(0).toISOString(),
-    ...input,
-  };
-}

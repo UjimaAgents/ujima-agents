@@ -6,6 +6,7 @@ import {
   buildSharedAgentSystemPrompt,
   type ConversationKind,
   buildEnvironmentContext,
+  TERMINATING_TOOL_USAGE_GUIDANCE,
   shouldSkipWorkspaceTreeDirectory,
 } from '@ujima/shared';
 import { getPersonalityPreset } from './personality.js';
@@ -15,11 +16,10 @@ export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Most messages do not need a reply. If not addressed, not in your domain, or already handled, call channel.close with a specific reason/note and stop the session. Do not emit chat text alongside channel.close.',
-  'If you are @mentioned, terminate with exactly one tool: use channel.reply for substantive content; use channel.close reason "ack" when no visible reply helps.',
-  'If you still have work to do, do not use channel.reply or channel.close yet; keep working with non-terminating tools.',
+  'If you are @mentioned, finish required work first, then terminate with exactly one tool: use channel.reply for substantive content; use channel.close reason "ack" when no visible reply helps.',
+  ...TERMINATING_TOOL_USAGE_GUIDANCE,
   'To hand work to another agent, use agent.delegate. Do not simulate handoffs in plain text.',
-  'Never call a current-thread terminator and also produce assistant chat text in the same turn.',
-  'Pick exactly one current-thread terminator; channel.reply and channel.close are different tools.',
+  'channel.reply and channel.close are different tools.',
   'agent.delegate: use kind "explorer" for read-only investigation and kind "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',
   'In a hand-off chain with 3 or more agents, when you reply, the previous sender is automatically re-mentioned. If you need to bring in an earlier participant, mention them explicitly with @name.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',

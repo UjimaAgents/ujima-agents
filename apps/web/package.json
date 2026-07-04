@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "0.0.60",
+  "version": "0.0.61",
   "private": true,
   "scripts": {
     "predev": "bun ../../scripts/free-port.ts ${WEB_PORT:-3452}",

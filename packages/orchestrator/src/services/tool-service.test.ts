@@ -433,4 +433,68 @@ describe('ToolServiceImpl goal mode', () => {
     expect(approvals).toBe(0);
     expect(updates).toBe(1);
   });
+
+  it('persists full tool output for next-turn replay', async () => {
+    let savedStep: { output?: unknown } | undefined;
+    const body = 'x'.repeat(8_000);
+    const team = loadAgentTeam({
+      name: 'Replay Org',
+      workspace: { root: process.cwd() },
+      providers: { openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] } },
+      roles: [{
+        name: 'engineer',
+        title: 'Engineer',
+        instructions: 'Read.',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        workspaceScopes: ['.'],
+        tools: ['channel.read'],
+        channels: ['general'],
+      }],
+      agents: [{ name: 'Agent', roleName: 'engineer' }],
+      channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+    } as Record<string, unknown>);
+    const store = createTeamStore();
+    store.setTeam(team, 'org-1');
+
+    const service = new ToolServiceImpl(
+      store,
+      {
+        getRun: () => ({ id: 'run-1', threadId: 'general', status: 'running' }),
+        getMember: () => ({ id: 'agent-1', organizationId: 'org-1', kind: 'agent', roleName: 'engineer', name: 'Agent' }),
+        getLatestHumanMessageInThread: () => null,
+        saveAuditEvent: () => undefined,
+        listRunSteps: () => [],
+        saveRunStep: (step: unknown) => { savedStep = step as { output?: unknown }; return step; },
+      } as never,
+      { requestApproval: () => ({ id: 'approval-1' }) },
+      {
+        readChannel: () => ({
+          data: [{ id: 'msg-1', content: body }],
+        }),
+      } as never,
+      {} as never,
+      { emit: () => undefined } as never,
+      {} as never,
+      new ApprovedRunScopeTracker(),
+    );
+
+    const result = await service.invoke({
+      organizationId: 'org-1',
+      runId: 'run-1',
+      memberId: 'agent-1',
+      threadId: 'general',
+      toolCallId: 'tool-1',
+      toolId: 'channel.read',
+      action: 'read',
+      resourceType: 'message',
+      resourcePath: 'general',
+      input: { channel_id: 'general', limit: 1 },
+      bypassPermission: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(savedStep?.output)).toContain(body);
+    expect(JSON.stringify(savedStep?.output)).not.toContain('[truncated]');
+  });
 });

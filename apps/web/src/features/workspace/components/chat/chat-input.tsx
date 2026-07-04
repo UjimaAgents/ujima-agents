@@ -255,10 +255,10 @@ function renderPartsToHtml(parts: ComposerPart[]): string {
       html += escapeHtml(part.text);
     } else if (part.type === "asset") {
       const margin = part.trailingSpace ? " margin-right:0.25rem;" : "";
-      html += `<span contenteditable="false" data-composer-token data-raw="${escapeHtml(part.raw)}" data-start="${part.start}" data-end="${part.end}" class="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" style="user-select:all;${margin}">${ASSET_ICON_SVG[part.kind]}<span>${escapeHtml(part.label)}</span></span>\u200B`;
+      html += `<span contenteditable="false" data-composer-token data-raw="${escapeHtml(part.raw)}" data-start="${part.start}" data-end="${part.end}" class="inline-flex h-[1.6em] align-middle items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0 text-xs font-medium leading-none text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" style="user-select:all;${margin}">${ASSET_ICON_SVG[part.kind]}<span>${escapeHtml(part.label)}</span></span>\u200B`;
     } else {
       const margin = part.trailingSpace ? " margin-right:0.25rem;" : "";
-      html += `<span contenteditable="false" data-composer-token data-raw="${escapeHtml(part.raw)}" data-start="${part.start}" data-end="${part.end}" class="inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" style="user-select:all;${margin}">@${escapeHtml(part.name)}</span>\u200B`;
+      html += `<span contenteditable="false" data-composer-token data-raw="${escapeHtml(part.raw)}" data-start="${part.start}" data-end="${part.end}" class="inline-flex h-[1.6em] align-middle items-center rounded-md bg-zinc-100 px-1.5 py-0 text-xs font-medium leading-none text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" style="user-select:all;${margin}">@${escapeHtml(part.name)}</span>\u200B`;
     }
   }
   return html;

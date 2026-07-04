@@ -227,11 +227,16 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
       throw new LLMError('not_configured', 'openai-codex responses transport requires apiKey or UJIMA_CODEX_ACCESS_TOKEN');
     }
 
-    return createCodexResponsesModel({
-      modelId: input.modelId,
-      accessToken,
-      baseUrl: input.baseUrl,
-    });
+    return withReasoning(
+      createCodexResponsesModel({
+        modelId: input.modelId,
+        accessToken,
+        baseUrl: input.baseUrl,
+      }),
+      input.kind,
+      input.reasoningEffort,
+      input.modelId,
+    );
   }
 
   const exhaustive: never = input.kind;

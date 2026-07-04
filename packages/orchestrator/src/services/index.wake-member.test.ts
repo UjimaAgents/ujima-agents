@@ -47,7 +47,60 @@ describe('wakeMemberWithFailureEvents', () => {
     });
   });
 
-  it('coalesces concurrent wakes in one thread into a single createRun', async () => {
+  it('starts concurrent runs for human channel fanout wakes', async () => {
+    const emit = vi.fn();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const createRun = vi.fn(async (input: { agentId: string }) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return {
+        id: `run-${input.agentId}`,
+        organizationId: baseInput.organizationId,
+        agentId: input.agentId,
+        threadId: baseInput.threadId,
+        status: 'queued' as const,
+        step: 'queued',
+        summary: 'queued',
+        startedAt: new Date().toISOString(),
+      };
+    });
+    const repo = {
+      listActiveRuns: vi.fn(() => [
+        {
+          id: 'existing-run',
+          organizationId: baseInput.organizationId,
+          agentId: 'agent-0',
+          threadId: baseInput.threadId,
+          status: 'running' as const,
+          step: 'running',
+          summary: 'running',
+          startedAt: new Date().toISOString(),
+        },
+      ]),
+      getMessage: vi.fn(() => ({ senderKind: 'human' })),
+    };
+    const deps = {
+      spirits: {
+        handleAlert: vi.fn(async () => ({ kind: 'no-active-spirit' as const })),
+      },
+      runs: { createRun },
+      realtime: { emit },
+      repo,
+    };
+
+    await Promise.all([
+      wakeMemberWithFailureEvents(deps, { ...baseInput, wakeReason: 'channel-read' }),
+      wakeMemberWithFailureEvents(deps, { ...baseInput, memberId: 'agent-2', messageId: 'msg-2', wakeReason: 'channel-read' }),
+    ]);
+
+    expect(createRun).toHaveBeenCalledTimes(2);
+    expect(maxInFlight).toBe(2);
+  });
+
+  it('coalesces concurrent wakes from agent messages in one thread into a single createRun', async () => {
     const emit = vi.fn();
     let activeRun: RunState | null = null;
     const createRun = vi.fn(async () => {
@@ -71,6 +124,7 @@ describe('wakeMemberWithFailureEvents', () => {
     });
     const repo = {
       listActiveRuns: vi.fn(() => activeRun ? [activeRun] : []),
+      getMessage: vi.fn(() => ({ senderKind: 'agent' })),
     };
     const deps = {
       spirits: {
@@ -82,8 +136,8 @@ describe('wakeMemberWithFailureEvents', () => {
     };
 
     await Promise.all([
-      wakeMemberWithFailureEvents(deps, baseInput),
-      wakeMemberWithFailureEvents(deps, { ...baseInput, memberId: 'agent-2', messageId: 'msg-2' }),
+      wakeMemberWithFailureEvents(deps, { ...baseInput, byMemberId: 'agent-0' }),
+      wakeMemberWithFailureEvents(deps, { ...baseInput, byMemberId: 'agent-0', memberId: 'agent-2', messageId: 'msg-2' }),
     ]);
 
     expect(createRun).toHaveBeenCalledTimes(1);

@@ -24,6 +24,8 @@ export interface AggregatedOperation {
   status: "success" | "failed" | "running";
   toolName?: string;
   detail?: string;
+  toolInput?: Record<string, unknown>;
+  toolResult?: unknown;
   lines?: string;
   skillRead?: {
     skillName: string;
@@ -53,6 +55,8 @@ export interface TraceStepData {
   actorName: string;
   runId?: string;
   toolName?: string;
+  toolInput?: Record<string, unknown>;
+  toolResult?: unknown;
   aggregatedOperations?: AggregatedOperation[];
   terminal?: {
     cwd: string;
