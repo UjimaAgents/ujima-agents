@@ -22,7 +22,8 @@ import {QuestionCard} from "./chat/question-card";
 import type {BootstrapResponse} from "@ujima/api-schema";
 import { Select } from "@/components/ui/select";
 import { isLiveRun } from "../feed-selectors";
-import { liveActivityTextForRun } from "../live-activity-text";
+import { summarizeRunActivity } from "../lib/run-activity-helpers";
+import { StatusBadge } from "./chat/primitives";
 import { useWorkspaceStore } from "../workspace-store";
 
 interface ChannelGoalsBoardProps {
@@ -53,6 +54,10 @@ const COLUMN_TO_STATUS: Record<ColumnId, GoalTaskStatus> = {
   in_progress: "in_progress",
   completed: "completed",
 };
+
+function isVisibleBoardTask(task: GoalTask): boolean {
+  return task.status !== "cancelled";
+}
 
 // Dedup window the backend's GoalSystemService.nudgeAssignee uses
 // to suppress repeat nudges. The countdown re-derives time-until-
@@ -238,21 +243,39 @@ interface TaskCardProps {
 function TaskActivityLine({ assigneeId }: { assigneeId: string }) {
   const activeRuns = useWorkspaceStore((state) => state.globalActiveRuns);
   const activity = useWorkspaceStore((state) => state.activity);
-  const text = useMemo(() => {
+  const summary = useMemo(() => {
     let latest: (typeof activeRuns)[number] | undefined;
     for (const run of activeRuns) {
       if (!isLiveRun(run) || run.agentId !== assigneeId) continue;
       if (!latest || Date.parse(run.startedAt) > Date.parse(latest.startedAt)) latest = run;
     }
-    return latest ? liveActivityTextForRun(latest, activity) : undefined;
+    if (!latest) return null;
+    return summarizeRunActivity(latest, activity);
   }, [activeRuns, activity, assigneeId]);
 
-  if (!text) return null;
+  if (!summary) return null;
+
+  const hasOps = summary.recentOperations.length > 0;
 
   return (
-    <div className="mb-2 flex min-w-0 items-center gap-1.5 text-[10px] font-medium">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
-      <span className="live-activity-shimmer truncate">{text}</span>
+    <div className="mb-2 flex flex-col gap-1">
+      <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-medium">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
+        <span className="truncate">{summary.latestOperation || summary.summary}</span>
+        <StatusBadge variant={summary.statusBadge.variant} label={summary.statusBadge.label} />
+      </div>
+      {hasOps && summary.recentOperations.length > 0 ? (
+        <div className="flex flex-wrap gap-1 pl-3">
+          {summary.recentOperations.map((op, i) => (
+            <span
+              key={i}
+              className="rounded bg-zinc-100 px-1.5 py-0.5 text-[9px] font-mono text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+            >
+              {op}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -445,6 +468,11 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
   const activeGoalId = useMemo<string | null>(() => {
     if (goals.length === 0) return null;
 
+    const sortedByUpdatedAt = [...goals].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+    const newestGoalId = sortedByUpdatedAt[0]?.id ?? null;
+
     // 1. User's explicit choice — trust it even if null ("All Goals")
     if (hasUserSelected) return selectedGoalId;
 
@@ -453,12 +481,17 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
       typeof localStorage !== "undefined"
         ? localStorage.getItem(storageKey)
         : null;
-    if (stored && goals.some((g) => g.id === stored)) return stored;
+    if (stored && goals.some((g) => g.id === stored)) {
+      const storedGoal = goals.find((g) => g.id === stored) ?? null;
+      if (storedGoal && newestGoalId) {
+        const storedUpdatedAt = new Date(storedGoal.updatedAt).getTime();
+        const newestUpdatedAt = new Date(sortedByUpdatedAt[0].updatedAt).getTime();
+        if (storedUpdatedAt >= newestUpdatedAt) return stored;
+      }
+    }
 
     // 3. Fall back to most recently updated
-    return [...goals].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    )[0]?.id ?? null;
+    return newestGoalId;
   }, [selectedGoalId, goals, storageKey, hasUserSelected]);
 
   // Persist selection to localStorage (allowed: synchronizing external system)
@@ -476,7 +509,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
   const goalTaskCounts = useMemo(() => {
     const counts: Record<string, {total: number; completed: number}> = {};
     for (const goal of goals) {
-      const goalTasks = tasks.filter((t) => t.goalId === goal.id);
+      const goalTasks = tasks.filter((t) => t.goalId === goal.id && isVisibleBoardTask(t));
       counts[goal.id] = {
         total: goalTasks.length,
         completed: goalTasks.filter((t) => t.status === "completed").length,
@@ -681,7 +714,10 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
 
   // Filter tasks by selected goal
   const filteredTasks = useMemo(
-    () => (activeGoalId ? tasks.filter((t) => t.goalId === activeGoalId) : tasks),
+    () =>
+      (activeGoalId ? tasks.filter((t) => t.goalId === activeGoalId) : tasks).filter(
+        isVisibleBoardTask
+      ),
     [tasks, activeGoalId]
   );
 
@@ -751,7 +787,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
         <div className="flex justify-end border-b border-zinc-100 pb-4 dark:border-zinc-800/60">
           <GoalSwitcherDropdown
             goals={sortedGoals}
-            selectedGoalId={selectedGoalId}
+            selectedGoalId={activeGoalId}
             goalTaskCounts={goalTaskCounts}
             onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
             onImplement={handleImplement}
@@ -792,7 +828,7 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
       <div className="flex justify-end border-b border-zinc-100 pb-4 dark:border-zinc-800/60">
         <GoalSwitcherDropdown
           goals={sortedGoals}
-          selectedGoalId={selectedGoalId}
+          selectedGoalId={activeGoalId}
           goalTaskCounts={goalTaskCounts}
           onSelect={(id) => { setHasUserSelected(true); setSelectedGoalId(id); }}
           onImplement={handleImplement}

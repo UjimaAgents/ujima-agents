@@ -1,5 +1,5 @@
 import type { AgentDef, TaskDef } from '@ujima/shared';
-import { generateText, type LanguageModel } from 'ai';
+import { generateText, streamText, type LanguageModel } from 'ai';
 
 export interface PlanAssignment {
   agentId: string;
@@ -63,13 +63,21 @@ export async function planAssignments(input: PlanInputs): Promise<PlanResult> {
     'Return the routing JSON now.',
   ].join('\n');
 
-  const { text: rawText } = await generateText({
-    model,
-    system,
-    prompt: user,
-    abortSignal,
-    maxOutputTokens: 8_000,
-  });
+  const rawText = isCodexResponsesModel(model)
+    ? await streamText({
+        model,
+        system,
+        prompt: user,
+        abortSignal,
+        maxOutputTokens: 8_000,
+      }).text
+    : (await generateText({
+        model,
+        system,
+        prompt: user,
+        abortSignal,
+        maxOutputTokens: 8_000,
+      })).text;
 
   const parsed = extractAssignments(rawText);
   if (!parsed) {
@@ -97,6 +105,11 @@ export async function planAssignments(input: PlanInputs): Promise<PlanResult> {
   }
 
   return { assignments, rawText, warnings };
+}
+
+function isCodexResponsesModel(model: LanguageModel): boolean {
+  const meta = model as { provider?: unknown };
+  return meta.provider === 'openai.responses';
 }
 
 interface RawAssignment {

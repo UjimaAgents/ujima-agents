@@ -396,6 +396,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
     expect([...ALWAYS_AVAILABLE_AGENT_TOOLS].sort()).toEqual(
       [
         'agent.delegate',
+        'agent.manage',
         'channel.close',
         'channel.list',
         'channel.read',

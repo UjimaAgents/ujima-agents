@@ -102,6 +102,7 @@ export const TOOL_REGISTRY: Record<string, ToolEntry> = {
   // ── Scheduling / delegation ───────────────────────────────
   schedule:         { id: 'schedule',         status: 'active', alwaysAvailable: true },
   'agent.delegate': { id: 'agent.delegate',   status: 'active', alwaysAvailable: true, workerBlocked: true },
+  'agent.manage':   { id: 'agent.manage',     status: 'active', alwaysAvailable: true },
 
   // ── Skills ────────────────────────────────────────────────
   'skill.read': { id: 'skill.read', status: 'active', alwaysAvailable: true },

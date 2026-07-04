@@ -12,6 +12,7 @@ import type {
   ChannelKind,
   ChannelMemberMode,
   ChannelMemberSettings,
+  ChildTask,
   ConfigFieldOwnership,
   ConversationThread,
   DecisionLogEntry,
@@ -705,6 +706,13 @@ export interface ApiRepository extends ConversationRepository {
     reason?: string;
     updatedBy?: string;
   }): GovernanceRuleRow;
+
+  // First-class child-task records (replaces message-metadata delegation).
+  saveChildTask?(task: ChildTask): ChildTask;
+  getChildTask?(organizationId: string, taskId: string): ChildTask | null;
+  listChildTasksByParentRun?(organizationId: string, parentRunId: string): ChildTask[];
+  listChildTasksByTargetAgent?(organizationId: string, targetAgentId: string): ChildTask[];
+  updateChildTask?(organizationId: string, taskId: string, updates: Partial<ChildTask>): ChildTask | null;
 }
 
 // ── Narrow port types ─────────────────────────────────────────────

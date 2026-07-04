@@ -280,14 +280,23 @@ async function extractSummary(
   },
 ) {
   try {
-    const { generateText } = await import("ai");
-    const result = await generateText({
-      model,
-      system: SUMMARY_JSON_SYSTEM_PROMPT,
-      prompt: `Summarize this conversation transcript. Each array must have at most ${maxBullets} items.\n\n${transcript}`,
-      maxOutputTokens: 2_048,
-    });
-    const text = result.text.trim();
+    const { generateText, streamText } = await import("ai");
+    const prompt = `Summarize this conversation transcript. Each array must have at most ${maxBullets} items.\n\n${transcript}`;
+    const text = (
+      isCodexResponsesModel(model)
+        ? await streamText({
+            model,
+            system: SUMMARY_JSON_SYSTEM_PROMPT,
+            prompt,
+            maxOutputTokens: 2_048,
+          }).text
+        : (await generateText({
+            model,
+            system: SUMMARY_JSON_SYSTEM_PROMPT,
+            prompt,
+            maxOutputTokens: 2_048,
+          })).text
+    ).trim();
     const jsonStart = text.indexOf("{");
     const jsonEnd = text.lastIndexOf("}");
     if (jsonStart === -1 || jsonEnd === -1) {
@@ -317,6 +326,11 @@ async function extractSummary(
       { cause: error },
     );
   }
+}
+
+function isCodexResponsesModel(model: LanguageModel): boolean {
+  const meta = model as {provider?: unknown};
+  return meta.provider === "openai.responses";
 }
 
 function asStringArray(value: unknown): string[] {

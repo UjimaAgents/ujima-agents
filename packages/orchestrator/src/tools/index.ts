@@ -19,6 +19,7 @@ import { lsTool } from './ls.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
 import { agentDelegateTool } from './agent-delegate.js';
+import { agentManageTool } from './agent-manage.js';
 import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
 import { memoryForgetTool, memoryRecallTool, memoryWriteTool } from './memory.js';
@@ -77,6 +78,7 @@ export const ORCHESTRATOR_TOOLS = {
   'memory.forget': memoryForgetTool,
   schedule: scheduleTool,
   'agent.delegate': agentDelegateTool,
+  'agent.manage': agentManageTool,
   'skill.read': skillReadTool,
 } as unknown as Record<string, OrchestratorTool>;
 
