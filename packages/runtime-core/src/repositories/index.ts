@@ -1078,9 +1078,7 @@ import type { MessageStore } from './message-store.js';
 import type { MemberStore } from './member-store.js';
 import type { RunStore } from './run-store.js';
 
-/* eslint-disable @typescript-eslint/no-empty-object-type */
 export interface Repository extends PluginRepository, ChannelStore, MessageStore, MemberStore, RunStore {}
-/* eslint-enable @typescript-eslint/no-empty-object-type, @typescript-eslint/no-unsafe-declaration-merging */
 
 export type {
   BootstrapSnapshot,

@@ -755,7 +755,8 @@ export function ChannelView({
       }
       setResolvingApprovals((state) => ({ ...state, [approvalId]: true }));
       setApprovalErrors((state) => {
-        const { [approvalId]: _removed, ...next } = state;
+        const next = { ...state };
+        delete next[approvalId];
         return next;
       });
       try {
@@ -784,7 +785,8 @@ export function ChannelView({
         }
       } finally {
         setResolvingApprovals((state) => {
-          const { [approvalId]: _removed, ...next } = state;
+          const next = { ...state };
+          delete next[approvalId];
           return next;
         });
       }
@@ -836,7 +838,8 @@ export function ChannelView({
     async (questionId: string, selectedOption: string) => {
       setResolvingQuestions((state) => ({ ...state, [questionId]: true }));
       setQuestionErrors((state) => {
-        const { [questionId]: _removed, ...next } = state;
+        const next = { ...state };
+        delete next[questionId];
         return next;
       });
       try {
@@ -860,10 +863,11 @@ export function ChannelView({
           return next;
         });
       } finally {
-        setResolvingQuestions((state) => {
-          const { [questionId]: _removed, ...next } = state;
-          return next;
-        });
+      setResolvingQuestions((state) => {
+        const next = { ...state };
+        delete next[questionId];
+        return next;
+      });
       }
     },
     [],

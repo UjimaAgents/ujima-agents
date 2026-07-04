@@ -64,7 +64,7 @@ export function ActivationOnboardingForm(props: Props) {
       if (!role.name.trim()) return "Choose a starter role.";
     }
     return null;
-  }, [draft, step.id]);
+  }, [draft, step.id, codexConnected]);
 
   const update = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) =>
     onChange({ ...draft, [key]: value });

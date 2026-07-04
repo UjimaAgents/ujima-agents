@@ -16,17 +16,15 @@ import { AsyncMutex } from '../utils/async-mutex.js';
 import { AiService } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { ApprovalService } from './approval.js';
-import { createAuthDomain, type AuthDomainOutput } from './auth-domain.js';
-import { createNotificationsDomain, type NotificationsDomainOutput } from './notifications-domain.js';
+import { createAuthDomain } from './auth-domain.js';
+import { createNotificationsDomain } from './notifications-domain.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService, type ConversationServiceOptions } from './conversation.js';
 import { buildConversationSummaryViaLlm } from './conversation-summary.js';
 import { GoalSystemService } from './goal-system.js';
-import { createSchedulerDomain, type SchedulerDomainOutput } from './scheduler-domain.js';
-import { createAdminDomain, type AdminDomainOutput } from './admin-domain.js';
-import type { MemoryReviewService } from './memory-review.js';
-import type { TrajectoryService } from './trajectory.js';
+import { createSchedulerDomain } from './scheduler-domain.js';
+import { createAdminDomain } from './admin-domain.js';
 import type { McpRegistryService } from './mcp-registry.js';
 import { createConnectorAuditWriter } from './connector-audit.js';
 import { findRegistryEntry } from '@ujima/mcp-client';
@@ -1479,7 +1477,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     workspaces: context.workspaces,
     archiveRoot: context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
   });
-  const { auth, bootstrap, onboarding, workspaces, pluginRegistry, getOrganizationIdsForSweep, probeIds } = authDomain;
+  const { auth, bootstrap, onboarding, workspaces, pluginRegistry, getOrganizationIdsForSweep } = authDomain;
 
   const schedulerDomain = createSchedulerDomain({
     repo: context.repo,

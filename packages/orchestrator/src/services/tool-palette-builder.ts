@@ -157,9 +157,9 @@ export class ToolPaletteBuilder {
           repo: this.deps.repo,
           tools: this.deps.tools,
           approvals: this.deps.attachmentApprovalRequester
-            ? { requestAttachmentApproval: this.deps.attachmentApprovalRequester as any }
+            ? { requestAttachmentApproval: this.deps.attachmentApprovalRequester as (...args: never[]) => unknown }
             : undefined,
-          attachmentCapture: this.deps.attachmentCapture as any ?? undefined,
+          attachmentCapture: this.deps.attachmentCapture as (...args: never[]) => unknown ?? undefined,
         },
         ctx,
       );

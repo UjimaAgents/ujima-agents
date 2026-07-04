@@ -5,17 +5,16 @@ import {
   memberRoom,
   orgRoom,
   threadRoom,
+  isAgentOnlyThread,
+  type AgentOnlyMember,
   type Channel,
   type Message,
-  type MessageMention,
   type WakeReason,
-  type WakeSuppressedReason,
-  isAgentOnlyThread,
 } from '@ujima/shared';
 import { isVacuousAck } from './mirror-guard.js';
 import type { RealtimeService } from './context.js';
 import { normalizeToDottedToolName } from './run-reply-guard.js';
-import { MentionQuota, ChannelReadQuota, PairMentionTracker } from './conversation-quota.js';
+import type { MentionQuota, ChannelReadQuota, PairMentionTracker } from './conversation-quota.js';
 import { buildSystemMessage } from './message-factory.js';
 
 /**
@@ -281,7 +280,7 @@ export class WakeDispatcher {
       .map((id) => this.deps.repo.getMember(message.organizationId, id))
       .filter((member) => member != null)
       .map((member) => ({ id: member.id, kind: member.kind }));
-    if (!isAgentOnlyThread(message.threadId, members as any)) return false;
+    if (!isAgentOnlyThread(message.threadId, members as readonly AgentOnlyMember[])) return false;
     const handoff = (
       message.metadata as { handoff?: { complete?: boolean } } | undefined
     )?.handoff;

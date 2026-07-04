@@ -6,7 +6,6 @@ import {
   type LanguageModelV3CallOptions,
   type LanguageModelV3Content,
   type LanguageModelV3FilePart,
-  type LanguageModelV3FunctionTool,
   type LanguageModelV3GenerateResult,
   type LanguageModelV3TextPart,
   type LanguageModelV3ProviderTool,
@@ -171,12 +170,13 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
       });
     }
 
+    const body = response.body;
     const stream = new ReadableStream<LanguageModelV3StreamPart>({
       async start(controller) {
         controller.enqueue({ type: 'stream-start', warnings: prepared.warnings });
         const state = createStreamState(options.includeRawChunks === true);
         try {
-          for await (const value of streamOpenAIResponsesEvents(response.body!)) {
+          for await (const value of streamOpenAIResponsesEvents(body)) {
             handleStreamEvent(value, controller, state);
           }
           flushStreamState(controller, state);
@@ -582,6 +582,7 @@ function handleStreamEvent(
   controller: ReadableStreamDefaultController<LanguageModelV3StreamPart>,
   state: ReturnType<typeof createStreamState>,
 ) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const current = event as any;
   if (state.includeRaw) controller.enqueue({ type: 'raw', rawValue: event });
 

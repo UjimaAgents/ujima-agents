@@ -1,5 +1,4 @@
 import {
-  AGENT_KIND,
   ChannelSchema,
   SocketEventNames,
   channelRoom,
@@ -12,7 +11,6 @@ import {
   type Message,
   type MessageMention,
   getDirectMessageThreadId,
-  type WakeReason,
   isAgentOnlyThread,
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
@@ -43,7 +41,6 @@ import {
   PairMentionTracker,
 } from './conversation-quota.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
-import type { WakePolicy, PublishMessageOptions, MemberAlertInput } from './conversation-types.js';
 
 export { stripMentionSuffix, buildMemberMentionEntries } from './mention-resolver.js';
 
@@ -52,6 +49,7 @@ const ATTACHMENT_MESSAGE_LIMIT_BYTES = 100 * 1024 * 1024;
 
 type ConversationMessageMetadata = NonNullable<Message['metadata']>;
 
+import type { PublishMessageOptions, MemberAlertInput } from './conversation-types.js';
 export type { WakePolicy, PublishMessageOptions, MemberAlertInput } from './conversation-types.js';
 
 export interface ArchivedChannelMessageStore {

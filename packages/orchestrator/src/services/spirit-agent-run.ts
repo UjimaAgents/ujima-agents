@@ -1,6 +1,4 @@
 import { stepCountIs, tool, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
-import { isMcpDispatchEnabled } from './feature-flags.js';
-import { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
 import { classifyTool, type McpToolDescriptor } from '@ujima/shared';
 import { toModelToolErrorOutput, toModelToolOutput } from './tool-loop-result.js';
 import type { SpiritMcpResolution } from './spirit-types.js';
@@ -13,7 +11,6 @@ import {
   type McpServerSummary,
 } from './spirit-mcp-helpers.js';
 import {
-  AGENT_KIND,
   SocketEventNames,
   SpiritSchema,
   channelRoom,
@@ -24,36 +21,22 @@ import {
   type SpiritRole,
   type WakeReason,
 } from '@ujima/shared';
-import { buildAgentSystemPrompt, normalizeProviderKey, type AgentTeamHandle } from '@ujima/framework';
-import {
-  filterToolsForWakeReplyPolicy,
-  isAgentOnlyDmThread,
-  resolveWakeReplyPolicy,
-} from '../utils/wake-reply-policy.js';
-import { requireTeam } from '../utils/require-team.js';
+import { type AgentTeamHandle, buildAgentSystemPrompt, normalizeProviderKey } from '@ujima/framework';
 import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopChunk, type AgentLoopStep, type HumanPause } from './agent-loop.js';
+import { requireTeam } from '../utils/require-team.js';
 import { emergencyCompactThread } from './conversation-compact.js';
-import { isDelegateMessage } from './run-reply-guard.js';
 import {
   resolveSpiritModel,
-  buildToolDefinitions,
   makeProviderModelsInUseLookup,
   defaultResolveModelId,
 } from '../utils/to-model-messages.js';
 import {
-  ALWAYS_AVAILABLE_AGENT_TOOLS,
-  SUPERVISOR_TOOL_ALLOWLIST,
-  filterDeprecatedToolIds,
   listEffectiveAgentToolIds,
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
 import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
 import { errorMessage } from '../utils/error-message.js';
-import {
-  filterDelegateTurnToolSet,
-  getDelegateKind,
-} from '../utils/delegate-turn.js';
 import {
   createMessageCursor,
   loadChannelInterruptModelMessages,
@@ -76,7 +59,7 @@ import { SpiritServiceBase } from './spirit-service-base.js';
 import type { AgentLoopLogger } from '../debug/agent-loop-logger.js';
 import { SpiritRunState } from './spirit-run-state.js';
 import { buildRunContext } from './agent-run-context.js';
-import { ToolPaletteBuilder, type ToolPaletteBuilderDeps } from './tool-palette-builder.js';
+import { ToolPaletteBuilder } from './tool-palette-builder.js';
 import { RunStatePersister } from './run-state-persister.js';
 
 export class SpiritServiceAgentRun extends SpiritServiceBase {
