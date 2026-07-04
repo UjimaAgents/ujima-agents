@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { isOneToOneThread, type Message, type ReasoningEffort, type SpiritRole } from "@ujima/shared";
 import { selectLanguageModel } from '@ujima/llm';
 import { normalizeProviderKey, type AgentTeamHandle } from '@ujima/framework';
-import { generateText, tool } from 'ai';
+import { generateText, streamText, tool } from 'ai';
 import type {
   FilePart,
   ImagePart,
@@ -233,12 +233,21 @@ export async function probeModelReachable(input: {
 
   let ok = false;
   try {
-    await generateText({
-      model: input.model,
-      prompt: 'ping',
-      maxOutputTokens: 1,
-      abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
+    if (isCodexResponsesModel(input.model)) {
+      await streamText({
+        model: input.model,
+        prompt: 'ping',
+        maxOutputTokens: 1,
+        abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      }).text;
+    } else {
+      await generateText({
+        model: input.model,
+        prompt: 'ping',
+        maxOutputTokens: 1,
+        abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+    }
     ok = true;
   } catch {
     ok = false;
@@ -248,6 +257,11 @@ export async function probeModelReachable(input: {
     expiresAt: now() + (ok ? HEALTHY_TTL_MS : UNHEALTHY_TTL_MS),
   });
   return ok;
+}
+
+function isCodexResponsesModel(model: LanguageModel): boolean {
+  const meta = model as { provider?: unknown };
+  return meta.provider === 'openai.responses';
 }
 
 // Fix #7: Shared model-resolution ladder.

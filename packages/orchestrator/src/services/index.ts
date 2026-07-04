@@ -8,7 +8,9 @@ import {
   orgRoom,
   threadRoom,
   type MemberAlertFailureStage,
+  type Member,
   type Message,
+  type RunState,
   type WakeReason,
 } from '@ujima/shared';
 import { randomUUID } from 'node:crypto';
@@ -55,6 +57,7 @@ import { filterVisibleMessages } from '../utils/message-visibility.js';
 import type { TeamStore } from './team-store.js';
 import type { DelegateKind } from '../utils/delegate-turn.js';
 import { getDelegateKind } from '../utils/delegate-turn.js';
+import { ChildTaskService } from './child-task-service.js';
 import {
   createPermissionGatedToolService,
   saveBlockedToolRunStep,
@@ -66,6 +69,7 @@ import { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
 import { modelContextWindowTokens } from '../utils/model-context-window.js';
 import type { AgentDelegateResult } from '../tools/types.js';
+import { buildSystemMessage } from './message-factory.js';
 
 export type { ApiServiceContext, RealtimeService } from './context.js';
 export { createTeamStore } from './team-store.js';
@@ -504,6 +508,41 @@ function postDelegateDoneMarker(
   }
 }
 
+function publishParentDelegateHandback(input: {
+  repo: ApiRepository;
+  conversations: ConversationService;
+  organizationId: string;
+  parentRun: RunState;
+  delegateAgentId: string;
+  delegateAgentName: string;
+  sourceMessageId: string;
+  replyContent?: string;
+  fallbackSummary?: string;
+}): Message | null {
+  const parentThreadId = input.parentRun.threadId;
+  if (!parentThreadId) return null;
+  const thread = input.repo.getThread(input.organizationId, parentThreadId);
+  if (!thread) return null;
+  const content = (input.replyContent?.trim() || input.fallbackSummary?.trim());
+  if (!content) return null;
+  const handback = buildSystemMessage({
+    organizationId: input.organizationId,
+    threadId: parentThreadId,
+    channelId: thread.channelId ?? undefined,
+    content: [
+      `Delegate result from ${input.delegateAgentName}:`,
+      content,
+    ].join('\n'),
+    metadata: {
+      runId: input.parentRun.id,
+    },
+  });
+  return input.conversations.publishMessage(handback, [], undefined, {
+    suppressDmAlerts: true,
+    wakePolicy: 'never',
+  });
+}
+
 function updateDelegateMessageStatus(
   repo: Pick<ApiRepository, 'updateMessage'>,
   message: Message,
@@ -792,9 +831,18 @@ function isTempAgentRole(roleName: string): boolean {
   return roleName.startsWith('@delegate/');
 }
 
+function isTempAgentMember(member: Pick<Member, 'roleName' | 'name'> | null | undefined): boolean {
+  return !!member && (isTempAgentRole(member.roleName) || member.name.startsWith('delegate:'));
+}
+
+function inferTempAgentDelegateKind(member: Pick<Member, 'name'> | null | undefined): DelegateKind | undefined {
+  if (!member?.name.startsWith('delegate:explorer:')) return undefined;
+  return 'explorer';
+}
+
 function retireTempAgent(repo: ApiRepository, organizationId: string, agentId: string): void {
   const agent = repo.getMember(organizationId, agentId);
-  if (agent && isTempAgentRole(agent.roleName) && !agent.retiredAt) {
+  if (agent && isTempAgentMember(agent) && !agent.retiredAt) {
     repo.saveMember({ ...agent, retiredAt: new Date().toISOString() });
   }
 }
@@ -802,6 +850,7 @@ function retireTempAgent(repo: ApiRepository, organizationId: string, agentId: s
 export async function runAgentDelegateTurn(input: {
   repo: ApiRepository;
   conversations: ConversationService;
+  childTasks?: ChildTaskService;
   wakeMember: (alert: {
     organizationId: string;
     memberId: string;
@@ -847,8 +896,8 @@ export async function runAgentDelegateTurn(input: {
     throw new Error('Cannot delegate to yourself. Delegate to a different agent.');
   }
 
-  const isTempAgent = isTempAgentRole(target.roleName);
-  const delegateKind = input.kind ?? 'worker';
+  const isTempAgent = isTempAgentMember(target);
+  const delegateKind = input.kind ?? inferTempAgentDelegateKind(target) ?? 'worker';
 
   // Decide where the delegation runs. When the delegator is working in a
   // shared channel, run the delegation as a channel-scoped thread
@@ -944,6 +993,25 @@ export async function runAgentDelegateTurn(input: {
   });
   delegateMessage = updateDelegateMessageStatus(input.repo, delegateMessage, 'running');
 
+  // Create first-class child-task record alongside message metadata.
+  // The child-task record becomes the source of truth; message metadata
+  // is kept for backwards compatibility during the migration.
+  const childTaskId = delegateMessage.id;
+  if (input.childTasks) {
+    input.childTasks.createChildTask({
+      id: childTaskId,
+      organizationId: input.organizationId,
+      parentRunId: input.runId,
+      parentMemberId: input.fromMemberId,
+      targetAgentId: target.id,
+      targetAgentKind: delegateKind,
+      threadId,
+      waitMode: input.mode === 'non_blocking' ? 'detach' : 'wait',
+      label: shortTask,
+      keepAgent: isTempAgent,
+    });
+  }
+
   // Clickable pointer in the main channel feed so the delegation is
   // visible without flooding the channel with the delegate's turns.
   if (useChannelThread && parentChannelId) {
@@ -979,6 +1047,7 @@ export async function runAgentDelegateTurn(input: {
 
   if (input.mode === 'non_blocking') {
     updateDelegateMessageStatus(input.repo, delegateMessage, 'dispatched');
+    input.childTasks?.updateStatus(input.organizationId, childTaskId, 'running');
     return {
       status: 'dispatched',
       agent: target.name,
@@ -1003,6 +1072,15 @@ export async function runAgentDelegateTurn(input: {
     isTempAgent,
   });
   delegateMessage = updateDelegateMessageStatus(input.repo, delegateMessage, result.status);
+  if (result.status === 'completed') {
+    input.childTasks?.recordResult(input.organizationId, childTaskId, result.reply_content ?? '');
+  } else if (result.status === 'delegate_failed') {
+    input.childTasks?.setError(input.organizationId, childTaskId, result.error ?? 'delegate_failed');
+  } else if (result.status === 'timed_out') {
+    input.childTasks?.updateStatus(input.organizationId, childTaskId, 'running');
+  } else if (result.status === 'waiting_for_approval' || result.status === 'waiting_for_input') {
+    input.childTasks?.updateStatus(input.organizationId, childTaskId, result.status);
+  }
   if (result.status === 'completed') {
     postDelegateDoneMarker(
       input.repo,
@@ -1066,6 +1144,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     },
   });
 
+  const childTasks = new ChildTaskService(context.repo);
+
   const delegateAgentTurn = async (input: {
     organizationId: string;
     fromMemberId: string;
@@ -1082,6 +1162,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     runAgentDelegateTurn({
       repo: context.repo,
       conversations,
+      childTasks,
       wakeMember,
       createRun: createDelegateRun,
       ...input,
@@ -1091,6 +1172,43 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     orgId: string,
     delegateId: string,
   ): Promise<AgentDelegateResult> => {
+    // Try child-task record first (first-class source of truth).
+    const task = childTasks.getChildTask(orgId, delegateId);
+    if (task) {
+      const targetAgent = context.repo.getMember(orgId, task.targetAgentId);
+      const base: Pick<AgentDelegateResult, 'agent' | 'agent_id' | 'thread_id' | 'message_id'> = {
+        agent: targetAgent?.name ?? task.targetAgentId,
+        agent_id: task.targetAgentId,
+        thread_id: task.threadId,
+        message_id: delegateId,
+      };
+      if (task.status === 'completed' && task.result) {
+        return { ...base, status: 'completed', reply_content: task.result };
+      }
+      if (task.status === 'completed') {
+        return { ...base, status: 'completed', reply_content: task.result };
+      }
+      if (task.status === 'failed') {
+        return { ...base, status: 'delegate_failed', error: task.error };
+      }
+      if (task.status === 'cancelled') {
+        return { ...base, status: 'delegate_failed', error: 'cancelled' };
+      }
+      const activeRun = context.repo.findActiveRunForMemberThread?.(
+        orgId,
+        task.targetAgentId,
+        task.threadId,
+      );
+      if (activeRun) {
+        if (runIsWaitingOnHuman(activeRun.status)) {
+          return { ...base, status: activeRun.status, run_status: activeRun.status };
+        }
+        return { ...base, status: 'dispatched', run_status: activeRun.status };
+      }
+      return { ...base, status: 'no_reply' };
+    }
+
+    // Fall back to legacy message-metadata-based resolution.
     const ctx = resolveDelegateMessage(context.repo, orgId, delegateId);
     const base = delegateResultBase(delegateId, ctx, delegateIndex(ctx.msg));
     const activeRun = context.repo.findActiveRunForMemberThread?.(
@@ -1164,6 +1282,22 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   ): Promise<AgentDelegateResult[]> =>
     Promise.all(
       delegateIds.map(async (delegateId) => {
+        const task = childTasks.getChildTask(orgId, delegateId);
+        if (task) {
+          const agent = context.repo.getMember(orgId, task.targetAgentId);
+          return waitForAgentDelegateReply({
+            repo: context.repo,
+            organizationId: orgId,
+            agentId: task.targetAgentId,
+            agentName: agent?.name ?? task.targetAgentId,
+            threadId: task.threadId,
+            delegateMessage: { id: delegateId, createdAt: task.createdAt },
+            parentRunId: task.parentRunId,
+            timeoutMs,
+            pollIntervalMs,
+            isTempAgent: isTempAgentMember(agent),
+          });
+        }
         const ctx = resolveDelegateMessage(context.repo, orgId, delegateId);
         return waitForAgentDelegateReply({
           repo: context.repo,
@@ -1184,6 +1318,13 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     orgId: string,
     delegateId: string,
   ): Promise<{ stopped: boolean; runId?: string }> => {
+    // Cancel the child-task record if it exists.
+    const task = childTasks.getChildTask(orgId, delegateId);
+    if (task) {
+      childTasks.updateStatus(orgId, delegateId, 'cancelled');
+    }
+
+    // Fall back to legacy message-metadata-based resolution.
     const ctx = resolveDelegateMessage(context.repo, orgId, delegateId);
     // Older delegate threads may point at retired ephemeral members.
     retireTempAgent(context.repo, orgId, ctx.recipientId);
@@ -1206,8 +1347,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     delegateId: string,
     limit?: number,
   ) => {
-    const ctx = resolveDelegateMessage(context.repo, orgId, delegateId);
-    const page = context.repo.listMessages(orgId, ctx.threadId, undefined, limit ?? 50);
+    const task = childTasks.getChildTask(orgId, delegateId);
+    const threadId = task?.threadId ?? resolveDelegateMessage(context.repo, orgId, delegateId).threadId;
+    const page = context.repo.listMessages(orgId, threadId, undefined, limit ?? 50);
     return page.data.map((message) => ({
       id: message.id,
       senderId: message.senderId,
@@ -1223,14 +1365,28 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     message: string,
     fromMemberId: string,
   ): Promise<{ sent: boolean; messageId: string }> => {
-    const ctx = resolveDelegateMessage(context.repo, orgId, delegateId, fromMemberId);
-    const existingDelegate = ctx.msg.metadata?.delegate as DelegateMetadata | undefined;
+    // Resolve via child task first, fall back to message metadata.
+    const task = childTasks.getChildTask(orgId, delegateId);
+    const threadId = task?.threadId;
+    const recipientId = task?.targetAgentId;
+    // Only fall back to message-metadata resolution if we have no thread info.
+    const ctx = !threadId
+      ? resolveDelegateMessage(context.repo, orgId, delegateId, fromMemberId)
+      : {
+          threadId,
+          recipientId: recipientId ?? '',
+          msg: null as unknown as NonNullable<ReturnType<typeof resolveDelegateMessage>>['msg'],
+          agentName: context.repo.getMember(orgId, recipientId ?? '')?.name ?? recipientId ?? '',
+        };
+    const existingDelegate = ctx.msg?.metadata?.delegate as DelegateMetadata | undefined;
     const parentChannelId = existingDelegate?.parentChannelId;
     const followUpDelegateMeta = {
-      parentRunId: existingDelegate?.parentRunId,
+      parentRunId: task?.parentRunId ?? existingDelegate?.parentRunId,
       ...(parentChannelId ? { parentChannelId } : {}),
-      kind: getDelegateKind(ctx.msg),
-      index: delegateIndex(ctx.msg),
+      kind: task
+        ? (task.targetAgentKind as DelegateKind)
+        : getDelegateKind(ctx.msg),
+      index: ctx.msg ? delegateIndex(ctx.msg) : undefined,
       status: 'queued' as const,
     };
     // Channel-scoped delegations keep follow-ups inside the
@@ -1742,8 +1898,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // drain-pending-member-alert, memory-review's turn counter, and
   // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
-    if (run.sourceMessageId) {
-      const sourceMsg = context.repo.getMessage(run.organizationId, run.sourceMessageId);
+    const sourceMessageId = run.sourceMessageId;
+    if (sourceMessageId) {
+      const sourceMsg = context.repo.getMessage(run.organizationId, sourceMessageId);
       if (sourceMsg?.metadata?.delegate) {
         updateDelegateMessageStatus(
           context.repo,
@@ -1757,16 +1914,37 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         retireTempAgent(context.repo, run.organizationId, run.agentId);
       }
       const parentRunId = sourceMsg?.metadata?.delegate?.parentRunId;
-      if (run.status !== 'cancelled' && parentRunId) {
+      if (run.status !== 'cancelled' && sourceMsg && parentRunId) {
         const parentRun = context.repo.getRun(run.organizationId, parentRunId);
-        if (parentRun && runIsTerminal(parentRun.status) && parentRun.status !== 'cancelled') {
-          const threadId = getDirectMessageThreadId(run.agentId, parentRun.agentId);
+        const delegateThreadId = run.threadId;
+        const parentThreadId = parentRun?.threadId;
+        if (parentRun && delegateThreadId && parentThreadId && runIsTerminal(parentRun.status) && parentRun.status !== 'cancelled') {
+          const reply = latestDelegateReply(
+            context.repo,
+            run.organizationId,
+            delegateThreadId,
+            run.agentId,
+            { id: sourceMessageId, createdAt: sourceMsg.createdAt },
+          );
+          const handback = publishParentDelegateHandback({
+            repo: context.repo,
+            conversations,
+            organizationId: run.organizationId,
+            parentRun,
+            delegateAgentId: run.agentId,
+            delegateAgentName: context.repo.getMember(run.organizationId, run.agentId)?.name ?? run.agentId,
+            sourceMessageId,
+            replyContent: reply?.content,
+            fallbackSummary: run.summary,
+          });
+          const threadId = parentThreadId;
+          const parentThread = context.repo.getThread(run.organizationId, threadId);
           await wakeMember({
             organizationId: run.organizationId,
             memberId: parentRun.agentId,
             threadId,
-            channelId: threadId,
-            messageId: run.sourceMessageId,
+            channelId: parentThread?.channelId ?? threadId,
+            messageId: handback?.id ?? sourceMessageId,
             byMemberId: run.agentId,
             reason: 'delegate_complete',
             wakeReason: 'delegate_complete',

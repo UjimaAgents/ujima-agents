@@ -54,6 +54,9 @@ export interface TraceStepData {
   actorId: string;
   actorName: string;
   runId?: string;
+  /** First-class child-task id. When present, trace grouping uses this
+   * instead of runId so delegation threads group by task boundary. */
+  taskId?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolResult?: unknown;

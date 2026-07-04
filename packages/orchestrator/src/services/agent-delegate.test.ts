@@ -464,13 +464,80 @@ describe('agent delegation', () => {
     expect(delegateAgentTurn).toHaveBeenNthCalledWith(3, expect.objectContaining({ index: 2, mode: 'blocking' }));
     expect(result).toMatchObject({
       status: 'completed',
-      delegate_ids: ['delegate-0', 'delegate-1', 'delegate-2'],
+      task_ids: ['delegate-0', 'delegate-1', 'delegate-2'],
       details: [
         expect.objectContaining({ delegate_index: 0, reply_content: 'done-0' }),
         expect.objectContaining({ delegate_index: 1, reply_content: 'done-1' }),
         expect.objectContaining({ delegate_index: 2, reply_content: 'done-2' }),
       ],
     });
+  });
+
+  it('agent.delegate start supports non_blocking execution', async () => {
+    const delegateAgentTurn = vi.fn(async () => ({
+      status: 'dispatched' as const,
+      agent: target.name,
+      agent_id: target.id,
+      thread_id: 'dm:agent-1:agent-2',
+      message_id: 'delegate-1',
+    }));
+
+    const result = await agentDelegateTool.execute({
+      invocation: {
+        organizationId: orgId,
+        runId: 'run-1',
+        memberId: caller.id,
+        toolCallId: 'tool-1',
+        toolId: 'agent.delegate',
+        action: 'execute',
+        resourceType: 'mcp',
+        input: {
+          action: 'start',
+          target: target.id,
+          task: 'parallelize this',
+          execution: 'non_blocking',
+        },
+      } as never,
+      repo: {
+        getRun: () => ({
+          id: 'run-1',
+          organizationId: orgId,
+          agentId: caller.id,
+          threadId: 'thread-1',
+          status: 'running',
+          step: 'running',
+          summary: '',
+          startedAt: '2026-05-31T10:00:00.000Z',
+        }),
+        saveRun: vi.fn((run) => run),
+      } as never,
+      delegateAgentTurn,
+    } as never);
+
+    expect(delegateAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ mode: 'non_blocking' }));
+    expect(result).toMatchObject({
+      task_id: 'delegate-1',
+      status: 'dispatched',
+    });
+  });
+
+  it('agent.delegate status rejects missing task ids', async () => {
+    await expect(agentDelegateTool.execute({
+      invocation: {
+        organizationId: orgId,
+        runId: 'run-1',
+        memberId: caller.id,
+        toolCallId: 'tool-1',
+        toolId: 'agent.delegate',
+        action: 'execute',
+        resourceType: 'mcp',
+        input: {
+          action: 'status',
+        },
+      } as never,
+      repo: {} as never,
+      getDelegateStatus: vi.fn(),
+    } as never)).rejects.toThrow('status requires task_id or task_ids.');
   });
 
 });

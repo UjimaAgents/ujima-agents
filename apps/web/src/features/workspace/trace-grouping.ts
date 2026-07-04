@@ -112,13 +112,13 @@ function groupStatusLabel(status: TraceStepData["status"]): string {
 
 /**
  * Stable continuity key for a tool group. Two consecutive tool steps
- * belong in the same card iff they share this key. Prefer `runId`
- * (one card per agent run, which is the real transactional boundary);
- * fall back to `actorId` for tool events that lack a runId so we
- * still avoid the cross-actor fold.
+ * belong in the same card iff they share this key. Prefer `taskId`
+ * (first-class child-task boundary), then `runId` (agent run), then
+ * `actorId` for tool events that lack both so we still avoid the
+ * cross-actor fold.
  */
 function getGroupKey(step: TraceStepData): string {
-  return step.runId ?? step.actorId;
+  return step.taskId ?? step.runId ?? step.actorId;
 }
 
 export function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
@@ -142,6 +142,7 @@ export function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
           actorId: step.actorId,
           actorName: step.actorName,
           ...(step.runId ? { runId: step.runId } : {}),
+          ...(step.taskId ? { taskId: step.taskId } : {}),
           groupKey,
           aggregatedOperations: [],
         };
@@ -172,6 +173,7 @@ export function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
         actorId: step.actorId,
         actorName: step.actorName,
         ...(step.runId ? { runId: step.runId } : {}),
+        ...(step.taskId ? { taskId: step.taskId } : {}),
         groupKey: getGroupKey(step),
         aggregatedOperations: [],
       };

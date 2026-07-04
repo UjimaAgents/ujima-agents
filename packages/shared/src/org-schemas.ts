@@ -583,6 +583,45 @@ export const TaskSessionSchema = z.object({
 });
 export type TaskSession = z.infer<typeof TaskSessionSchema>;
 
+export const DelegateKindSchema = z.enum(["worker", "explorer"]);
+export type DelegateKind = z.infer<typeof DelegateKindSchema>;
+
+// -----------------------------------------------------------------------
+// Child task (first-class delegation record)
+// -----------------------------------------------------------------------
+//
+// A `ChildTask` is the first-class record for every `agent.delegate.start`
+// or `agent.delegate.start_many` invocation. It replaces the old
+// message-metadata-based delegation with a proper tracked entity that has
+// its own status lifecycle, thread identity, and result/error fields.
+// Temp-agent lifetime is scoped to the child task by default.
+
+export const ChildTaskWaitModeSchema = z.enum(["detach", "wait", "wait_all", "wait_any"]);
+export type ChildTaskWaitMode = z.infer<typeof ChildTaskWaitModeSchema>;
+
+export const ChildTaskStatusSchema = RunStatusSchema;
+export type ChildTaskStatus = z.infer<typeof ChildTaskStatusSchema>;
+
+export const ChildTaskSchema = z.object({
+  id: IdSchema,
+  organizationId: IdSchema,
+  parentRunId: IdSchema,
+  parentMemberId: IdSchema,
+  targetAgentId: IdSchema,
+  targetAgentKind: DelegateKindSchema.default("worker"),
+  threadId: IdSchema,
+  status: ChildTaskStatusSchema.default("queued"),
+  waitMode: ChildTaskWaitModeSchema.default("wait"),
+  label: z.string().default(""),
+  result: z.string().default(""),
+  error: z.string().default(""),
+  keepAgent: z.boolean().default(false),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  completedAt: TimestampSchema.optional(),
+});
+export type ChildTask = z.infer<typeof ChildTaskSchema>;
+
 export const CronExpressionSchema = z
   .string()
   .min(1)

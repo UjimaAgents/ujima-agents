@@ -18,9 +18,11 @@ export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'Most messages do not need a reply. If not addressed, not in your domain, or already handled, call channel.close with a specific reason/note and stop the session. Do not emit chat text alongside channel.close.',
   'If you are @mentioned, finish required work first, then terminate with exactly one tool: use channel.reply for substantive content; use channel.close reason "ack" when no visible reply helps.',
   ...TERMINATING_TOOL_USAGE_GUIDANCE,
-  'To hand work to another agent, use agent.delegate. Do not simulate handoffs in plain text.',
+  'To hand work to another agent, use agent.manage and agent.delegate. Do not simulate handoffs in plain text.',
   'channel.reply and channel.close are different tools.',
-  'agent.delegate: use kind "explorer" for read-only investigation and kind "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',
+  'agent.manage: search existing agents, inspect them, or create temporary delegates before delegating work.',
+  'agent.delegate: use mode "explorer" for read-only investigation and mode "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',
+  'agent.delegate: use execution "blocking" when you need the result before continuing. Use execution "non_blocking" when child work can continue in parallel; when that delegate finishes, you will be woken again with a delegate result message in your current thread context.',
   'In a hand-off chain with 3 or more agents, when you reply, the previous sender is automatically re-mentioned. If you need to bring in an earlier participant, mention them explicitly with @name.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
 ] as const;

@@ -1,8 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { generateText, streamText } from 'ai';
 import type { Message } from '@ujima/shared';
-import { buildToolDefinitions, toModelMessages } from './to-model-messages.js';
+import { buildToolDefinitions, probeModelReachable, toModelMessages } from './to-model-messages.js';
+
+vi.mock('ai', async () => {
+  const actual = await vi.importActual('ai');
+  return {
+    ...actual,
+    generateText: vi.fn(),
+    streamText: vi.fn(),
+  };
+});
 
 describe('toModelMessages', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('drops trace-only rows before building prompt messages', () => {
     const messages: Message[] = [
       {
@@ -149,5 +163,21 @@ describe('toModelMessages', () => {
     );
 
     expect(Object.keys(tools)).toEqual(['grep']);
+  });
+
+  it('probes Codex responses models with streamText', async () => {
+    vi.mocked(streamText).mockReturnValue({ text: Promise.resolve('pong') } as never);
+    vi.mocked(generateText).mockRejectedValue(new Error('should not call generateText'));
+
+    const ok = await probeModelReachable({
+      organizationId: 'org-1',
+      providerName: 'openai-codex',
+      modelId: 'gpt-5.4-mini',
+      model: { provider: 'openai.responses' } as never,
+    });
+
+    expect(ok).toBe(true);
+    expect(streamText).toHaveBeenCalledTimes(1);
+    expect(generateText).not.toHaveBeenCalled();
   });
 });
