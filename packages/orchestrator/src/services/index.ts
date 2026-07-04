@@ -319,6 +319,17 @@ function threadHasActiveRun(
   return repo.listActiveRuns(organizationId).some((run) => run.threadId === threadId);
 }
 
+function agentHasActiveRunInThread(
+  repo: WakeMemberDeps['repo'],
+  organizationId: string,
+  threadId: string,
+  agentId: string,
+): boolean {
+  return repo.listActiveRuns(organizationId).some(
+    (run) => run.threadId === threadId && run.agentId === agentId,
+  );
+}
+
 type WakeSequencingMode = 'parallel' | 'serialized';
 
 function resolveWakeSequencing(
@@ -623,17 +634,31 @@ export async function wakeMemberWithFailureEvents(
 
   const sequencing = resolveWakeSequencing(input, deps.repo);
   if (sequencing === 'parallel') {
-    await createWakeRun();
+    // Human messages wake all agents concurrently, but the *same* agent
+    // must not start two runs in one conversation — that's a duplicate wake.
+    if (agentHasActiveRunInThread(deps.repo, input.organizationId, input.threadId, input.memberId)) {
+      enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+      return;
+    }
+    // Parallel runs for different agents in the same thread still go through
+    // the mutex so the check/create window is closed across the whole thread.
+    await createRunMutex.run(createRunMutexKey(input), async () => {
+      if (agentHasActiveRunInThread(deps.repo, input.organizationId, input.threadId, input.memberId)) {
+        enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+        return;
+      }
+      await createWakeRun();
+    });
     return;
   }
 
+  // Agent-originated turns speak one at a time — any active run in the
+  // thread blocks the successor.
   if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
     enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
     return;
   }
 
-  // Agent-originated turns speak one at a time. The mutex closes the
-  // check/create window across all agents in that conversation.
   await createRunMutex.run(createRunMutexKey(input), async () => {
     if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
       enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));

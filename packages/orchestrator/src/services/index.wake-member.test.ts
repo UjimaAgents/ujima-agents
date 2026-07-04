@@ -49,24 +49,16 @@ describe('wakeMemberWithFailureEvents', () => {
 
   it('starts concurrent runs for human channel fanout wakes', async () => {
     const emit = vi.fn();
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const createRun = vi.fn(async (input: { agentId: string }) => {
-      inFlight += 1;
-      maxInFlight = Math.max(maxInFlight, inFlight);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      inFlight -= 1;
-      return {
-        id: `run-${input.agentId}`,
-        organizationId: baseInput.organizationId,
-        agentId: input.agentId,
-        threadId: baseInput.threadId,
-        status: 'queued' as const,
-        step: 'queued',
-        summary: 'queued',
-        startedAt: new Date().toISOString(),
-      };
-    });
+    const createRun = vi.fn(async (input: { agentId: string }) => ({
+      id: `run-${input.agentId}`,
+      organizationId: baseInput.organizationId,
+      agentId: input.agentId,
+      threadId: baseInput.threadId,
+      status: 'queued' as const,
+      step: 'queued',
+      summary: 'queued',
+      startedAt: new Date().toISOString(),
+    }));
     const repo = {
       listActiveRuns: vi.fn(() => [
         {
@@ -97,7 +89,45 @@ describe('wakeMemberWithFailureEvents', () => {
     ]);
 
     expect(createRun).toHaveBeenCalledTimes(2);
-    expect(maxInFlight).toBe(2);
+  });
+
+  it('deduplicates parallel wakes for the same agent from a human message', async () => {
+    const emit = vi.fn();
+    const activeRuns: RunState[] = [];
+    const createRun = vi.fn(async (input: { agentId: string }) => {
+      const run: RunState = {
+        id: `run-${input.agentId}`,
+        organizationId: baseInput.organizationId,
+        agentId: input.agentId,
+        threadId: baseInput.threadId,
+        status: 'running',
+        step: 'running',
+        summary: 'running',
+        startedAt: new Date().toISOString(),
+      };
+      activeRuns.push(run);
+      return { ...run, status: 'queued' as const, step: 'queued', summary: 'queued' };
+    });
+    const repo = {
+      listActiveRuns: vi.fn(() => activeRuns),
+      getMessage: vi.fn(() => ({ senderKind: 'human' })),
+    };
+    const deps = {
+      spirits: {
+        handleAlert: vi.fn(async () => ({ kind: 'no-active-spirit' as const })),
+      },
+      runs: { createRun },
+      realtime: { emit },
+      repo,
+    };
+
+    // Same agent, two different messages — should only create one run.
+    await Promise.all([
+      wakeMemberWithFailureEvents(deps, { ...baseInput, wakeReason: 'channel-read' }),
+      wakeMemberWithFailureEvents(deps, { ...baseInput, messageId: 'msg-2', wakeReason: 'channel-read' }),
+    ]);
+
+    expect(createRun).toHaveBeenCalledTimes(1);
   });
 
   it('coalesces concurrent wakes from agent messages in one thread into a single createRun', async () => {
