@@ -5,6 +5,7 @@ export {
   deriveTaskSessionOutcome,
   aggregateToolUsage,
   TERMINAL_TASK_SESSION_STATUSES,
+  _defaultResolveModelId,
 } from './spirit-run-detail.js';
 export type {
   ModelResolver,
@@ -18,6 +19,7 @@ export type {
   RunSpiritInput,
   RunSpiritOutcome,
   RunDetailAggregate,
+  RunTraceDetail,
   RunDetail,
   SpiritAlertInput,
   SpiritSupervisorReplyOutcome,

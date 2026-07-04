@@ -34,6 +34,7 @@ export function composeSystemPromptSuffix(input: {
   return segments.length > 0 ? segments.join('\n\n') : undefined;
 }
 import { defaultResolveModelId } from '../utils/to-model-messages.js';
+export { defaultResolveModelId as _defaultResolveModelId };
 import type { RunDetailAggregate } from './spirit-types.js';
 
 export const TERMINAL_TASK_SESSION_STATUSES = new Set(['completed', 'failed', 'cancelled']);
