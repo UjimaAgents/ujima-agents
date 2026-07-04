@@ -185,7 +185,7 @@ export function registerWorkspaceRoutes(
       description:
         'Create a new workspace or duplicate an existing one',
       tags: ['Workspaces'],
-      body: z.union([CreateWorkspaceRequestSchema, DuplicateWorkspaceRequestSchema]),
+      body: z.union([DuplicateWorkspaceRequestSchema, CreateWorkspaceRequestSchema]),
       response: {
         200: WorkspaceListItemSchema,
         400: ApiErrorSchema,

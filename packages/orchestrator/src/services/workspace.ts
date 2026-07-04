@@ -296,7 +296,6 @@ export class WorkspaceService {
     const sourcePolicies = copyOptions.policies ? { ...sourceTeam.config.policies } : undefined;
     const sourceRoles = copyOptions.roles || copyOptions.agents ? [...sourceTeam.roles] : [];
     const sourceAgents = copyOptions.agents ? [...sourceTeam.agents] : [];
-    const sourceOrgChart = copyOptions.orgChart ? { ...sourceOrg.organizationChart.reportsTo } : {};
 
     const baseConfig = createEmptyWorkspaceTeamConfig({
       name: organizationName,
@@ -308,7 +307,6 @@ export class WorkspaceService {
         ]),
       ),
       tools: sourceTools,
-      organizationChart: { reportsTo: sourceOrgChart },
     });
     baseConfig.channels = sourceChannels;
     baseConfig.agents = sourceAgents;

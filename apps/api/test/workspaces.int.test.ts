@@ -165,55 +165,10 @@ describe('workspace routes', () => {
     expect(body.current_workspace_id).toBe(`ws_${organizationId}`);
   });
 
-  it('duplicates a workspace with agents and provider configuration', async () => {
-    const duplicateHome = await mkdtemp(join(tmpdir(), 'ujima-ws-duplicate-'));
-    try {
-      const response = await fetch(`${baseUrl}/api/workspaces`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          source_workspace_id: `ws_${organizationId}`,
-          root_path: duplicateHome,
-          label: 'Duplicated Workspace',
-          copy_options: {
-            provider_keys: ['openai'],
-            provider_configs: true,
-            agents: true,
-            roles: true,
-            channels: true,
-            tools: false,
-            policies: false,
-            org_chart: true,
-          },
-        }),
-      });
-
-      expect(response.status).toBe(200);
-      const created = (await response.json()) as { id: string; label: string | null };
-      expect(created.label).toBe('Duplicated Workspace');
-
-      const duplicatedOrganizationId = created.id.replace(/^ws_/, '');
-      const storedTeam = repo.getWorkspaceSetting(duplicatedOrganizationId, TEAM_CONFIG_SETTING_KEY);
-      expect(storedTeam).toBeTruthy();
-      const parsedTeam = JSON.parse(storedTeam!) as {
-        agents?: Array<{ name?: string; roleName?: string }>;
-        providers?: Record<string, unknown>;
-        roles?: Array<{ name?: string; provider?: string }>;
-      };
-
-      expect(parsedTeam.providers?.openai).toBeTruthy();
-      expect(parsedTeam.roles?.some((role) => role.name === 'frontend-engineer' && role.provider === 'openai')).toBe(true);
-      expect(parsedTeam.agents?.some((agent) => agent.name === 'frontend-engineer')).toBe(true);
-      expect(repo.getProviderCredential(duplicatedOrganizationId, 'openai')).toBe('test-key');
-      expect(repo.getMember(duplicatedOrganizationId, 'frontend-engineer')?.kind).toBe('agent');
-    } finally {
-      await rm(duplicateHome, { recursive: true, force: true });
-    }
-  });
-
   it('creates a second workspace as a new starter organization and can switch to it', async () => {
     const otherHome = await mkdtemp(join(tmpdir(), 'ujima-ws-other-'));
     const staleHome = await mkdtemp(join(tmpdir(), 'ujima-ws-stale-'));
+    const backupConfig = repo.getWorkspaceSetting(organizationId, TEAM_CONFIG_SETTING_KEY);
     try {
       repo.saveWorkspaceSetting(
         organizationId,
@@ -348,6 +303,53 @@ describe('workspace routes', () => {
     } finally {
       await rm(otherHome, { recursive: true, force: true });
       await rm(staleHome, { recursive: true, force: true });
+      if (backupConfig) repo.saveWorkspaceSetting(organizationId, TEAM_CONFIG_SETTING_KEY, backupConfig);
+    }
+  });
+
+  it('duplicates a workspace with agents and provider configuration', async () => {
+    const duplicateHome = await mkdtemp(join(tmpdir(), 'ujima-ws-duplicate-'));
+    try {
+      const response = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          source_workspace_id: `ws_${organizationId}`,
+          root_path: duplicateHome,
+          label: 'Duplicated Workspace',
+          copy_options: {
+            provider_keys: ['openai'],
+            provider_configs: true,
+            agents: true,
+            roles: true,
+            channels: true,
+            tools: false,
+            policies: false,
+            org_chart: true,
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const created = (await response.json()) as { id: string; label: string | null };
+      expect(created.label).toBe('Duplicated Workspace');
+
+      const duplicatedOrganizationId = created.id.replace(/^ws_/, '');
+      const storedTeam = repo.getWorkspaceSetting(duplicatedOrganizationId, TEAM_CONFIG_SETTING_KEY);
+      expect(storedTeam).toBeTruthy();
+      const parsedTeam = JSON.parse(storedTeam!) as {
+        agents?: Array<{ name?: string; roleName?: string }>;
+        providers?: Record<string, unknown>;
+        roles?: Array<{ name?: string; provider?: string }>;
+      };
+
+      expect(parsedTeam.providers?.openai).toBeTruthy();
+      expect(parsedTeam.roles?.some((role) => role.name === 'frontend-engineer' && role.provider === 'openai')).toBe(true);
+      expect(parsedTeam.agents?.some((agent) => agent.name === 'frontend-engineer')).toBe(true);
+      expect(repo.getProviderCredential(duplicatedOrganizationId, 'openai')).toBe('test-key');
+      expect(repo.getMember(duplicatedOrganizationId, 'frontend-engineer')?.kind).toBe('agent');
+    } finally {
+      await rm(duplicateHome, { recursive: true, force: true });
     }
   });
 

@@ -355,6 +355,10 @@ export class ConversationService {
       { skipMentionResolution: options?.skipMentionResolution, silent: options?.silent },
     );
 
+    if (emittedMessage.id !== message.id) {
+      return emittedMessage;
+    }
+
     const channel = message.channelId
       ? this.requireActiveChannel(message.organizationId, message.channelId)
       : null;
