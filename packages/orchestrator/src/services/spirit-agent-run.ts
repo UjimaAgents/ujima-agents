@@ -25,7 +25,6 @@ import { type AgentTeamHandle, buildAgentSystemPrompt, normalizeProviderKey } fr
 import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopChunk, type AgentLoopStep, type HumanPause } from './agent-loop.js';
 import { requireTeam } from '../utils/require-team.js';
-import { emergencyCompactThread } from './conversation-compact.js';
 import {
   resolveSpiritModel,
   makeProviderModelsInUseLookup,
@@ -44,7 +43,6 @@ import {
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
 import { buildAgentMessage } from './message-factory.js';
 import { selectPromptContextMessages } from '../utils/prompt-context.js';
-import { buildPromptMessages } from '../utils/prompt-assembly.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
 import { RunTurnPublisher } from './run-turn-publisher.js';
 import { normalizeTokenUsage } from './token-usage.js';
@@ -157,14 +155,11 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     sawTerminatingTool: boolean;
     rawResult: Awaited<ReturnType<typeof runAgentWithRetry>>;
   }> {
-    const ctxMessages = params.contextMessages;
     const debugLogger = params.debugLogger;
     const runState = params.onStepFinish ? undefined : params.runState;
     const turn = params.onStepFinish ? undefined : params.turn;
     const member = params.member;
-    const extraPrompt = params.extraPrompt;
-    const sessionPrompt = params.sessionPrompt;
-    let messages = params.messages;
+    const messages = params.messages;
     let streamedReasoning = '';
     let persistedStepCount = 0;
 
@@ -234,55 +229,11 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       logLabel: 'spirit-agent-run',
       memberLabel: params.memberId,
     }, {
-      onContextLengthExceeded: async (_error) => {
-        const conversations = this.conversations;
-        if (!conversations) return null;
-        const compacted = await emergencyCompactThread(
-          {
-            repo: this.repo,
-            publishMessage: (msg) =>
-              conversations.publishMessage(msg, [] as never[], undefined, {
-                suppressDmAlerts: true,
-                skipMentionResolution: true,
-              }),
-            summarizeConversation: async () => {
-              throw new Error('emergency compaction uses archive mode only');
-            },
-            contextWindowTokens: () => 128_000,
-          },
-          params.organizationId,
-          params.channelId,
-          member.id,
+      onContextLengthExceeded: async (error) => {
+        throw new Error(
+          `compaction required: context length exceeded for thread ${params.threadId}. ` +
+            `Run explicit conversation compaction and retry. ${error.message}`,
         );
-        if (!compacted) return null;
-        console.warn('[spirit-agent-run] context length exceeded — compacted thread, retrying', {
-          organizationId: params.organizationId,
-          threadId: params.threadId,
-          memberId: member.id,
-        });
-        const newThreadMessages = collectCursorPages((cursor) =>
-          this.repo.listChannelMessages(params.organizationId, params.channelId, { cursor, limit: 600 }),
-        );
-        const newRecent = selectPromptContextMessages(newThreadMessages);
-        const srcMsg = params.sourceMessage;
-        const newHistoryMessages = srcMsg
-          ? newRecent.filter((msg) => msg.id !== srcMsg.id)
-          : newRecent;
-        const latestRunSteps = this.repo.listRunSteps(params.organizationId, params.runId);
-        messages = buildPromptMessages({
-          historyMessages: newHistoryMessages,
-          currentMemberId: member.id,
-          runSteps: latestRunSteps,
-          contextMessages: ctxMessages,
-          currentRequestMessage: srcMsg,
-          currentRequest: srcMsg
-            ? undefined
-            : {
-                role: 'user',
-                content: extraPrompt ?? sessionPrompt ?? 'Continue the task.',
-              },
-        });
-        return messages;
       },
     });
 

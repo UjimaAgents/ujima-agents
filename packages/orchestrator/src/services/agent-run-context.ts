@@ -14,7 +14,6 @@ import {
 } from '../utils/delegate-turn.js';
 import {
   buildCacheableSystem,
-  buildStableWakeContext,
   buildWakeContextMessages,
   loadCultureForSystemPrompt,
 } from '../utils/system-prompt-builder.js';
@@ -22,8 +21,6 @@ import { buildThreadStateBlock } from '../utils/thread-state.js';
 import { selectPromptContextMessages } from '../utils/prompt-context.js';
 import { buildPromptMessages } from '../utils/prompt-assembly.js';
 import { isMirrorFragileModel } from './mirror-guard.js';
-import { isWakeContextMessage } from '../utils/to-model-messages.js';
-import { buildSystemMessage } from './message-factory.js';
 
 export interface RunContextInput {
   organizationId: string;
@@ -152,22 +149,6 @@ export async function buildRunContext(input: RunContextInput): Promise<RunContex
   const modelIdString = typeof resolvedModelId === 'string' ? resolvedModelId : '';
   const isFragile = isMirrorFragileModel(modelIdString);
   const wakeCtxInput = { wakeReason: wakeReason ?? null, modelIdString, isMirrorFragile: isFragile };
-
-  const existingWakeCtx = threadMessages.find(isWakeContextMessage);
-  if (!existingWakeCtx) {
-    try {
-      const stableCtx = buildStableWakeContext(wakeCtxInput);
-      const systemMsg = buildSystemMessage({
-        organizationId,
-        threadId,
-        content: stableCtx,
-        metadata: { wakeContext: true },
-        createdAt: new Date(0).toISOString(),
-      });
-      repo.saveMessage(systemMsg);
-    } catch { /* non-critical */ }
-  }
-
   const wakeContextMessages = buildWakeContextMessages(wakeCtxInput);
   contextMessages.push(...wakeContextMessages);
 

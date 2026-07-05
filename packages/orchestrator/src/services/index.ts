@@ -4,6 +4,7 @@ import {
   SocketEventNames,
   channelRoom,
   getDirectMessageThreadId,
+  isOneToOneThread,
   memberRoom,
   orgRoom,
   threadRoom,
@@ -41,6 +42,7 @@ import {
   enqueuePendingThreadAlert,
   hasPendingThreadAlert,
   type PendingThreadAlert,
+  type PendingThreadAlertRepository,
 } from './pending-member-alerts.js';
 import type { AuthService } from './auth.js';
 import type { BootstrapService } from './bootstrap.js';
@@ -290,13 +292,20 @@ interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
   runs: Pick<SpiritService, 'createRun'>;
   realtime: Pick<ApiServiceContext['realtime'], 'emit'>;
-  repo: Pick<ApiRepository, 'listActiveRuns'> & Partial<Pick<ApiRepository, 'getMessage'>>;
+  repo: PendingThreadAlertRepository &
+    Pick<ApiRepository, 'listActiveRuns'> &
+    Partial<Pick<ApiRepository, 'getMessage'>>;
 }
 
 const createRunMutex = new AsyncMutex();
 
-function createRunMutexKey(input: WakeMemberInput): string {
-  return `${input.organizationId}:${input.threadId}`;
+function createRunMutexKey(
+  input: WakeMemberInput,
+  sequencing: WakeSequencingMode,
+): string {
+  return sequencing === 'parallel'
+    ? `${input.organizationId}:${input.threadId}:${input.memberId}`
+    : `${input.organizationId}:${input.threadId}`;
 }
 
 function errMessage(error: unknown): string {
@@ -340,8 +349,15 @@ function resolveWakeSequencing(
   input: WakeMemberInput,
   repo: WakeMemberDeps['repo'],
 ): WakeSequencingMode {
-  const sourceMessage = repo.getMessage?.(input.organizationId, input.messageId);
-  return sourceMessage?.senderKind === AGENT_KIND ? 'serialized' : 'parallel';
+  if (isOneToOneThread(input.threadId)) return 'serialized';
+  const thread = repo.getThread?.(input.organizationId, input.threadId);
+  const channelId = input.channelId ?? thread?.channelId ?? input.threadId;
+  const channel = repo.getChannel?.(input.organizationId, channelId);
+  if (channel?.kind === 'dm' || channel?.kind === 'self') return 'serialized';
+  if (channel?.kind === 'general' || channel?.kind === 'group' || channel?.kind === 'task-run') {
+    return 'parallel';
+  }
+  return (thread?.memberIds?.length ?? 0) > 2 ? 'parallel' : 'serialized';
 }
 
 function latestDelegateReply(
@@ -635,7 +651,7 @@ export async function wakeMemberWithFailureEvents(
   );
 
   if (dispatch.kind === 'debounced') {
-    enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+    enqueuePendingThreadAlert(deps.repo, pendingMemberAlertWithCreatedAt(input, deps.repo));
     return;
   }
 
@@ -676,14 +692,14 @@ export async function wakeMemberWithFailureEvents(
     // Human messages wake all agents concurrently, but the *same* agent
     // must not start two runs in one conversation — that's a duplicate wake.
     if (agentHasActiveRunInThread(deps.repo, input.organizationId, input.threadId, input.memberId)) {
-      enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+      enqueuePendingThreadAlert(deps.repo, pendingMemberAlertWithCreatedAt(input, deps.repo));
       return;
     }
     // Parallel runs for different agents in the same thread still go through
     // the mutex so the check/create window is closed across the whole thread.
-    await createRunMutex.run(createRunMutexKey(input), async () => {
+    await createRunMutex.run(createRunMutexKey(input, sequencing), async () => {
       if (agentHasActiveRunInThread(deps.repo, input.organizationId, input.threadId, input.memberId)) {
-        enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+        enqueuePendingThreadAlert(deps.repo, pendingMemberAlertWithCreatedAt(input, deps.repo));
         return;
       }
       await createWakeRun();
@@ -694,13 +710,13 @@ export async function wakeMemberWithFailureEvents(
   // Agent-originated turns speak one at a time — any active run in the
   // thread blocks the successor.
   if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
-    enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+    enqueuePendingThreadAlert(deps.repo, pendingMemberAlertWithCreatedAt(input, deps.repo));
     return;
   }
 
-  await createRunMutex.run(createRunMutexKey(input), async () => {
+  await createRunMutex.run(createRunMutexKey(input, sequencing), async () => {
     if (threadHasActiveRun(deps.repo, input.organizationId, input.threadId)) {
-      enqueuePendingThreadAlert(pendingMemberAlertWithCreatedAt(input, deps.repo));
+      enqueuePendingThreadAlert(deps.repo, pendingMemberAlertWithCreatedAt(input, deps.repo));
       return;
     }
     await createWakeRun();
@@ -732,6 +748,7 @@ async function waitForAgentDelegateReply(input: {
 
   while (Date.now() - startedAt < timeoutMs) {
     const isAlertQueued = hasPendingThreadAlert(
+      input.repo,
       input.organizationId,
       input.agentId,
       input.threadId,
@@ -1952,7 +1969,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         }
       }
     }
-    await drainPendingThreadAlertAfterRun(run, (pending) =>
+    await drainPendingThreadAlertAfterRun(context.repo, run, (pending) =>
       wakeMemberWithFailureEvents(wakeMemberDeps, pending),
     );
     try {

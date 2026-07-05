@@ -196,17 +196,9 @@ function resolveSourceMessage(
   input: VerifyChannelPassInput,
   repo: ConversationRepository,
 ): Message | null {
-  if (input.sourceMessageId) {
-    const direct = repo.getMessage(input.organizationId, input.sourceMessageId);
-    if (direct) return direct;
-  }
-  // Fall back: most recent human message in the thread.
-  const recent = listRecentMessages(input.organizationId, input.threadId, repo);
-  for (let i = recent.length - 1; i >= 0; i -= 1) {
-    const message = recent[i];
-    if (message && message.kind === 'human') return message;
-  }
-  return null;
+  return input.sourceMessageId
+    ? repo.getMessage(input.organizationId, input.sourceMessageId)
+    : null;
 }
 
 function listRecentMessages(

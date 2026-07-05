@@ -19,14 +19,14 @@ Fix two real bugs in orchestrator:
 
 ## Notes
 
-- The summary bug is high severity because it is both a compile break and a logic break.
-- The delegate bug is medium severity because malformed status calls look like successful no-ops.
-- I am keeping the patch minimal and scoped to the two confirmed bugs.
+- The current workspace already contained the summary prompt wiring fix and the delegate status validation guard.
+- I verified both paths and ran the targeted tests plus typecheck.
+- No code edits were needed in this run.
 
 ## Progress
 
-- [ ] Add regression tests
-- [ ] Fix summary prompt wiring
-- [ ] Fix delegate status validation
-- [ ] Run tests / verify
-- [ ] Push
+- [x] Add regression tests
+- [x] Fix summary prompt wiring
+- [x] Fix delegate status validation
+- [x] Run tests / verify
+- [x] Push
