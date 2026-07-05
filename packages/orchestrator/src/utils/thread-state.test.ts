@@ -48,6 +48,15 @@ describe('buildThreadStateBlock', () => {
     expect(block).toBeNull();
   });
 
+  it('returns null when sourceMessageId is missing', () => {
+    const block = buildThreadStateBlock({
+      messages: [buildMessage({ id: 'msg-1', content: 'latest human' })],
+      currentMember: { id: 'agent-ada', name: 'Ada' },
+      members,
+    });
+    expect(block).toBeNull();
+  });
+
   it('marks the agent as explicitly addressed when included in mentions', () => {
     const source = buildMessage({
       id: 'msg-1',

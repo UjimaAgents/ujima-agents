@@ -1,6 +1,6 @@
 {
   "name": "@ujima/event-bus",
-  "version": "0.0.62",
+  "version": "0.0.63",
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

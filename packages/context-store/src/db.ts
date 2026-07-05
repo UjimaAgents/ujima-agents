@@ -1667,6 +1667,32 @@ const MIGRATIONS: Migration[] = [
     id: "058_strip_all_baseline_role_tools",
     up: migrateStoredTeamConfigTools,
   },
+  {
+    id: "059_wake_intents",
+    up: `
+      CREATE TABLE IF NOT EXISTS wake_intents (
+        id                 TEXT PRIMARY KEY,
+        organization_id    TEXT NOT NULL,
+        thread_id          TEXT NOT NULL,
+        channel_id         TEXT,
+        member_id          TEXT NOT NULL,
+        message_id         TEXT NOT NULL,
+        message_created_at TEXT NOT NULL,
+        by_member_id       TEXT NOT NULL,
+        reason             TEXT NOT NULL,
+        wake_reason        TEXT NOT NULL,
+        status             TEXT NOT NULL DEFAULT 'pending',
+        created_at         TEXT NOT NULL,
+        dispatched_at      TEXT,
+        dropped_at         TEXT,
+        UNIQUE (organization_id, member_id, message_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_wake_intents_thread
+        ON wake_intents(organization_id, thread_id, status, message_created_at, message_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_wake_intents_member
+        ON wake_intents(organization_id, member_id, status);
+    `,
+  },
 ];
 
 export interface DbOptions {

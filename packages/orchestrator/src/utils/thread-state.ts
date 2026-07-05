@@ -40,14 +40,12 @@ export function buildThreadStateBlock(input: BuildThreadStateInput): string | nu
     return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
   });
 
-  // The "source message" is whatever woke this run — passed in by the
-  // caller when known. If not, fall back to the most-recent human
-  // message in the thread, which is the wake-trigger ~95% of the time.
-  const sourceMessage =
-    (input.sourceMessageId
-      ? sortedAsc.find((m) => m.id === input.sourceMessageId)
-      : undefined) ??
-    [...sortedAsc].reverse().find((m) => m.kind === 'human');
+  // Wake facts must be anchored to the exact message that caused the run.
+  // Missing source means no addressing block, not guessed state.
+  const sourceMessage = input.sourceMessageId
+    ? sortedAsc.find((m) => m.id === input.sourceMessageId)
+    : undefined;
+  if (!sourceMessage) return null;
 
   // Who in the thread roster has posted a non-pass agent message
   // SINCE the source message — this is the model's "already handled"

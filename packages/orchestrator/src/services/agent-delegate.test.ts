@@ -101,6 +101,7 @@ function repoFixture(
     if (options.reply) messages.push(options.reply);
     return seed;
   };
+  const wakeIntents: { organizationId: string; memberId: string; threadId: string; messageId: string }[] = [];
   const repo = {
     listMembers: vi.fn(() => [...members.values()]),
     getMember: vi.fn((_: string, memberId: string) => members.get(memberId) ?? null),
@@ -131,6 +132,22 @@ function repoFixture(
     listMessages: vi.fn(() => ({ data: messages, hasMore: false })),
     findActiveRunForMemberThread: vi.fn(() => options.activeRun ?? null),
     listThreadRuns: vi.fn(() => ({ data: finishedRuns(), hasMore: false })),
+    hasPendingWakeIntent: vi.fn((_org: string, _memberId: string, _threadId: string, _msgId: string) =>
+      wakeIntents.some((w) => w.organizationId === _org && w.memberId === _memberId && w.threadId === _threadId && w.messageId === _msgId),
+    ),
+    enqueueWakeIntent: vi.fn((input: { organizationId: string; memberId: string; threadId: string; messageId: string }) => {
+      wakeIntents.push(input);
+      return { ...input, id: `${input.organizationId}:${input.memberId}:${input.threadId}:${input.messageId}`, status: 'pending', createdAt: new Date().toISOString() };
+    }),
+    listPendingWakeIntents: vi.fn((_org: string, _threadId: string) =>
+      wakeIntents.filter((w) => w.organizationId === _org && w.threadId === _threadId),
+    ),
+    markWakeIntentDispatched: vi.fn(),
+    markWakeIntentDropped: vi.fn(),
+    clearPendingWakeIntents: vi.fn((_org: string, _threadId: string) => {
+      wakeIntents.length = 0;
+    }),
+    listActiveRuns: vi.fn(() => []),
   };
   const conversations = {
     sendDirectMessage: vi.fn((input: { metadata?: Record<string, unknown> }) => recordSeed(input.metadata)),

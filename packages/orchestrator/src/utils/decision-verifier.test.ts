@@ -72,6 +72,24 @@ describe('verifyChannelPass — shadow-mode verifier', () => {
       );
       expect(result.verified).toBe(true);
     });
+
+    it('does not invent a source message when sourceMessageId is missing', () => {
+      const source = buildMessage({
+        id: 'msg-1',
+        content: 'Hey Ada can you take a look',
+        mentions: ['agent-ada'],
+      });
+      const result = verifyChannelPass(
+        {
+          organizationId: 'org-1',
+          agentId: 'agent-ada',
+          threadId: 'thread-1',
+          reason: 'not_addressed_to_me',
+        },
+        buildRepo([source]),
+      );
+      expect(result.verified).toBe(true);
+    });
   });
 
   describe('already_handled', () => {

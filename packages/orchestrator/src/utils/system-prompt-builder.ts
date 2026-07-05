@@ -169,41 +169,22 @@ export interface WakeContextInput {
 }
 
 /**
- * Build the stable wake context block (timezone, anti-mirror) that should
- * be persisted as a `role:'system'` message in the thread. This content
- * does not change between wakes of the same (agent, thread, model) tuple,
- * so it can be stored once and reused across restarts.
- *
- * Returns a markdown string suitable for wrapping in a system message.
- */
-export function buildStableWakeContext(input: WakeContextInput): string {
-  const lines: string[] = [];
-
-  // Timezone — stable per session (only changes when the machine moves).
-  lines.push(buildEnvironmentTimezone());
-
-  if (input.isMirrorFragile) {
-    lines.push(ANTI_MIRROR_SCAFFOLD_LINE);
-  }
-
-  return lines.join('\n');
-}
-
-/**
  * Build the ephemeral per-wake context message (current date/time).
  * This is the ONLY part of the wake context that changes between
  * consecutive wakes. It is emitted as a `user`-role message at the
- * tail of the messages array, AFTER the cache breakpoint, so the
- * rest of the prompt stays cached.
+ * tail of the stable transcript prefix, so the rest of the prompt
+ * stays cached.
  *
  * Returns an empty array when no per-wake content applies — caller
  * appends as-is to its messages array.
  */
-export function buildWakeContextMessages(_input: WakeContextInput): ModelMessage[] {
+export function buildWakeContextMessages(input: WakeContextInput): ModelMessage[] {
+  const lines = [buildEnvironmentTimestamp(), buildEnvironmentTimezone()];
+  if (input.isMirrorFragile) lines.push(ANTI_MIRROR_SCAFFOLD_LINE);
   return [
     {
       role: 'user',
-      content: `<wake-context>\n${buildEnvironmentTimestamp()}\n</wake-context>`,
+      content: `<wake-context>\n${lines.join('\n')}\n</wake-context>`,
     },
   ];
 }

@@ -134,9 +134,7 @@ export class WakeDispatcher {
               `${message.organizationId}|${message.threadId}|${message.senderId}|${member.id}`,
             )
           : 0;
-      const wakeReason: WakeReason = countInWindow > 3 ? 'channel-read' : 'mention';
-
-      if (wakeReason === 'channel-read') {
+      if (countInWindow > 3) {
         this.emitEchoSuppressed({
           organizationId: message.organizationId,
           fromMemberId: message.senderId,
@@ -145,9 +143,10 @@ export class WakeDispatcher {
           threadId: message.threadId,
           countInWindow,
         });
+        continue;
       }
 
-      fanout.push(this.alertMember(message, member.id, channel, wakeReason));
+      fanout.push(this.alertMember(message, member.id, channel, 'mention'));
     }
 
     await Promise.all(fanout);

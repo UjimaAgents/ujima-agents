@@ -46,6 +46,7 @@ import type {
   ToolRiskClass,
   WorkspaceFile,
   WorkspaceMember,
+  WakeReason,
 } from '@ujima/shared';
 
 export interface GovernanceRuleRow {
@@ -77,6 +78,26 @@ export interface PaginatedTaskSessions {
   data: TaskSession[];
   nextCursor?: string;
   hasMore: boolean;
+}
+
+export interface WakeIntentInput {
+  organizationId: string;
+  threadId: string;
+  channelId?: string;
+  memberId: string;
+  messageId: string;
+  messageCreatedAt: string;
+  byMemberId: string;
+  reason: string;
+  wakeReason: WakeReason;
+}
+
+export interface WakeIntent extends WakeIntentInput {
+  id: string;
+  status: 'pending' | 'dispatched' | 'dropped';
+  createdAt: string;
+  dispatchedAt?: string;
+  droppedAt?: string;
 }
 
 export interface BootstrapSnapshot {
@@ -313,6 +334,17 @@ export interface ApiRepository extends ConversationRepository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  enqueueWakeIntent(input: WakeIntentInput): WakeIntent;
+  listPendingWakeIntents(organizationId: string, threadId: string): WakeIntent[];
+  markWakeIntentDispatched(organizationId: string, intentId: string): void;
+  markWakeIntentDropped(organizationId: string, intentId: string): void;
+  clearPendingWakeIntents(organizationId: string, threadId: string): void;
+  hasPendingWakeIntent(
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+    messageId: string,
+  ): boolean;
   saveTaskSession(session: TaskSession): TaskSession;
   getTaskSession(organizationId: string, taskSessionId: string): TaskSession | null;
   getTaskSessionBySlug(organizationId: string, slug: string): TaskSession | null;

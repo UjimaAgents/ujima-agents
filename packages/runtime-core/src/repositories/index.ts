@@ -319,6 +319,16 @@ import {
   saveGovernanceRule as writeGovernanceRule,
   type GovernanceRuleRow,
 } from './governance-rules.js';
+import {
+  clearPendingWakeIntents as dropPendingWakeIntents,
+  enqueueWakeIntent as writeWakeIntent,
+  hasPendingWakeIntent as readPendingWakeIntent,
+  listPendingWakeIntents as readPendingWakeIntents,
+  markWakeIntentDispatched as writeWakeIntentDispatched,
+  markWakeIntentDropped as writeWakeIntentDropped,
+  type WakeIntent,
+  type WakeIntentInput,
+} from './wake-intents.js';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- PluginRepository methods are mixed onto Repository via Object.assign */
 export class Repository {
@@ -589,6 +599,22 @@ export class Repository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns => readThreadRuns(this.db, organizationId, threadId, cursor, limit);
+  enqueueWakeIntent = (input: WakeIntentInput): WakeIntent =>
+    writeWakeIntent(this.db, input);
+  listPendingWakeIntents = (organizationId: string, threadId: string): WakeIntent[] =>
+    readPendingWakeIntents(this.db, organizationId, threadId);
+  markWakeIntentDispatched = (organizationId: string, intentId: string): void =>
+    writeWakeIntentDispatched(this.db, organizationId, intentId);
+  markWakeIntentDropped = (organizationId: string, intentId: string): void =>
+    writeWakeIntentDropped(this.db, organizationId, intentId);
+  clearPendingWakeIntents = (organizationId: string, threadId: string): void =>
+    dropPendingWakeIntents(this.db, organizationId, threadId);
+  hasPendingWakeIntent = (
+    organizationId: string,
+    memberId: string,
+    threadId: string,
+    messageId: string,
+  ): boolean => readPendingWakeIntent(this.db, organizationId, memberId, threadId, messageId);
 
   saveTaskSession = (session: TaskSession): TaskSession =>
     writeTaskSession(this.db, session);

@@ -3,7 +3,7 @@ import type { Message, RunStep } from '@ujima/shared';
 import { buildPromptMessages } from './prompt-assembly.js';
 
 describe('buildPromptMessages', () => {
-  it('keeps transcript chronological and appends runtime context last', () => {
+  it('keeps transcript chronological and puts current request last', () => {
     const historyMessages: Message[] = [
       {
         id: 'human-1',
@@ -86,14 +86,14 @@ describe('buildPromptMessages', () => {
       currentRequestMessage: currentRequest,
     });
 
-    expect(out.at(-2)).toEqual({ role: 'user', content: 'latest' });
-    expect(out.at(-1)).toEqual({ role: 'user', content: 'context' });
+    expect(out.at(-2)).toEqual({ role: 'user', content: 'context' });
+    expect(out.at(-1)).toEqual({ role: 'user', content: 'latest' });
     expect(out.findIndex((message) => message.role === 'assistant' && Array.isArray(message.content) && message.content[0]?.type === 'tool-call' && message.content[0]?.toolCallId === 'call-a')).toBeLessThan(
       out.findIndex((message) => message.role === 'assistant' && Array.isArray(message.content) && message.content[0]?.type === 'tool-call' && message.content[0]?.toolCallId === 'call-b'),
     );
   });
 
-  it('keeps prior requests and tool rounds in the reusable prefix on the next wake', () => {
+  it('keeps the persisted transcript prefix stable across wake contexts', () => {
     const base: Message = {
       id: 'human-1',
       organizationId: 'org-1',
@@ -131,47 +131,42 @@ describe('buildPromptMessages', () => {
       ],
       createdAt: '2026-06-07T00:00:02.000Z',
     };
-    const nextRequest: Message = {
+    const requestA: Message = {
       ...base,
       id: 'human-3',
       content: 'again',
       createdAt: '2026-06-07T00:00:03.000Z',
     };
-    const nextReply: Message = {
-      ...toolReply,
-      id: 'agent-2',
-      content: 'done',
-      toolCalls: [],
-      createdAt: '2026-06-07T00:00:04.000Z',
-    };
-    const thirdRequest: Message = {
+    const requestB: Message = {
       ...base,
       id: 'human-4',
       content: 'one more',
       createdAt: '2026-06-07T00:00:05.000Z',
     };
 
-    const firstWake = buildPromptMessages({
+    const wakeA = buildPromptMessages({
       historyMessages: [base, priorRequest, toolReply],
       currentMemberId: 'agent-1',
-      currentRequestMessage: nextRequest,
+      currentRequestMessage: requestA,
       contextMessages: [{ role: 'user', content: '<wake-context>one</wake-context>' }],
     });
-    const nextWake = buildPromptMessages({
-      historyMessages: [base, priorRequest, toolReply, nextRequest, nextReply],
+    const wakeB = buildPromptMessages({
+      historyMessages: [base, priorRequest, toolReply],
       currentMemberId: 'agent-1',
-      currentRequestMessage: thirdRequest,
+      currentRequestMessage: requestB,
       contextMessages: [{ role: 'user', content: '<wake-context>two</wake-context>' }],
     });
 
-    expect(nextWake.slice(0, 5)).toEqual(firstWake.slice(0, 5));
-    expect(nextWake[2]).toMatchObject({
+    expect(wakeB.slice(0, 4)).toEqual(wakeA.slice(0, 4));
+    expect(wakeB[2]).toMatchObject({
       role: 'assistant',
       content: [{ type: 'text', text: 'checking' }, { type: 'tool-call', toolCallId: 'call-1' }],
     });
-    expect(nextWake[3]).toMatchObject({
+    expect(wakeB[3]).toMatchObject({
       role: 'tool',
       content: [{ type: 'tool-result', toolCallId: 'call-1' }],
     });
+    expect(wakeA.at(-1)).toEqual({ role: 'user', content: 'again' });
+    expect(wakeB.at(-1)).toEqual({ role: 'user', content: 'one more' });
   });
 });
