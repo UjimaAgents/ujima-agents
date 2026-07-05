@@ -155,6 +155,7 @@ export async function drainPendingThreadAlertAfterRun(
     if (!runnable.length) return;
 
     const first = runnable[0];
+    if (!first) return;
     const activeAgents = activeAgentsInThread(repo, run.organizationId, run.threadId);
     const parallel = parallelDrainMode(repo, run.organizationId, run.threadId, first);
     const selected: WakeIntentRecord[] = [];
