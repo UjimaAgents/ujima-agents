@@ -8,6 +8,7 @@ import { LandingHeader } from "./landing/landing-header";
 import { PersonasSection } from "./landing/personas-section";
 import { SecuritySection } from "./landing/security-section";
 import { WorkflowSection } from "./landing/workflow-section";
+import { IndustryCarousel } from "./landing/industry-carousel";
 
 export function LandingPage() {
   return (
@@ -19,6 +20,7 @@ export function LandingPage() {
       <InstallSection />
       <CapabilitiesSection />
       <WorkflowSection />
+      <IndustryCarousel />
       <PersonasSection />
       <SecuritySection />
       <ContactSection />

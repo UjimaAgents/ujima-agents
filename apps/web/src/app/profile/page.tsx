@@ -1,6 +1,14 @@
-import { CalendarClock, CircleUserRound, Mail, ShieldCheck } from "lucide-react";
+import {
+  CalendarClock,
+  CircleUserRound,
+  FolderKanban,
+  Mail,
+  ShieldCheck,
+} from "lucide-react";
 import { redirect } from "next/navigation";
 import { LogoutButton } from "@/components/logout-button";
+import { SettingsBadge, SettingsSecondaryButton } from "@/features/settings/shared/settings-buttons";
+import { SettingsPageHeader } from "@/features/settings/shared/settings-page-header";
 import { getServerBootstrap } from "@/server/ujima-daemon";
 
 export default async function ProfilePage() {
@@ -13,90 +21,158 @@ export default async function ProfilePage() {
     redirect("/login");
   }
 
-  const { user, member } = bootstrap.auth;
+  const { user, member, session } = bootstrap.auth;
+  const workspaceName = bootstrap.organization?.name ?? "Unavailable";
+  const workspaceRoot = bootstrap.team?.workspaceRoot ?? "Unavailable";
+  const joinedAt = user.createdAt ? formatDate(user.createdAt) : "Unknown";
+  const lastSeenAt = session?.lastSeenAt ? formatDate(session.lastSeenAt) : "Unavailable";
 
   return (
-    <main className="space-y-6">
-      <section className="overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.06)] dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-col gap-6 px-6 py-7 md:flex-row md:items-start md:justify-between md:px-8">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-700 dark:text-violet-300">
-              Profile
-            </p>
-            <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-zinc-950 dark:text-zinc-50">
-              {member.name}
-            </h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-600 dark:text-zinc-300">
-              Manage your account details and current workspace context here.
-            </p>
+    <main className="mx-auto max-w-5xl space-y-6">
+      <SettingsPageHeader bootstrap={bootstrap} />
+
+      <section className="space-y-6">
+        <div className="flex flex-col gap-4 border-b border-zinc-200 pb-5 dark:border-zinc-800 md:flex-row md:items-end md:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-zinc-900 text-zinc-100 dark:bg-zinc-100 dark:text-zinc-950">
+              <CircleUserRound className="h-7 w-7" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-zinc-500 dark:text-zinc-400">
+                Profile
+              </p>
+              <h1 className="mt-1.5 truncate text-4xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50 sm:text-[2.8rem]">
+                {member.name}
+              </h1>
+              <p className="mt-1 truncate text-sm text-zinc-500 dark:text-zinc-400 sm:text-base">
+                {user.email}
+              </p>
+            </div>
           </div>
 
-          <LogoutButton />
+          <div className="flex flex-wrap items-center gap-2">
+            <SettingsBadge variant="violet">{member.roleName}</SettingsBadge>
+            <SettingsBadge variant="success">{member.presence}</SettingsBadge>
+            <SettingsBadge>{workspaceName}</SettingsBadge>
+            <SettingsSecondaryButton>{bootstrap.onboardingStatus}</SettingsSecondaryButton>
+            <LogoutButton />
+          </div>
         </div>
-      </section>
 
-      <section className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-        <Panel title="Account">
-          <InfoRow icon={CircleUserRound} label="Display name" value={member.name} />
-          <InfoRow icon={Mail} label="Email" value={user.email} />
-          <InfoRow icon={ShieldCheck} label="Role" value={member.roleName} />
-          <InfoRow icon={ShieldCheck} label="Presence" value={member.presence} />
-        </Panel>
+        <div className="grid gap-x-10 gap-y-7 lg:grid-cols-2">
+          <ProfileSection
+            title="Account"
+            description="Identity and authentication details for the current signed-in user."
+          >
+            <ProfileRow
+              icon={<CircleUserRound className="h-4 w-4" />}
+              label="Display name"
+              value={member.name}
+            />
+            <ProfileRow icon={<Mail className="h-4 w-4" />} label="Email" value={user.email} />
+            <ProfileRow
+              icon={<ShieldCheck className="h-4 w-4" />}
+              label="Role"
+              value={`${member.roleName} · ${member.presence}`}
+            />
+          </ProfileSection>
 
-        <Panel title="Workspace">
-          <InfoRow icon={ShieldCheck} label="Workspace" value={bootstrap.organization?.name ?? "Unavailable"} />
-          <InfoRow
-            icon={CalendarClock}
-            label="Onboarding status"
-            value={bootstrap.onboardingStatus}
-          />
-          <InfoRow
-            icon={CalendarClock}
-            label="Project folder"
-            value={bootstrap.team?.workspaceRoot ?? "Unavailable"}
-          />
-        </Panel>
+          <ProfileSection
+            title="Workspace"
+            description="Current workspace context tied to this account."
+          >
+            <ProfileRow
+              icon={<FolderKanban className="h-4 w-4" />}
+              label="Workspace"
+              value={workspaceName}
+            />
+            <ProfileRow
+              icon={<FolderKanban className="h-4 w-4" />}
+              label="Project folder"
+              value={workspaceRoot}
+              valueClassName="break-all"
+            />
+            <ProfileRow
+              icon={<CalendarClock className="h-4 w-4" />}
+              label="Onboarding status"
+              value={bootstrap.onboardingStatus}
+            />
+          </ProfileSection>
+
+          <ProfileSection
+            title="Session"
+            description="Basic account lifecycle and recent session activity."
+            className="lg:col-span-2"
+          >
+            <ProfileRow
+              icon={<CalendarClock className="h-4 w-4" />}
+              label="Joined"
+              value={joinedAt}
+            />
+            <ProfileRow
+              icon={<CalendarClock className="h-4 w-4" />}
+              label="Last seen"
+              value={lastSeenAt}
+            />
+          </ProfileSection>
+        </div>
       </section>
     </main>
   );
 }
 
-function Panel({
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function ProfileSection({
   title,
+  description,
   children,
+  className = "",
 }: {
   title: string;
+  description: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="rounded-[24px] border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-      <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">{title}</p>
-      <div className="mt-4 space-y-3">{children}</div>
+    <section className={`space-y-4 ${className}`.trim()}>
+      <div className="space-y-0.5">
+        <h2 className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">{title}</h2>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">{description}</p>
+      </div>
+      <div className="space-y-3">{children}</div>
     </section>
   );
 }
 
-function InfoRow({
-  icon: Icon,
+function ProfileRow({
+  icon,
   label,
   value,
+  valueClassName = "",
 }: {
-  icon: typeof CircleUserRound;
+  icon: React.ReactNode;
   label: string;
   value: string;
+  valueClassName?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 px-4 py-3 dark:border-zinc-800">
-      <div className="flex items-start gap-3">
-        <div className="rounded-xl bg-violet-50 p-2 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-            {label}
-          </p>
-          <p className="mt-1 break-all text-sm text-zinc-900 dark:text-zinc-100">{value}</p>
-        </div>
+    <div className="flex items-start gap-3 border-b border-zinc-200/80 pb-3 last:border-0 last:pb-0 dark:border-zinc-800/80">
+      <div className="mt-0.5 text-zinc-400 dark:text-zinc-500">{icon}</div>
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+          {label}
+        </p>
+        <p className={`mt-1 text-sm text-zinc-900 dark:text-zinc-100 ${valueClassName}`.trim()}>
+          {value}
+        </p>
       </div>
     </div>
   );
