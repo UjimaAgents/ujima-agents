@@ -64,6 +64,7 @@ import {
   collectConversationAttachments,
   countMessageAttachments,
   countSemanticActivityEvents,
+  isSidebarActivityEvent,
   isLiveRun,
 } from "../feed-selectors";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
@@ -1014,7 +1015,7 @@ export function ChannelView({
   const visibleActivity = useMemo(
     () =>
       activeTab === "activity"
-        ? feed.activity.slice(-MAX_ACTIVITY_ROWS).reverse()
+        ? feed.activity.filter(isSidebarActivityEvent).slice(-MAX_ACTIVITY_ROWS).reverse()
         : EMPTY_ACTIVITY_EVENTS,
     [activeTab, feed.activity],
   );

@@ -4,8 +4,8 @@ import { AppShell } from "@/components/app-shell";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Ujima Agents",
-  description: "Ujima Agents web onboarding and control plane UI",
+  title: "Ujima Agents — Slack-like AI Agent Teams with Workspace-Bounded Execution",
+  description: "Deploy collaborative multi-agent AI teams in your local workspace. Securely plug in Anthropic Claude, OpenAI, Gemini, local models, or bring Codex & Claude Code subscriptions with human-in-the-loop approvals.",
 };
 
 export default function RootLayout({

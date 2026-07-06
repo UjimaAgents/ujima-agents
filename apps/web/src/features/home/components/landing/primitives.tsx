@@ -11,11 +11,9 @@ function GitHubIcon({ className = "h-4 w-4 shrink-0" }: { className?: string }) 
   );
 }
 
-/** Matches SettingsPrimaryButton / login submit */
 export const buttonPrimaryClass =
   "landing-interactive inline-flex items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 hover:bg-violet-700 hover:shadow-violet-500/30 disabled:opacity-50 disabled:shadow-none";
 
-/** Matches SettingsSecondaryButton / login page back link */
 export const buttonSecondaryClass =
   "landing-interactive inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900";
 
@@ -23,13 +21,16 @@ export function LandingContainer({
   children,
   className = "",
   wide = false,
+  style,
 }: {
   children: ReactNode;
   className?: string;
   wide?: boolean;
+  style?: React.CSSProperties;
 }) {
   return (
     <div
+      style={style}
       className={`mx-auto w-full px-6 ${wide ? "max-w-[1200px]" : "max-w-[680px]"} ${className}`}
     >
       {children}
@@ -52,11 +53,7 @@ export function LandingSection({
   reveal?: boolean;
   revealDelay?: number;
 }) {
-  const body = reveal ? (
-    <LandingReveal delay={revealDelay}>{children}</LandingReveal>
-  ) : (
-    children
-  );
+  const body = reveal ? <LandingReveal delay={revealDelay}>{children}</LandingReveal> : children;
 
   return (
     <section
@@ -101,12 +98,7 @@ function ButtonLabel({ icon, children }: { icon?: ReactNode; children: string })
     return <>{children}</>;
   }
 
-  return (
-    <span className="inline-flex items-center gap-2">
-      {icon}
-      {children}
-    </span>
-  );
+  return <span className="inline-flex items-center gap-2">{icon}{children}</span>;
 }
 
 export function SecondaryButton({
@@ -156,7 +148,6 @@ export function GitHubButton({
   );
 }
 
-/** Non-interactive label for features not shipped publicly yet. */
 export function ComingSoonButton({
   children = "Coming soon",
   className = "",
@@ -175,7 +166,6 @@ export function ComingSoonButton({
   );
 }
 
-/** Icon-only control — matches ThemeToggle compact sizing */
 export function GitHubIconLink({ className = "" }: { className?: string }) {
   return (
     <a
@@ -190,11 +180,119 @@ export function GitHubIconLink({ className = "" }: { className?: string }) {
   );
 }
 
-export function FeatureRow({ title, text, delay = 0 }: { title: string; text: string; delay?: number }) {
+function OpenAILogo({ className = "h-4 w-4 shrink-0" }: { className?: string }) {
   return (
-    <LandingReveal delay={delay} className="landing-divider grid gap-2 border-b py-6 first:pt-0 last:border-b-0 md:grid-cols-[200px_1fr] md:gap-12 md:py-8">
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
+    </svg>
+  );
+}
+
+function AnthropicLogo({ className = "h-4 w-4 shrink-0" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z" />
+    </svg>
+  );
+}
+
+function GeminiLogo({ className = "h-4 w-4 shrink-0" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81" />
+    </svg>
+  );
+}
+
+function DeepSeekLogo({ className = "h-4 w-4 shrink-0" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45" />
+    </svg>
+  );
+}
+
+function OllamaLogo({ className = "h-4 w-4 shrink-0" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 60 60" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M25.2 14.9c2.7-1.5 6.4-2 9.7 0 .7-8.8 9.7-11 8.4 4.6 5 3.8 4.1 10.8 2.2 13 2.2 4.1 1.6 8-.2 11.3a13 13 0 0 1 .9 7.1c-.3 1.6-2.7 1.2-2.6-.4.3-2 0-4.1-1-6.2-.2-.4-.2-1 .1-1.3 1-1.5 3-5.4 0-10-.4-.6-.2-1.4.4-1.8.8-.5 1.9-3 1-6.2-1.3-4.2-5-4.7-7-4.5-.6 0-1-.3-1.3-.8-2.6-5.6-10.2-3.8-11.6-.1-.2.5-.7.8-1.2.8-2.5 0-6 .7-7.1 4.6-.8 3 .3 5.7 1 6.3.5.4.6 1 .3 1.6-.8 1.2-2.8 6.2.1 9.9.3.5.4 1 .2 1.5-1.2 2.4-1.5 4.5-1.1 6 .3 1.7-2.2 2.3-2.6.7a12 12 0 0 1 1-7.1c-3.1-4.8-.9-10.2-.3-11.5-2.1-3-2.4-9.7 2.3-13-1.3-15.3 7.6-13.6 8.4-4.5M30 26.4c4 0 7 2.8 7 5.6 0 7-14.1 6.6-14.1 0 0-2.8 3.2-5.6 7.1-5.6M24.8 32c0 4.4 10.3 4.5 10.3 0 0-1.8-2-3.8-5-3.8-2.9 0-5.3 2-5.3 3.8zm6.5-.4-.6.4v1c0 1-1.5 1-1.5 0v-1l-.6-.4c-.6-.6.3-1.7 1-1.1l.4.3.4-.3c.8-.5 1.7.5.9 1.1zm-10.4-21c-2 .9-1.6 6.9-1.5 7.7.9-.3 1.8-.4 2.8-.5 1-1.9 0-6.4-1.3-7.2zm16.9 7.3c1 0 2 .1 3 .4 0-.9.5-7-1.5-7.7-1.2.3-2.5 5.7-1.5 7.3zm2.7 10.5c0 2.4-3.6 2.4-3.6 0s3.6-2.4 3.6 0zm-17.5 0c0 2.4-3.6 2.4-3.6 0s3.6-2.4 3.6 0z" />
+    </svg>
+  );
+}
+
+function renderLogoSvg(logo: string, className?: string) {
+  switch (logo) {
+    case "openai":
+    case "codex":
+      return <OpenAILogo className={className} />;
+    case "anthropic":
+    case "claude-code":
+      return <AnthropicLogo className={className} />;
+    case "gemini":
+      return <GeminiLogo className={className} />;
+    case "deepseek":
+      return <DeepSeekLogo className={className} />;
+    case "ollama":
+      return <OllamaLogo className={className} />;
+    default:
+      return null;
+  }
+}
+
+function getLogoLabel(logo: string): string {
+  switch (logo) {
+    case "openai":
+      return "OpenAI";
+    case "anthropic":
+      return "Anthropic";
+    case "gemini":
+      return "Gemini";
+    case "deepseek":
+      return "DeepSeek";
+    case "ollama":
+      return "Ollama";
+    case "codex":
+      return "OpenAI Codex";
+    case "claude-code":
+      return "Claude Code";
+    default:
+      return logo;
+  }
+}
+
+export function FeatureRow({
+  title,
+  text,
+  logos,
+  delay = 0,
+}: {
+  title: string;
+  text: string;
+  logos?: string[];
+  delay?: number;
+}) {
+  return (
+    <LandingReveal
+      delay={delay}
+      className="landing-divider grid gap-2 border-b py-6 first:pt-0 last:border-b-0 md:grid-cols-[200px_1fr] md:gap-12 md:py-8"
+    >
       <h3 className="text-[17px] font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h3>
-      <p className="text-[17px] leading-relaxed text-zinc-600 dark:text-zinc-400">{text}</p>
+      <div className="flex flex-col gap-3">
+        <p className="text-[17px] leading-relaxed text-zinc-600 dark:text-zinc-400">{text}</p>
+        {logos && logos.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-3">
+            {logos.map((logo) => (
+              <div
+                key={logo}
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 px-2.5 py-1 bg-zinc-50 dark:bg-zinc-900 text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-zinc-50 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all duration-200 shadow-sm cursor-default"
+              >
+                {renderLogoSvg(logo, "h-3.5 w-3.5 shrink-0")}
+                <span>{getLogoLabel(logo)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </LandingReveal>
   );
 }

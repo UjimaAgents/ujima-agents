@@ -14,7 +14,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isLoginPage = pathname.startsWith("/login");
   const isWorkspacePage = pathname.startsWith("/workspace");
   const isSettingsPage = pathname.startsWith("/settings");
-  const isCompactHeader = isSettingsPage || pathname.startsWith("/profile");
+  const isProfilePage = pathname.startsWith("/profile");
+  const isCompactHeader = isSettingsPage || isProfilePage;
+  const showSectionNav = !isSettingsPage && !isProfilePage;
 
   if (isLandingPage) {
     return (
@@ -43,16 +45,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <ToastContainer />
       <header className="border-b border-zinc-200 bg-white/90 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
         <div
-          className={`mx-auto flex max-w-7xl items-center justify-between px-4 md:px-6 ${isCompactHeader ? "py-2.5" : "py-3"}`}
+          className={`mx-auto flex max-w-6xl items-center justify-between px-4 md:px-6 ${isCompactHeader ? "py-2" : "py-3"}`}
         >
-          <Link
-            href="/workspace"
-            className="text-sm font-semibold text-zinc-900 transition hover:text-violet-600 dark:text-zinc-100 dark:hover:text-violet-400"
-          >
-            Ujima
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/workspace"
+              className="text-sm font-semibold text-zinc-900 transition hover:text-violet-600 dark:text-zinc-100 dark:hover:text-violet-400"
+            >
+              Ujima
+            </Link>
+            {isCompactHeader ? (
+              <span className="hidden text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 sm:inline">
+                Account
+              </span>
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
-            {!isSettingsPage ? (
+            {showSectionNav ? (
               <nav className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-800 dark:bg-zinc-900">
                 {APP_ROUTES.map((route) => {
                   const active = pathname === route.href;
@@ -72,23 +81,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 })}
               </nav>
             ) : null}
-            <Link
-              href="/profile"
-              aria-label="Open profile"
-              title="Profile"
-              className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition ${
-                pathname === "/profile"
-                  ? "border-violet-600 bg-violet-600 text-white"
-                  : "border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-              }`}
-            >
-              <CircleUserRound className="h-4 w-4" />
-            </Link>
-            <ThemeToggle />
+            <div className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-zinc-50/90 p-1 dark:border-zinc-800 dark:bg-zinc-900/90">
+              <Link
+                href="/profile"
+                aria-label="Open profile"
+                title="Profile"
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition ${
+                  pathname === "/profile"
+                    ? "bg-violet-600 text-white"
+                    : "text-zinc-600 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                <CircleUserRound className="h-4 w-4" />
+              </Link>
+              <ThemeToggle compact variant="ghost" />
+            </div>
           </div>
         </div>
       </header>
-      <div className="mx-auto max-w-7xl px-4 py-4 md:px-6 md:py-6">{children}</div>
+      <div className="mx-auto max-w-6xl px-4 py-4 md:px-6 md:py-5">{children}</div>
     </div>
   );
 }

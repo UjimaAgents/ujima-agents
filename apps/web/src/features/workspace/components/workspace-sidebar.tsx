@@ -5,11 +5,16 @@ import {
   ChevronDown,
   Clock,
   Command,
+  CircleUserRound,
   Hash,
   KanbanSquare,
+  LogOut,
+  Moon,
+  PanelRight,
   Plus,
   Search,
   Settings,
+  Sun,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
@@ -21,12 +26,12 @@ import type { SelectedConversation, WorkspaceRoleInput } from "../types";
 import { useState, useMemo, useEffect, useRef, memo, useCallback } from "react";
 import { APP_VERSION } from "@/lib/app-version";
 import { useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
 import { TextInput } from "@/components/ui/form-fields";
 import type { RolePresetTemplate } from "../../onboarding/types";
 import { defaultModelForProvider } from "../../onboarding/types";
 import { resolveMemberActivity } from "../workspace-store";
 import type { ActivityState } from "../activity-state";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { listItemIdle, listItemSelectedNeutral } from "@/lib/list-item-styles";
 import { AgentEditorModal } from "./sidebar/agent-editor-modal";
 import { CreateAgentModal } from "./sidebar/create-agent-modal";
@@ -237,7 +242,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   onUpdateAgent,
 }: WorkspaceSidebarProps) {
   const router = useRouter();
+  const { resolvedTheme, setTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
   const [isCreateWorkspaceOpen, setIsCreateWorkspaceOpen] = useState(false);
@@ -245,6 +252,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const [pendingDelete, setPendingDelete] = useState<{ workspaceId: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingWorkspace, setDeletingWorkspace] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [workspaces, setWorkspaces] = useState<{ id: string; root_path: string | null; label: string | null }[]>([]);
   const [schedules, setSchedules] = useState<WorkspaceSchedule[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -254,8 +262,19 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     schedules: 5,
   });
   const headerMenuRef = useRef<HTMLDivElement>(null);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
   const initialProvider =
     bootstrap.providers.find((provider) => provider.hasKey)?.name ?? "openai";
+  const memberName = bootstrap.auth.member?.name || "Admin";
+  const memberEmail = bootstrap.auth.user?.email || "No email";
+  const memberInitials = memberName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "A";
+  const nextTheme = resolvedTheme === "dark" ? "light" : "dark";
+  const themeLabel = `Switch to ${nextTheme === "dark" ? "dark" : "light"} mode`;
 
   const primaryChannel = useMemo(
     () =>
@@ -350,6 +369,18 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [menuOpen]);
 
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && !accountMenuRef.current?.contains(target)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [accountMenuOpen]);
+
   const showMore = useCallback((key: keyof typeof visibleCounts) => {
     setVisibleCounts((current) => ({ ...current, [key]: current[key] + 10 }));
   }, []);
@@ -384,6 +415,19 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
       setDeletingWorkspace(false);
     }
   }, [pendingDelete]);
+
+  const handleLogout = useCallback(async () => {
+    if (loggingOut) return;
+    setAccountMenuOpen(false);
+    setLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.replace("/login");
+      router.refresh();
+    } finally {
+      setLoggingOut(false);
+    }
+  }, [loggingOut, router]);
 
   return (
     <aside className="relative flex h-full w-full flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#09090b]">
@@ -617,41 +661,82 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           </div>
         ) : null}
       </div>
+      <div ref={accountMenuRef} className={`${WORKSPACE_DOCK_ROW_CLASS} relative px-3 pb-3`}>
+        {accountMenuOpen ? (
+          <div className="absolute bottom-full left-3 right-3 z-40 mb-2 overflow-hidden rounded-lg border border-zinc-200/50 bg-white/90 p-2 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.08),_0_0_1px_rgba(0,0,0,0.03)] backdrop-blur-sm animate-in fade-in slide-in-from-bottom-1 duration-150 dark:border-zinc-800/50 dark:bg-zinc-950/90">
+            <div className="flex items-center gap-2.5 px-2 py-1">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-200/70 bg-zinc-50/80 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-300">
+                <CircleUserRound className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{memberEmail}</p>
+              </div>
+            </div>
 
+            <div className="my-2 h-px bg-zinc-200/80 dark:bg-zinc-800/80" />
 
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => setTheme(nextTheme)}
+                className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-zinc-900 transition hover:bg-zinc-100/80 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              >
+                {nextTheme === "dark" ? (
+                  <Moon className="h-4 w-4 text-zinc-500" />
+                ) : (
+                  <Sun className="h-4 w-4 text-zinc-500" />
+                )}
+                <span className="flex-1">{themeLabel}</span>
+              </button>
 
-      <div className={`${WORKSPACE_DOCK_ROW_CLASS} px-3 flex items-center justify-between gap-2`}>
-        <Link
-          href="/settings/organization"
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 transition hover:bg-zinc-100 dark:hover:bg-zinc-900 text-left"
+              <Link
+                href="/profile"
+                onClick={() => setAccountMenuOpen(false)}
+                className="flex items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium text-zinc-900 transition hover:bg-zinc-100/80 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              >
+                <PanelRight className="h-4 w-4 text-zinc-500" />
+                <span className="flex-1">Profile</span>
+              </Link>
+
+              <Link
+                href="/settings/organization"
+                onClick={() => setAccountMenuOpen(false)}
+                className="flex items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium text-zinc-900 transition hover:bg-zinc-100/80 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              >
+                <Settings className="h-4 w-4 text-zinc-500" />
+                <span className="flex-1">Settings</span>
+              </Link>
+
+              <button
+                type="button"
+                onClick={() => void handleLogout()}
+                disabled={loggingOut}
+                className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-zinc-900 transition hover:bg-zinc-100/80 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              >
+                <LogOut className="h-4 w-4 text-zinc-500" />
+                <span className="flex-1">{loggingOut ? "Logging out..." : "Log out"}</span>
+              </button>
+            </div>
+
+            <div className="px-2.5 pt-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+              v{APP_VERSION}
+            </div>
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => setAccountMenuOpen((value) => !value)}
+          className="flex w-full items-center gap-3 rounded-2xl border border-zinc-200/70 bg-white/80 px-3 py-2 text-left shadow-[0_8px_24px_rgba(0,0,0,0.06)] transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/80 dark:hover:bg-zinc-900"
         >
-          <div className="relative shrink-0">
-            <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-500 shadow-[0_2px_10px_rgba(99,102,241,0.2)]" />
-            <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-[#09090b]" />
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-300 via-rose-400 to-orange-500 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(251,146,60,0.22)]">
+            {memberInitials}
           </div>
-          <div className="flex flex-col items-start overflow-hidden">
-            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-50">
-              {bootstrap.auth.member?.name || "Admin"}
-            </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">{memberName}</p>
           </div>
-        </Link>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <ThemeToggle compact />
-          <Link
-            href="/settings/organization"
-            className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100 transition-colors"
-            title="Settings"
-          >
-            <Settings className="h-4 w-4" />
-          </Link>
-        </div>
-      </div>
-
-      {/* Version label */}
-      <div className="px-4 pb-2">
-        <p className="text-[10px] text-zinc-400/60 dark:text-zinc-600/60 text-center select-none">
-          v{APP_VERSION}
-        </p>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-400 transition ${accountMenuOpen ? "rotate-180" : ""}`} />
+        </button>
       </div>
 
       <CreateChannelModal

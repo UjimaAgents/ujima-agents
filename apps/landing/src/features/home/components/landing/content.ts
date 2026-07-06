@@ -30,6 +30,21 @@ export const coreConcepts = [
   { title: "Task runs", text: "Focused work in dedicated run channels." },
   { title: "Approvals", text: "Writes, shell, and git wait for your OK." },
   { title: "Bounds", text: "Execution cannot escape the org root." },
+  {
+    title: "LLM Providers",
+    text: "Infinite brainpower. Plug in Anthropic, OpenAI, Gemini, or DeepSeek in one click and watch them collaborate.",
+    logos: ["anthropic", "openai", "gemini", "deepseek"],
+  },
+  {
+    title: "Subscriptions",
+    text: "Zero double-dipping. Bring your existing Codex or Claude Code subscriptions and pay once, use everywhere.",
+    logos: ["codex", "claude-code"],
+  },
+  {
+    title: "Local Models",
+    text: "100% local and private. Run fully offline models via Ollama, Llama.cpp, or vLLM — your workspace, zero internet required.",
+    logos: ["ollama"],
+  },
 ];
 
 export const workflowSteps = [

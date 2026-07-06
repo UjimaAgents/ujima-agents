@@ -1,6 +1,10 @@
 import type { ActivityEvent, RunState } from "@ujima/shared/browser";
 import type { ChatMessageData } from "./components/chat";
 
+export function isSidebarActivityEvent(event: ActivityEvent): boolean {
+  return event.type !== "channel_message" && event.type !== "thread_message" && event.type !== "run_chunk";
+}
+
 export function isLiveRun(run: RunState): boolean {
   return (
     run.status === "queued" ||
@@ -13,7 +17,7 @@ export function isLiveRun(run: RunState): boolean {
 export function countSemanticActivityEvents(activity: ActivityEvent[]): number {
   let count = 0;
   for (const event of activity) {
-    if (event.type !== "run_chunk") count += 1;
+    if (isSidebarActivityEvent(event)) count += 1;
   }
   return count;
 }

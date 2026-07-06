@@ -3,8 +3,8 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Ujima Agents",
-  description: "Ujima Agents landing page",
+  title: "Ujima Agents — Slack-like AI Agent Teams with Workspace-Bounded Execution",
+  description: "Deploy collaborative multi-agent AI teams in your local workspace. Securely plug in Anthropic Claude, OpenAI, Gemini, local models, or bring Codex & Claude Code subscriptions with human-in-the-loop approvals.",
 };
 
 export default function RootLayout({
@@ -13,12 +13,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="antialiased" suppressHydrationWarning>
+    <html lang="en" className="scroll-smooth" suppressHydrationWarning>
+      <body className="antialiased bg-white text-zinc-950 dark:bg-[#09090b] dark:text-zinc-100" suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <div className="min-h-screen scroll-smooth overflow-y-auto bg-white text-zinc-950 dark:bg-[#09090b] dark:text-zinc-100">
-            {children}
-          </div>
+          {children}
         </ThemeProvider>
       </body>
     </html>

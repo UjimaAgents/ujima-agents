@@ -8,11 +8,13 @@ export function LandingReveal<T extends ElementType = "div">({
   className = "",
   delay = 0,
   as,
+  revealType = "fade-up",
 }: {
   children: ReactNode;
   className?: string;
   delay?: number;
   as?: T;
+  revealType?: "fade-up" | "3d";
 }) {
   const Tag = (as ?? "div") as ElementType;
   const ref = useRef<HTMLElement>(null);
@@ -38,10 +40,14 @@ export function LandingReveal<T extends ElementType = "div">({
     return () => observer.disconnect();
   }, []);
 
+  const revealClass = revealType === "3d"
+    ? `landing-reveal-3d ${visible ? "landing-reveal-3d--visible" : ""}`
+    : `landing-reveal ${visible ? "landing-reveal--visible" : ""}`;
+
   return (
     <Tag
       ref={ref}
-      className={`landing-reveal ${visible ? "landing-reveal--visible" : ""} ${className}`}
+      className={`${revealClass} ${className}`}
       style={{ "--landing-reveal-delay": `${delay}ms` } as CSSProperties}
     >
       {children}
