@@ -25,6 +25,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: monorepoRoot,
   env: {
     NEXT_PUBLIC_UJIMA_VERSION: readUjimaVersion(),
+    NEXT_PUBLIC_SITE_BASE_PATH: process.env.SITE_BASE_PATH ?? "",
   },
   // In dev, scope Turbopack to apps/web so the first browser load does not scan the
   // entire monorepo (which can peg CPU/RAM on Windows). Release builds keep the repo root.

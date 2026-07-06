@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   trailingSlash: true,
   basePath: basePath || undefined,
   productionBrowserSourceMaps: false,
+  env: {
+    NEXT_PUBLIC_SITE_BASE_PATH: basePath,
+  },
   images: {
     unoptimized: true,
   },
