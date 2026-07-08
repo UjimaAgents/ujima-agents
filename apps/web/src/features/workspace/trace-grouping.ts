@@ -1,5 +1,5 @@
 import type { TraceStepData } from "./components/chat/trace-types";
-import { diffStats } from "./change-summary";
+import { diffStats } from "@ujima/shared/browser";
 
 type AggregatedOperation = NonNullable<TraceStepData["aggregatedOperations"]>[number];
 

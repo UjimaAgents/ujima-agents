@@ -189,12 +189,12 @@ export function enrichApprovalScopeForDisplay(
   return scope;
 }
 
-function splitDiffLines(prefix: '+' | '-', value: string): string[] {
+export function splitDiffLines(prefix: '+' | '-', value: string): string[] {
   const lines = value.split(/\r?\n/);
   return lines.map((line) => `${prefix}${line}`);
 }
 
-function proposedWriteDiff(resourcePath: string, content: string): string {
+export function proposedWriteDiff(resourcePath: string, content: string): string {
   const lineCount = Math.max(1, content.split(/\r?\n/).length);
   return [
     `--- ${resourcePath}`,
@@ -204,7 +204,19 @@ function proposedWriteDiff(resourcePath: string, content: string): string {
   ].join('\n');
 }
 
-function proposedEditDiff(resourcePath: string, oldString: string, newString: string, startLine?: number): string {
+export function diffStats(body?: string): { additions: number; deletions: number } {
+  if (!body) return { additions: 0, deletions: 0 };
+  let additions = 0;
+  let deletions = 0;
+  for (const line of body.split('\n')) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith('+') && !trimmed.startsWith('+++')) additions++;
+    else if (trimmed.startsWith('-') && !trimmed.startsWith('---')) deletions++;
+  }
+  return { additions, deletions };
+}
+
+export function proposedEditDiff(resourcePath: string, oldString: string, newString: string, startLine?: number): string {
   const oldLineCount = oldString.split(/\r?\n/).length;
   const newLineCount = newString.split(/\r?\n/).length;
   const hunkHeader = startLine !== undefined

@@ -22,7 +22,7 @@ export const MESSAGE_TOOL_USAGE_GUIDANCE = [
   'channel.reply and channel.close are different tools.',
   'agent.manage: search existing agents, inspect them, or create temporary delegates before delegating work.',
   'agent.delegate: use mode "explorer" for read-only investigation and mode "worker" for edits or implementation. Explorer delegates get read tools only; worker delegates can use edit/write tools.',
-  'agent.delegate: use execution "blocking" when you need the result before continuing. Use execution "non_blocking" when child work can continue in parallel; when that delegate finishes, you will be woken again with a delegate result message in your current thread context.',
+  'agent.delegate: when one tool call starts multiple delegates, they all start in parallel. Use execution "blocking" when you need to wait for their results before continuing. Use execution "non_blocking" when the parent should keep looping and be woken later with delegate result messages.',
   'In a hand-off chain with 3 or more agents, when you reply, the previous sender is automatically re-mentioned. If you need to bring in an earlier participant, mention them explicitly with @name.',
   'Use ignore: true on dm messages when you want a private acknowledgement without waking the recipient or posting public channel follow-up.',
 ] as const;

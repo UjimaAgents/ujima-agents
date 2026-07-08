@@ -114,7 +114,7 @@ export class ConversationService {
     this.onMemberAlerted = options.onMemberAlerted;
     this.onMessagePublished = options.onMessagePublished;
     this.summarizeConversation = options.summarizeConversation;
-    this.summarizeConversationTimeoutMs = options.summarizeConversationTimeoutMs ?? 60_000;
+    this.summarizeConversationTimeoutMs = options.summarizeConversationTimeoutMs ?? 180_000;
     this.contextWindowTokens = options.contextWindowTokens ?? (() => 128_000);
     this.autoCompactConversations = options.autoCompactConversations ?? false;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;

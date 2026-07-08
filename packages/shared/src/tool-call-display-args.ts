@@ -1,15 +1,15 @@
 import type { ParsedFilesystemScope, ParsedGrepScope, ParsedShellScope } from './approval-scope.js';
 
-function toObject(value: unknown): Record<string, unknown> | undefined {
+export function toObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
 }
 
-function nestedInput(args: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+export function nestedInput(args: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   return args ? toObject((args as { input?: unknown }).input) : undefined;
 }
 
-function readStringArg(
+export function readStringArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
   key: string,
@@ -20,7 +20,7 @@ function readStringArg(
   return typeof nestedValue === 'string' ? nestedValue : undefined;
 }
 
-function readNumberArg(
+export function readNumberArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
   key: string,
@@ -31,7 +31,26 @@ function readNumberArg(
   return typeof nestedValue === 'number' ? nestedValue : undefined;
 }
 
-function readBooleanArg(
+export function readIntegerArg(
+  args: Record<string, unknown> | undefined,
+  nested: Record<string, unknown> | undefined,
+  ...keys: string[]
+): number | undefined {
+  for (const source of [args, nested]) {
+    if (!source) continue;
+    for (const key of keys) {
+      const v = source[key];
+      if (typeof v === 'number') return v;
+      if (typeof v === 'string') {
+        const n = Number.parseInt(v, 10);
+        if (Number.isFinite(n)) return n;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function readBooleanArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
   key: string,
@@ -42,7 +61,7 @@ function readBooleanArg(
   return typeof nestedValue === 'boolean' ? nestedValue : undefined;
 }
 
-function readStringArrayArg(
+export function readStringArrayArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
   key: string,
