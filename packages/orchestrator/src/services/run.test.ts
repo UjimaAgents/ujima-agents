@@ -282,6 +282,102 @@ describe('SpiritService run path', () => {
     expect(updatedMessages[0].outputTokens).toBe(34);
   });
 
+  it('does not duplicate the final reply in delegate runs after step publishing', async () => {
+    const organizationId = 'org-1';
+    const runId = 'run-1';
+    const agentId = 'Quinn Mason';
+    const threadId = 'dm:agent-1:agent-2';
+    const finalReply = 'The changes compiled clean. Done.';
+    const messages: any[] = [];
+    let run: any = {
+      id: runId,
+      organizationId,
+      agentId,
+      threadId,
+      sourceMessageId: 'delegate-msg-1',
+      status: 'queued',
+      step: 'queued',
+      summary: 'Run queued',
+      startedAt: '2026-05-04T19:07:08.071Z',
+    };
+
+    const repo = {
+      getMember: () => ({
+        id: agentId,
+        organizationId,
+        name: agentId,
+        kind: AGENT_KIND,
+        roleName: 'backend-engineer',
+      }),
+      saveRun: (next: any) => {
+        run = next;
+        return next;
+      },
+      getRun: () => run,
+      getProviderCredential: () => null,
+      getWorkspaceSetting: () => null,
+      listMembers: () => [],
+      listPendingApprovals: () => [],
+      listRunSteps: () => [],
+      listMessages: () => ({ data: [], hasMore: false }),
+      getLatestHumanMessageInThread: () => null,
+      getSpiritByRunId: () => null,
+      getThread: () => ({ channelId: threadId }),
+      getMessage: (_org: string, id: string) =>
+        id === 'delegate-msg-1'
+          ? { id, metadata: { delegate: { id } } }
+          : null,
+    } as never;
+
+    const service = createSpiritRunService(
+      {
+        getTeam: () =>
+          loadAgentTeam({
+            name: 'Timetotest',
+            workspace: { root: '/tmp' },
+            roles: [
+              {
+                name: 'backend-engineer',
+                title: 'Backend Engineer',
+                instructions: 'Work on backend.',
+                tools: ['shell'],
+              },
+            ],
+            agents: [{ name: agentId, roleName: 'backend-engineer' }],
+          }),
+        setTeam: () => undefined,
+      } as never,
+      repo,
+      { emit: () => undefined } as never,
+      {
+        publishMessage: (message: any) => {
+          messages.push(message);
+          return message;
+        },
+      } as never,
+      {
+        generateRunReply: async (input: {
+          onStepFinish?: (step: { text: string }, currentSteps: { text: string }[]) => PromiseLike<void> | void;
+        }) => {
+          const step = { text: finalReply };
+          await input.onStepFinish?.(step, [step]);
+          return {
+            text: finalReply,
+            toolResults: [],
+            steps: [step],
+          };
+        },
+      } as never,
+      { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
+    );
+
+    const result = await (service as any).advanceRun(run);
+
+    expect(result.status).toBe('completed');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toBe(finalReply);
+  });
+
   it('streams agent chunks to realtime while the run is still executing', async () => {
     const organizationId = 'org-1';
     const runId = 'run-1';

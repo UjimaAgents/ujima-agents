@@ -567,7 +567,7 @@ export class SpiritService extends SpiritServiceSupervisor {
                 ...(isLastPart && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
               });
               if (isDelegateRun(running, this.repo)) {
-                this.conversations?.publishMessage(stepMessage, [], undefined, {
+                turn.publishMessage(stepMessage, {
                   suppressDmAlerts: true,
                   skipMentionResolution: true,
                   wakePolicy: 'never',

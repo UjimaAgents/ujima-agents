@@ -33,7 +33,7 @@ const AgentDelegateSchema = z.object({
   target: z.string().min(1).optional().describe('Target agent name or id (start).'),
   task: z.string().min(1).optional().describe('Task message (start).'),
   mode: DelegateKindSchema.optional().describe('worker (default) or explorer.'),
-  execution: DelegateExecutionSchema.optional().describe('blocking (default) waits for the result. non_blocking dispatches child work and lets it continue in parallel.'),
+  execution: DelegateExecutionSchema.optional().describe('blocking (default) dispatches child work and waits for the result. non_blocking dispatches child work and keeps the parent running.'),
   label: z.string().optional().describe('Optional label for the child task.'),
   timeout_ms: z.number().positive().optional().describe('Timeout in ms (join). Default 120s.'),
   task_id: z.string().optional().describe('Single task id (status, join, read, stop, send).'),
@@ -171,20 +171,20 @@ async function executeDelegate(ctx: ToolExecutionContext, args: AgentDelegateArg
           : `Delegated ${tasks.length} tasks; waiting for results`,
       );
 
-      const results: AgentDelegateResult[] = [];
-      for (const [index, taskDef] of tasks.entries()) {
-        results.push(await ctx.delegateAgentTurn({
-          organizationId: orgId,
-          fromMemberId: ctx.invocation.memberId,
-          to: taskDef.target,
-          message: taskDef.task,
-          kind: taskDef.mode ?? args.mode,
-          index,
-          runId: ctx.invocation.runId,
-          mode: execution,
-          timeoutMs: args.timeout_ms,
-        }));
-      }
+      const results = await Promise.all(
+        tasks.map((taskDef, index) =>
+          ctx.delegateAgentTurn({
+            organizationId: orgId,
+            fromMemberId: ctx.invocation.memberId,
+            to: taskDef.target,
+            message: taskDef.task,
+            kind: taskDef.mode ?? args.mode,
+            index,
+            runId: ctx.invocation.runId,
+            mode: execution,
+            timeoutMs: args.timeout_ms,
+          })),
+      );
 
       updateParentRunStep(ctx, 'running', `Delegate results received (${results.length})`);
       const details = results.map(summarizeDelegateResult);

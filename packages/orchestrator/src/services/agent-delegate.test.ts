@@ -28,6 +28,16 @@ const target = MemberSchema.parse({
   presence: 'online',
 });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function message(input: Partial<Message> & Pick<Message, 'id' | 'senderId' | 'content'>): Message {
   return MessageSchema.parse({
     organizationId: orgId,
@@ -429,19 +439,24 @@ describe('agent delegation', () => {
     });
   });
 
-  it('agent.delegate spawn waits for all child task results', async () => {
-    const delegateAgentTurn = vi.fn(async (input: { index?: number }) => ({
-      status: 'completed' as const,
-      agent: target.name,
-      agent_id: target.id,
-      thread_id: 'dm:agent-1:agent-2',
-      message_id: `delegate-${input.index}`,
-      delegate_index: input.index,
-      reply_id: `reply-${input.index}`,
-      reply_content: `done-${input.index}`,
-    }));
+  it('agent.delegate spawn starts same-call delegates in parallel and waits for all child task results', async () => {
+    const pending = [deferred<{
+      status: 'completed';
+      agent: string;
+      agent_id: string;
+      thread_id: string;
+      message_id: string;
+      delegate_index: number | undefined;
+      reply_id: string;
+      reply_content: string;
+    }>(), deferred(), deferred()];
+    const started: number[] = [];
+    const delegateAgentTurn = vi.fn((input: { index?: number }) => {
+      started.push(input.index ?? -1);
+      return pending[input.index ?? 0]!.promise;
+    });
 
-    const result = await agentDelegateTool.execute({
+    const resultPromise = agentDelegateTool.execute({
       invocation: {
         organizationId: orgId,
         runId: 'run-1',
@@ -474,6 +489,43 @@ describe('agent delegation', () => {
       } as never,
       delegateAgentTurn,
     } as never);
+
+    await Promise.resolve();
+    expect(started).toEqual([0, 1, 2]);
+    expect(delegateAgentTurn).toHaveBeenCalledTimes(3);
+
+    pending[2]!.resolve({
+      status: 'completed',
+      agent: target.name,
+      agent_id: target.id,
+      thread_id: 'dm:agent-1:agent-2',
+      message_id: 'delegate-2',
+      delegate_index: 2,
+      reply_id: 'reply-2',
+      reply_content: 'done-2',
+    });
+    pending[0]!.resolve({
+      status: 'completed',
+      agent: target.name,
+      agent_id: target.id,
+      thread_id: 'dm:agent-1:agent-2',
+      message_id: 'delegate-0',
+      delegate_index: 0,
+      reply_id: 'reply-0',
+      reply_content: 'done-0',
+    });
+    pending[1]!.resolve({
+      status: 'completed',
+      agent: target.name,
+      agent_id: target.id,
+      thread_id: 'dm:agent-1:agent-2',
+      message_id: 'delegate-1',
+      delegate_index: 1,
+      reply_id: 'reply-1',
+      reply_content: 'done-1',
+    });
+
+    const result = await resultPromise;
 
     expect(delegateAgentTurn).toHaveBeenCalledTimes(3);
     expect(delegateAgentTurn).toHaveBeenNthCalledWith(1, expect.objectContaining({ index: 0, mode: 'blocking' }));

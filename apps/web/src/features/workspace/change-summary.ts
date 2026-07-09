@@ -1,4 +1,5 @@
 import type { TraceStepData } from "./components/chat/trace-types";
+import { diffStats } from "@ujima/shared/browser";
 
 export interface FileChange {
   id: string;
@@ -15,18 +16,6 @@ export interface ChangeSummary {
   deletions: number;
 }
 
-export function diffStats(body?: string): { additions: number; deletions: number } {
-  if (!body) return { additions: 0, deletions: 0 };
-  let additions = 0;
-  let deletions = 0;
-  for (const line of body.split("\n")) {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("+") && !trimmed.startsWith("+++")) additions++;
-    else if (trimmed.startsWith("-") && !trimmed.startsWith("---")) deletions++;
-  }
-  return { additions, deletions };
-}
-
 export function collectFileChanges(steps: TraceStepData[]): FileChange[] {
   const seen = new Set<string>();
   const changes: FileChange[] = [];
@@ -41,9 +30,8 @@ export function collectFileChanges(steps: TraceStepData[]): FileChange[] {
   for (const step of steps) {
     for (const op of step.aggregatedOperations ?? []) {
       if ((op.type !== "edit" && op.type !== "delete") || !op.body || !op.file) continue;
-      const key = `${op.file}:${op.body.slice(0, 80)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (seen.has(op.id)) continue;
+      seen.add(op.id);
       const stats = op.additions || op.deletions ? op : diffStats(op.body);
       pushChange({
         file: op.file,
@@ -55,9 +43,8 @@ export function collectFileChanges(steps: TraceStepData[]): FileChange[] {
     }
 
     if (step.filesystem?.action === "write" && step.filesystem.body) {
-      const key = `${step.filesystem.resourcePath}:${step.filesystem.body.slice(0, 80)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (seen.has(step.id)) continue;
+      seen.add(step.id);
       const stats = diffStats(step.filesystem.body);
       pushChange({
         file: step.filesystem.resourcePath,

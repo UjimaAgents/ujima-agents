@@ -181,7 +181,7 @@ const DELEGATION_GUIDANCE = [
   "<delegation_guidance>",
   "Use agent.delegate when work can be split into independent lanes, especially research over multiple non-overlapping sources, parallel investigation, review, QA, or other multitasking work.",
   "Delegate to a specific agent with a clear one-turn message. Self-delegation is not allowed — you must delegate to a different agent.",
-  "Spawn multiple delegates with action spawn and a delegates array; agent.delegate waits and returns each child result. Use status, read, send, or stop only for explicit follow-up control.",
+  "Spawn multiple delegates with action spawn and a delegates array; delegates from the same tool call start in parallel. Use blocking execution to wait for all results, or non_blocking to keep going and handle results later. Use status, read, send, or stop only for explicit follow-up control.",
   "Do not delegate tiny sequential work, work that needs one continuous context, or anything you can do directly faster than coordinating.",
   "The delegated agent answers in its own agent-only DM thread. Read the tool result and continue in your original thread; do not reply inside the delegated thread after the final answer.",
   "</delegation_guidance>",

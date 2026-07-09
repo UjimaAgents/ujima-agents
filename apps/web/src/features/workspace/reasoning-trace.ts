@@ -5,6 +5,15 @@ import {
   parseWebSearchToolCallArgs,
   compareActivityEvents,
   shellInvocationDisplayLine,
+  toObject,
+  nestedInput,
+  readStringArg,
+  readNumberArg,
+  readIntegerArg,
+  readBooleanArg,
+  readStringArrayArg,
+  splitDiffLines,
+  proposedEditDiff,
   type ActivityEvent,
   type Message,
   type RunChunkEvent,
@@ -201,11 +210,6 @@ function resolveMember(input: ReasoningTraceInput, memberId: string | undefined)
   return { name: member.name, isAgent: member.kind === "agent" };
 }
 
-function toObject(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
-}
-
 function unwrapResultRecord(value: unknown): Record<string, unknown> | undefined {
   const record = toObject(value);
   if (!record) return undefined;
@@ -224,75 +228,13 @@ function unwrapResultRecord(value: unknown): Record<string, unknown> | undefined
   return nested ? unwrapResultRecord(nested) ?? record : record;
 }
 
-function readStringArg(
-  args: Record<string, unknown> | undefined,
-  nested: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = args?.[key];
-  if (typeof value === "string") return value;
-  const nestedValue = nested?.[key];
-  return typeof nestedValue === "string" ? nestedValue : undefined;
-}
-
-function readNumberArg(
-  args: Record<string, unknown> | undefined,
-  nested: Record<string, unknown> | undefined,
-  key: string,
-): number | undefined {
-  const value = args?.[key];
-  if (typeof value === "number") return value;
-  const nestedValue = nested?.[key];
-  return typeof nestedValue === "number" ? nestedValue : undefined;
-}
-
-function readIntegerArg(
-  args: Record<string, unknown> | undefined,
-  nested: Record<string, unknown> | undefined,
-  ...keys: string[]
-): number | undefined {
-  for (const source of [args, nested]) {
-    if (!source) continue;
-    for (const key of keys) {
-      const v = source[key];
-      if (typeof v === "number") return v;
-      if (typeof v === "string") {
-        const n = Number.parseInt(v, 10);
-        if (Number.isFinite(n)) return n;
-      }
-    }
-  }
-  return undefined;
-}
-
-function readBooleanArg(
-  args: Record<string, unknown> | undefined,
-  nested: Record<string, unknown> | undefined,
-  key: string,
-): boolean | undefined {
-  const value = args?.[key];
-  if (typeof value === "boolean") return value;
-  const nestedValue = nested?.[key];
-  return typeof nestedValue === "boolean" ? nestedValue : undefined;
-}
-
-function readStringArrayArg(
-  args: Record<string, unknown> | undefined,
-  nested: Record<string, unknown> | undefined,
-  key: string,
-): string[] | undefined {
-  const value = args?.[key];
-  const candidate = Array.isArray(value) ? value : nested?.[key];
-  return Array.isArray(candidate) && candidate.length ? candidate.map((item) => String(item)) : undefined;
-}
-
 function readEditArrayArg(
   args: Record<string, unknown> | undefined,
   nested: Record<string, unknown> | undefined,
-): { oldString?: string; newString?: string }[] | undefined {
+): { oldString?: string; newString?: string; startLine?: number }[] | undefined {
   const candidate = Array.isArray(args?.edits) ? args?.edits : nested?.edits;
   if (!Array.isArray(candidate)) return undefined;
-  const edits: { oldString?: string; newString?: string }[] = [];
+  const edits: { oldString?: string; newString?: string; startLine?: number }[] = [];
   for (const entry of candidate) {
     const item = toObject(entry);
     if (!item) continue;
@@ -309,6 +251,10 @@ function readEditArrayArg(
           : typeof item.newString === "string"
             ? item.newString
             : undefined,
+      startLine:
+        typeof item.startLine === "number"
+          ? item.startLine
+          : undefined,
     });
   }
   return edits.length ? edits : undefined;
@@ -348,22 +294,11 @@ function extractContentFromResult(result: unknown): string | undefined {
   }
 }
 
-function diffLines(prefix: "+" | "-", value: string): string[] {
-  return value.split(/\r?\n/).map((line) => `${prefix}${line}`);
-}
-
-function proposedEditDiff(path: string, oldString: string, newString: string, startLine?: number): string {
-  const oldLines = oldString.split(/\r?\n/).length;
-  const newLines = newString.split(/\r?\n/).length;
-  const header = startLine === undefined ? "@@" : `@@ -${startLine},${oldLines} +${startLine},${newLines} @@`;
-  return [`--- ${path}`, `+++ ${path}`, header, ...diffLines("-", oldString), ...diffLines("+", newString)].join("\n");
-}
-
 function proposedToolDiff(name: string, path: string, parsed: ReturnType<typeof inferToolAction>): string | undefined {
   if (!path) return undefined;
   if (name === "write" && parsed.content !== undefined) {
     const lines = Math.max(1, parsed.content.split(/\r?\n/).length);
-    return [`--- ${path}`, `+++ ${path}`, `@@ -0,0 +1,${lines} @@`, ...diffLines("+", parsed.content)].join("\n");
+    return [`--- ${path}`, `+++ ${path}`, `@@ -0,0 +1,${lines} @@`, ...splitDiffLines("+", parsed.content)].join("\n");
   }
   if (name === "edit" && parsed.oldString !== undefined && parsed.newString !== undefined) {
     return proposedEditDiff(path, parsed.oldString, parsed.newString, parsed.startLine);
@@ -372,7 +307,7 @@ function proposedToolDiff(name: string, path: string, parsed: ReturnType<typeof 
   const body = parsed.edits
     .map((edit) =>
       edit.oldString !== undefined && edit.newString !== undefined
-        ? proposedEditDiff(path, edit.oldString, edit.newString, parsed.startLine)
+        ? proposedEditDiff(path, edit.oldString, edit.newString, edit.startLine ?? parsed.startLine)
         : "",
     )
     .filter(Boolean)
@@ -541,7 +476,7 @@ function inferToolAction(args?: Record<string, unknown>): {
   oldString?: string;
   newString?: string;
   replaceAll?: boolean;
-  edits?: { oldString?: string; newString?: string }[];
+  edits?: { oldString?: string; newString?: string; startLine?: number }[];
   ignore?: string[];
   url?: string;
   jobId?: string;

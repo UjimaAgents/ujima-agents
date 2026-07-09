@@ -394,7 +394,7 @@ export class SettingsService {
     const normalizedName = normalizeProviderKey(providerName);
     const provider = team.providers[normalizedName];
     if (!provider) {
-      throw new Error(`Unknown provider "${normalizedName}"`);
+      throw new Error(`No API key configured for ${providerName}. Models from static catalog shown.`);
     }
 
     const baseUrl = provider.baseUrl ?? getDefaultOpenAiCompatBaseUrl(provider.kind as ProviderKind);
