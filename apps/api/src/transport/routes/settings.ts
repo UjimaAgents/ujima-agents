@@ -291,7 +291,7 @@ export function registerSettingsRoutes(
       return { models };
     } catch (err) {
       const message = errorMessage(err);
-      if (message.startsWith('Unknown provider')) {
+      if (message.startsWith('Unknown provider') || message.startsWith('No API key configured')) {
         return apiError(reply, 404, message);
       }
       if (message.startsWith('Discovery failed')) {

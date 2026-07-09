@@ -48,6 +48,7 @@ export const MODEL_OPTIONS_BY_PROVIDER: Record<string, readonly ProviderModelOpt
   ],
   xai: [
     { value: "grok-4.3", label: "grok-4.3" },
+    { value: "grok-4.5", label: "grok-4.5" },
     { value: "grok-build-0.1", label: "grok-build-0.1" },
     { value: "grok-4.20", label: "grok-4.20" },
     { value: "grok-4.20-reasoning", label: "grok-4.20-reasoning" },
