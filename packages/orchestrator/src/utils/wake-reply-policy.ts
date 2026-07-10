@@ -27,7 +27,7 @@ export const SCAFFOLD_RULES = Object.freeze({
   threadStateAuthoritative:
     'Treat its <agents-not-yet-responded> and <you-explicitly-addressed> / <you-implicitly-addressed> fields as ground truth — they are computed from the actual channel state, not from your reading.',
   optionalBackpressure:
-    'If <reply-obligation>optional-backpressure</reply-obligation>, the message was addressed to you but repeated agent-to-agent wake activity made a reply optional. Reply only with substantive new information; otherwise call channel.close and stop.',
+    'If <reply-obligation>optional-backpressure</reply-obligation>, the message was addressed to you but repeated agent-to-agent wake activity made a reply optional. A brief greeting, acknowledgment, or other clearly useful contribution is still allowed. If you truly have nothing constructive to add, call channel.close and stop.',
   toolDefinitionsBase:
     'channel.close = final silent close when you have no useful visible reply. Use reason "ack" if addressed, otherwise use a stand-down reason. channel.reply = final substantive visible content (an answer, artifact, question, or changed status).',
   toolDefinitionsChannel:

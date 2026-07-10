@@ -36,7 +36,7 @@ const SHARED_AGENT_SYSTEM_PROMPT_BASE = [
 ] as const;
 
 const CHANNEL_CHAT_CONSERVATISM_LINE =
-  "Be conservative on chat: do not reply just to be helpful. If you have nothing concrete to add, call channel.close.";
+  "Be conservative on chat: do not reply just to be helpful. In shared channels, reply when you are addressed, your role requires it, or you have a concrete contribution. If you truly have nothing useful to add, call channel.close.";
 
 const DM_CHAT_CONSERVATISM_LINE =
   "In direct messages, reply when your conversation partner asks for help or expects a response. Do not silently close because you were not @mentioned; that rule applies to shared channels only.";
@@ -167,7 +167,8 @@ const COLLABORATION_PROTOCOL_SHARED_BULLETS = [
 ] as const;
 
 const COLLABORATION_PROTOCOL_CHANNEL_ONLY_BULLETS = [
-  "- Not every message needs a reply. If a message should be ignored, do not answer it just to acknowledge it.",
+  "- Not every message needs a reply. If you are not addressed and have nothing concrete to add, do not answer it just to acknowledge it.",
+  "- If a channel message is relevant to your role or you have a useful contribution, you may reply even without an @mention.",
   "- When you've completed delegated work, use channel.reply in the delegation thread with the result.",
   "- If the message does not need a reply, stay quiet. Concretely: call channel.close with a reason. Do not produce empty assistant text.",
 ] as const;
