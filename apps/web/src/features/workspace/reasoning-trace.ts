@@ -1391,7 +1391,7 @@ function buildToolStep(
       name === "write" || name === "edit" || name === "multiedit"
         ? proposedToolDiff(name, parsed.resourcePath ?? "", parsed)
         : undefined;
-    const hasResultDiff = bodyFromResult.trimStart().startsWith("--- ");
+    const hasResultDiff = /(^|\n)--- /.test(bodyFromResult);
     const resolved = proposedDiff && !isError && (!hasResultDiff || !hasResult || pendingCompletion)
       ? proposedDiff
       : bodyFromResult || pendingBody;
