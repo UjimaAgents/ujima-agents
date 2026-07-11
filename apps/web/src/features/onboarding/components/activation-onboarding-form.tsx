@@ -39,6 +39,7 @@ export function ActivationOnboardingForm(props: Props) {
   const [roleSearch, setRoleSearch] = useState("");
   const [roleIndustry, setRoleIndustry] = useState("all");
   const [codexConnected, setCodexConnected] = useState(false);
+  const [claudeCodeConnected, setClaudeCodeConnected] = useState(false);
 
   const error = useMemo(() => {
     if (step.id === "owner") {
@@ -54,9 +55,10 @@ export function ActivationOnboardingForm(props: Props) {
     if (step.id === "provider") {
       const provider = draft.providers[0];
       if (!provider?.name) return "Choose a provider.";
-      // provider.name is already the internal token (openai / openai-codex / anthropic ...)
-      if (provider.name !== "ollama" && provider.name !== "openai-codex" && !provider.apiKey.trim()) return "Enter the provider API key.";
+      // provider.name is already the internal token (openai / openai-codex / anthropic / anthropic-claude-code ...)
+      if (provider.name !== "ollama" && provider.name !== "openai-codex" && provider.name !== "anthropic-claude-code" && !provider.apiKey.trim()) return "Enter the provider API key.";
       if (provider.name === "openai-codex" && !codexConnected) return "Connect ChatGPT subscription.";
+      if (provider.name === "anthropic-claude-code" && !claudeCodeConnected) return "Connect Claude Code subscription.";
     }
     if (step.id === "agent") {
       const role = draft.roles[0];
@@ -64,7 +66,7 @@ export function ActivationOnboardingForm(props: Props) {
       if (!role.name.trim()) return "Choose a starter role.";
     }
     return null;
-  }, [draft, step.id, codexConnected]);
+  }, [draft, step.id, codexConnected, claudeCodeConnected]);
 
   const update = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) =>
     onChange({ ...draft, [key]: value });
@@ -177,7 +179,7 @@ export function ActivationOnboardingForm(props: Props) {
                   apiKey={provider.apiKey}
                   onApiKeyChange={(apiKey) => onChange({ ...draft, providers: [{ ...provider, apiKey }] })}
                   authMode={resolveAuthMode(provider.name) ?? "apikey"}
-                  onAuthModeChange={(mode: OpenAIAuthMode) => {
+                  onAuthModeChange={(mode) => {
                     // Encode auth mode directly in provider name
                     const internalName = resolveInternalProviderToken("openai", mode);
                     setCodexConnected(false);

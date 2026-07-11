@@ -200,4 +200,41 @@ describe('conversation-compact selection', () => {
     expect(estimate).toBeLessThan(200);
   });
 
+  it('correctly handles stamped token counts without double-counting history', () => {
+    const messages = [
+      makeMessage('user message 1', {
+        id: 'msg-1',
+        senderId: 'human-1',
+        senderKind: 'human',
+        kind: 'human',
+        content: 'hello',
+      }),
+      makeMessage('assistant response 1', {
+        id: 'msg-2',
+        senderId: 'agent-1',
+        senderKind: 'agent',
+        kind: 'agent',
+        content: 'hi there',
+        inputTokens: 1000,
+        outputTokens: 50,
+      }),
+      makeMessage('user message 2', {
+        id: 'msg-3',
+        senderId: 'human-1',
+        senderKind: 'human',
+        kind: 'human',
+        content: 'how are you?',
+      }),
+    ];
+
+    const estimate = estimatePromptReplayTokens(
+      { listRunSteps: () => [] },
+      'org-1',
+      messages,
+    );
+
+    expect(estimate).toBeLessThan(100);
+    expect(estimate).toBeGreaterThan(50);
+  });
+
 });

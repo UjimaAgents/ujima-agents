@@ -44,6 +44,7 @@ import type { ApprovalResolveInput } from './approval.js';
 import { resolveAgentMemberId } from './member-id.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
 import { hasCodexAccessToken } from '../utils/codex-auth.js';
+import { hasClaudeCodeLogin } from '../utils/claude-code-auth.js';
 
 function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
   return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
@@ -356,7 +357,9 @@ export class SettingsService {
     const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     const providerKey = normalizeProviderKey(providerName);
-    const authMode = team.getProvider(providerKey)?.authMode ?? (providerKey === 'openai-codex' ? 'chatgpt' : undefined);
+    const authMode = team.getProvider(providerKey)?.authMode ?? (
+      providerKey === 'openai-codex' ? 'chatgpt' : providerKey === 'anthropic-claude-code' ? 'claude-code' : undefined
+    );
 
     if (!team.providers[providerKey]) {
       return { provider: providerKey, ok: false, message: `Unknown provider "${providerKey}"` };
@@ -370,12 +373,20 @@ export class SettingsService {
       };
     }
 
+    if (authMode === 'claude-code') {
+      return {
+        provider: providerKey,
+        ok: hasClaudeCodeLogin(),
+        message: hasClaudeCodeLogin() ? 'Claude Code login configured' : 'Claude Code login needed',
+      };
+    }
+
     const key = this.repo.getProviderCredential(organizationId, providerKey);
     if (!key || key.trim() === '') {
       return {
         provider: providerKey,
         ok: false,
-        message: providerKey === 'openai-codex' ? 'No Codex login configured' : 'No API key configured',
+        message: providerKey === 'openai-codex' ? 'No Codex login configured' : providerKey === 'anthropic-claude-code' ? 'No Claude Code login configured' : 'No API key configured',
       };
     }
 

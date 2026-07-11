@@ -88,6 +88,13 @@ export const MODEL_OPTIONS_BY_PROVIDER: Record<string, readonly ProviderModelOpt
     { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
     { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
   ],
+  "anthropic-claude-code": [
+    { value: "claude-fable-5", label: "claude-fable-5" },
+    { value: "claude-opus-4-8", label: "claude-opus-4-8" },
+    { value: "claude-opus-4-7", label: "claude-opus-4-7" },
+    { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+    { value: "claude-haiku-4-5", label: "claude-haiku-4-5" },
+  ],
   openrouter: [
     { value: "openai/gpt-5.6-sol", label: "openai/gpt-5.6-sol" },
     { value: "openai/gpt-5.6-terra", label: "openai/gpt-5.6-terra" },
@@ -122,6 +129,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   kimi: "kimi-k2.5",
   zhipu: "glm-4.5",
   "openai-codex": "gpt-5.4",
+  "anthropic-claude-code": "claude-sonnet-4-6",
   openrouter: "openai/gpt-4o",
   ollama: "llama3.1",
 };

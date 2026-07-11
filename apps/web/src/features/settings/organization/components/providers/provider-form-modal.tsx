@@ -12,7 +12,7 @@ import {
   resolveUiProviderToken,
   resolveAuthMode,
   isOpenAIProvider,
-  type OpenAIAuthMode,
+  type ProviderAuthModeUI,
 } from "@/features/providers/catalog";
 import { ProviderCredentialField } from "@/features/providers/provider-credential-field";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
@@ -21,7 +21,7 @@ export function ProviderFormModal(props: {
   isOpen: boolean;
   onClose: () => void;
   usedProviderNames: Set<string>;
-  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode, baseUrl: string) => Promise<void>;
+  onSave: (name: string, apiKey: string, authMode: ProviderAuthModeUI, baseUrl: string) => Promise<void>;
   mode?: "add" | "update";
   initialName?: string;
   initialBaseUrl?: string;
@@ -41,13 +41,13 @@ function ProviderFormModalActive({
   isOpen: boolean;
   onClose: () => void;
   usedProviderNames: Set<string>;
-  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode, baseUrl: string) => Promise<void>;
+  onSave: (name: string, apiKey: string, authMode: ProviderAuthModeUI, baseUrl: string) => Promise<void>;
   mode?: "add" | "update";
   initialName?: string;
   initialBaseUrl?: string;
 }) {
   const [uiProvider, setUiProvider] = useState(resolveUiProviderToken(initialName));
-  const [authMode, setAuthMode] = useState<OpenAIAuthMode>(
+  const [authMode, setAuthMode] = useState<ProviderAuthModeUI>(
     resolveAuthMode(initialName) ?? "apikey",
   );
   const [apiKey, setApiKey] = useState("");
@@ -60,8 +60,10 @@ function ProviderFormModalActive({
 
   const internalToken = resolveInternalProviderToken(uiProvider, authMode);
   const isCodexMode = internalToken === "openai-codex";
+  const isClaudeCodeMode = internalToken === "anthropic-claude-code";
+  const isSubscriptionMode = isCodexMode || isClaudeCodeMode;
   const canSave = Boolean(
-    internalToken && (apiKey.trim() || (isCodexMode && codexConnected) || (isUpdate && baseUrl.trim() !== initialBaseUrl.trim())),
+    internalToken && (apiKey.trim() || (isSubscriptionMode && codexConnected) || (isUpdate && baseUrl.trim() !== initialBaseUrl.trim())),
   );
 
   const handleClose = () => onClose();
@@ -97,7 +99,7 @@ function ProviderFormModalActive({
     if (!isOpenAIProvider(next)) setAuthMode("apikey");
   };
 
-  const handleAuthModeChange = (mode: OpenAIAuthMode) => {
+  const handleAuthModeChange = (mode: ProviderAuthModeUI) => {
     setAuthMode(mode);
     setCodexConnected(false);
     if (mode === "codex") setBaseUrl("");

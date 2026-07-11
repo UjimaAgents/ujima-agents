@@ -1,8 +1,11 @@
-import { isCodexProvider, isOpenAIProvider, type OpenAIAuthMode } from "./catalog";
+import { isCodexProvider, isOpenAIProvider, isClaudeCodeProvider, type ProviderAuthModeUI } from "./catalog";
 
-type ProviderAuthMode = OpenAIAuthMode | "chatgpt";
+type ProviderAuthMode = ProviderAuthModeUI | "chatgpt";
 
 export function credentialStatusLabel(providerName: string, hasKey: boolean, authMode?: ProviderAuthMode) {
+  if (isClaudeCodeProvider(providerName) || authMode === "claude-code") {
+    return hasKey ? "Local Claude Code login" : "Needs Claude Code login";
+  }
   if (isCodexProvider(providerName) || authMode === "codex" || authMode === "chatgpt") {
     return hasKey ? "Local Codex login" : "Needs Codex login";
   }

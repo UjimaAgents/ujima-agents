@@ -13,9 +13,11 @@ import {
 } from "lucide-react";
 import {
   isCodexProvider,
+  isClaudeCodeProvider,
   isOpenAIProvider,
+  isAnthropicProvider,
   providerLabelFromToken,
-  type OpenAIAuthMode,
+  type ProviderAuthModeUI,
 } from "./catalog";
 
 export function ProviderCredentialField({
@@ -25,20 +27,23 @@ export function ProviderCredentialField({
   authMode,
   onAuthModeChange,
   onCodexConnectionChange,
+  onClaudeCodeConnectionChange,
   className,
 }: {
   provider: string;
   apiKey: string;
   onApiKeyChange: (apiKey: string) => void;
-  /** Only relevant when provider is "openai" or "openai-codex". */
-  authMode?: OpenAIAuthMode;
-  onAuthModeChange?: (mode: OpenAIAuthMode) => void;
+  authMode?: ProviderAuthModeUI;
+  onAuthModeChange?: (mode: ProviderAuthModeUI) => void;
   onCodexConnectionChange?: (connected: boolean) => void;
+  onClaudeCodeConnectionChange?: (connected: boolean) => void;
   className?: string;
 }) {
   const isOpenAI = isOpenAIProvider(provider);
+  const isAnthropic = isAnthropicProvider(provider);
   const isCodex = isCodexProvider(provider);
-  const effectiveMode: OpenAIAuthMode = isCodex ? "codex" : (authMode ?? "apikey");
+  const isClaudeCode = isClaudeCodeProvider(provider);
+  const effectiveMode: ProviderAuthModeUI = isCodex ? "codex" : isClaudeCode ? "claude-code" : (authMode ?? "apikey");
 
   const [loginState, setLoginState] = useState<
     "checking" | "idle" | "starting" | "authorizing" | "completed" | "failed"
@@ -87,6 +92,39 @@ export function ProviderCredentialField({
       active = false;
     };
   }, [effectiveMode, onCodexConnectionChange]);
+
+  // Claude Code detection: check ~/.claude/ directory
+  const [claudeCodeState, setClaudeCodeState] = useState<
+    "checking" | "idle" | "completed" | "failed"
+  >("checking");
+  useEffect(() => {
+    if (effectiveMode !== "claude-code") {
+      onClaudeCodeConnectionChange?.(false);
+      return;
+    }
+    onClaudeCodeConnectionChange?.(false);
+    let active = true;
+    async function checkClaudeCode() {
+      try {
+        const res = await fetch("/api/auth/anthropic/claude-code/status");
+        if (!active) return;
+        if (res.ok) {
+          const body = await res.json();
+          if (body.status === "connected") {
+            setClaudeCodeState("completed");
+            onClaudeCodeConnectionChange?.(true);
+          } else {
+            setClaudeCodeState("idle");
+            onClaudeCodeConnectionChange?.(false);
+          }
+        }
+      } catch {
+        if (active) setClaudeCodeState("idle");
+      }
+    }
+    void checkClaudeCode();
+    return () => { active = false; };
+  }, [effectiveMode, onClaudeCodeConnectionChange]);
 
   // Handle polling during authorization
   useEffect(() => {
@@ -154,10 +192,12 @@ export function ProviderCredentialField({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (isOpenAI) {
+  const hasAuthModeToggle = isOpenAI || isAnthropic;
+
+  if (hasAuthModeToggle) {
     return (
       <div className={className ?? "min-w-0 flex-1 space-y-3"}>
-        {onAuthModeChange && !isCodex ? (
+        {onAuthModeChange && !isCodex && !isClaudeCode ? (
           <div className="grid grid-cols-2 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-900">
             <button
               type="button"
@@ -175,15 +215,15 @@ export function ProviderCredentialField({
             <button
               type="button"
               onClick={() => {
-                onAuthModeChange("codex");
+                onAuthModeChange(isOpenAI ? "codex" : "claude-code");
               }}
               className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
-                effectiveMode === "codex"
+                effectiveMode === (isOpenAI ? "codex" : "claude-code")
                   ? "bg-white text-zinc-950 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
                   : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
               }`}
             >
-              Codex
+              {isOpenAI ? "Codex" : "Claude Code"}
             </button>
           </div>
         ) : null}

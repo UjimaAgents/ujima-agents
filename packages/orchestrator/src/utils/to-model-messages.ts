@@ -394,6 +394,17 @@ export async function resolveSpiritModel(params: {
     }
   }
 
+  if (preferredKey === 'anthropic' && params.team.getProvider('anthropic-claude-code')) {
+    const claudeCode = buildForProvider('anthropic-claude-code', false);
+    if (claudeCode) {
+      console.warn(
+        `[model-resolver] member "${params.memberId}" preferred "anthropic" has no API key; ` +
+          `using configured "anthropic-claude-code" (${claudeCode.modelId}).`,
+      );
+      return claudeCode.model;
+    }
+  }
+
   // 2. Fallback — pick the first OTHER configured provider that BUILDS
   //    and PROBES OK. Probing is what makes this correct: it skips a
   //    provider that's down (Ollama not running) or a model the provider

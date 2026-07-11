@@ -143,8 +143,8 @@ export function estimatePromptReplayTokens(
     for (const call of message.toolCalls) {
       if (call.toolCallId) knownToolCallIds.add(call.toolCallId);
     }
-    if (typeof message.inputTokens === 'number' && typeof message.outputTokens === 'number') {
-      total += message.inputTokens + message.outputTokens;
+    if (typeof message.outputTokens === 'number') {
+      total += message.outputTokens;
       continue;
     }
     total += estimateTokensForValue(message.content);

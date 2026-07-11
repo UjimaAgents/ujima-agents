@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
@@ -172,6 +172,15 @@ function extractAccountIdFromJwt(token: string | undefined): string | undefined 
   }
 }
 
+function hasClaudeCodeLogin(): boolean {
+  try {
+    const claudeHome = process.env.CLAUDE_CODE_HOME?.trim() || join(homedir(), '.claude');
+    return existsSync(claudeHome);
+  } catch {
+    return false;
+  }
+}
+
 export function registerOauthRoutes(_app: FastifyInstance): void {
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
@@ -246,6 +255,66 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
       error: session.error,
     };
   });
+
+  app.get('/auth/anthropic/claude-code/status', {
+    schema: {
+      description: 'Check if Claude Code is logged in (detects ~/.claude/ directory)',
+      tags: ['Onboarding'],
+      response: {
+        200: z.object({
+          status: z.enum(['connected', 'not_connected']),
+        }),
+      },
+    },
+  }, async () => {
+    if (hasClaudeCodeLogin()) {
+      return { status: 'connected' as const };
+    }
+    return { status: 'not_connected' as const };
+  });
+
+  app.get('/auth/anthropic/claude-code/login', {
+    schema: {
+      description: 'Show Claude Code login help page',
+      tags: ['Onboarding'],
+    },
+  }, async (_req, reply) => {
+    const signedIn = hasClaudeCodeLogin();
+    return reply.type('text/html').send(renderClaudeCodeLoginHelp(signedIn));
+  });
+}
+
+function renderClaudeCodeLoginHelp(signedIn: boolean): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Claude Code login</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fafafa; color: #18181b; }
+    main { max-width: 32rem; padding: 2rem; }
+    h1 { margin: 0 0 0.75rem; font-size: 1.5rem; }
+    p { margin: 0.5rem 0; line-height: 1.5; color: #3f3f46; }
+    code { background: #f4f4f5; padding: 0.1rem 0.35rem; border-radius: 0.35rem; }
+    a { color: #7c3aed; }
+    .status { padding: 0.75rem 1rem; border-radius: 0.5rem; margin-bottom: 1rem; }
+    .status.connected { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    .status.not-connected { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Claude Code Login</h1>
+    ${signedIn
+      ? '<div class="status connected">✅ Claude Code is authenticated. You can close this tab.</div>'
+      : `<div class="status not-connected">⚠️ Claude Code is not authenticated.</div>
+        <p>Run <code>claude auth login</code> in your terminal to authenticate, then refresh this page.</p>
+        <p>After logging in, your Claude Code subscription will be used for API access instead of an API key.</p>`
+    }
+  </main>
+</body>
+</html>`;
 }
 
 function hasCodexAccessToken(): boolean {

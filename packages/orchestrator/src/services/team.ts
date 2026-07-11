@@ -1,6 +1,7 @@
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ProviderAuthMode } from '@ujima/shared';
 import { hasCodexAccessToken } from '../utils/codex-auth.js';
+import { hasClaudeCodeLogin } from '../utils/claude-code-auth.js';
 
 export interface TeamSummary {
   name: string;
@@ -29,7 +30,7 @@ export interface ProviderStatus {
 
 function providerAuthMode(team: AgentTeamHandle, providerName: string): ProviderAuthMode | undefined {
   const provider = team.providers[providerName];
-  return provider?.authMode ?? (providerName === 'openai-codex' ? 'chatgpt' : undefined);
+  return provider?.authMode ?? (providerName === 'openai-codex' ? 'chatgpt' as ProviderAuthMode : providerName === 'anthropic-claude-code' ? 'claude-code' as ProviderAuthMode : undefined);
 }
 
 export function listProviderStatuses(
@@ -43,7 +44,7 @@ export function listProviderStatuses(
     const baseUrl = team.providers[name]?.baseUrl;
     providers.push({
       name,
-      hasKey: authMode === 'chatgpt' ? hasCodexAccessToken() : Boolean(credentials[name]),
+      hasKey: authMode === 'chatgpt' ? hasCodexAccessToken() : (authMode as string) === 'claude-code' ? hasClaudeCodeLogin() : Boolean(credentials[name]),
       authMode,
       ...(baseUrl ? { baseUrl } : {}),
     });

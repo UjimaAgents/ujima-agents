@@ -11,7 +11,7 @@ export function modelContextWindowTokens(provider: string, modelId: string): num
   if (model.includes('claude-opus-4-8') || model.includes('claude-opus-4-7') || model.includes('claude-opus-4-6')) return 1_000_000;
   if (model.includes('claude-sonnet-4-6')) return 1_000_000;
   if (model.includes('claude')) return 200_000;
-  if (model.includes('gemini-2.5') || model.includes('gemini-3')) return 1_048_576;
+  if (model.includes('gemini')) return 1_048_576;
   if (model.includes('grok-build')) return 256_000;
   if (model.includes('grok-4')) return 256_000;
   if (model.includes('kimi-k2')) return 256_000;

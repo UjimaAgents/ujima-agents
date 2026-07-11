@@ -1141,22 +1141,33 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     onMessagePublished: (msg) => handleMessagePublished?.(msg),
     summarizeConversation: (messages, mode) => summarizeConversation(messages, mode),
     autoCompactConversations: true,
-    contextWindowTokens: (organizationId) => {
+    contextWindowTokens: (organizationId, threadId) => {
       const team = context.teamStore.getTeam(organizationId);
       if (!team) return 128_000;
-      const windows = context.repo
-        .listMembers(organizationId)
-        .filter((member) => member.kind === AGENT_KIND && !member.retiredAt)
-        .flatMap((member) => {
-          const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
-          const role = agent ? team.getRole(agent.roleName) : undefined;
-          const providerName = member.llm ?? role?.provider;
-          const provider = providerName ? team.getProvider(providerName) : undefined;
-          const modelId = member.model ?? role?.model ?? provider?.defaultModel;
-          return providerName && modelId
-            ? [modelContextWindowTokens(provider?.kind ?? providerName, modelId)]
-            : [];
-        });
+      const thread = threadId ? context.repo.getThread(organizationId, threadId) : null;
+      const memberIds = thread?.memberIds ?? [];
+      const allMembers = context.repo.listMembers(organizationId);
+      let activeAgentMembers = allMembers.filter(
+        (member) =>
+          member.kind === AGENT_KIND &&
+          !member.retiredAt &&
+          memberIds.includes(member.id),
+      );
+      if (activeAgentMembers.length === 0) {
+        activeAgentMembers = allMembers.filter(
+          (member) => member.kind === AGENT_KIND && !member.retiredAt,
+        );
+      }
+      const windows = activeAgentMembers.flatMap((member) => {
+        const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
+        const role = agent ? team.getRole(agent.roleName) : undefined;
+        const providerName = member.llm ?? role?.provider;
+        const provider = providerName ? team.getProvider(providerName) : undefined;
+        const modelId = member.model ?? role?.model ?? provider?.defaultModel;
+        return providerName && modelId
+          ? [modelContextWindowTokens(provider?.kind ?? providerName, modelId)]
+          : [];
+      });
       return windows.length > 0 ? Math.min(...windows) : 128_000;
     },
   });

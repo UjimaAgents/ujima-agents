@@ -7,6 +7,7 @@ import { defaultSettingsMiddleware, wrapLanguageModel, type LanguageModel } from
 import type { ReasoningEffort } from '@ujima/shared';
 import { clampReasoningEffortForProvider } from '@ujima/shared';
 import { createCodexResponsesModel } from './codex-responses.js';
+import { createClaudeCodeModel } from './claude-code-sdk.js';
 import { LLMError, PROVIDER_KINDS, type ProviderKind } from './types.js';
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
@@ -232,6 +233,19 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
         modelId: input.modelId,
         accessToken,
         baseUrl: input.baseUrl,
+      }),
+      input.kind,
+      input.reasoningEffort,
+      input.modelId,
+    );
+  }
+
+  if (input.kind === 'anthropic-claude-code') {
+    // Claude Code auth is handled by the SDK reading ~/.claude/ credentials
+    // The SDK launches the `claude` CLI as a subprocess which handles auth internally
+    return withReasoning(
+      createClaudeCodeModel({
+        modelId: input.modelId,
       }),
       input.kind,
       input.reasoningEffort,

@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "ujima-c3444",
     "public": "out",
     "ignore": [
       "firebase.json",

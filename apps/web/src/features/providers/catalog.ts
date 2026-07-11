@@ -17,44 +17,53 @@ export const PROVIDER_OPTIONS: readonly ProviderCatalogOption[] = [
 ] as const;
 
 /**
- * OpenAI auth modes surfaced in the UI.
- * - `apikey`  → standard API key, saved as provider "openai"
- * - `codex`   → ChatGPT subscription via local Codex login, saved as provider "openai-codex"
+ * Subscription auth modes surfaced in the UI.
+ * - `apikey`       → standard API key
+ * - `codex`        → ChatGPT subscription via local Codex login (saved as "openai-codex")
+ * - `claude-code`  → Claude Code subscription via local Claude login (saved as "anthropic-claude-code")
  */
+export type ProviderAuthModeUI = "apikey" | "codex" | "claude-code";
+
+/** @deprecated Use ProviderAuthModeUI */
 export type OpenAIAuthMode = "apikey" | "codex";
 
 /**
  * Resolve the internal provider token from the UI provider + auth mode.
- * For all providers other than OpenAI the mode is irrelevant.
  */
 export function resolveInternalProviderToken(
   uiToken: string,
-  authMode?: OpenAIAuthMode,
+  authMode?: ProviderAuthModeUI,
 ): string {
   const normalized = normalizeProviderToken(uiToken);
   if (normalized === "openai" && authMode === "codex") return "openai-codex";
-  // Already the codex token (e.g. saved from an older session)
+  if (normalized === "anthropic" && authMode === "claude-code") return "anthropic-claude-code";
+  // Already the subscription token (e.g. saved from an older session)
   if (normalized === "openai-codex") return "openai-codex";
+  if (normalized === "anthropic-claude-code") return "anthropic-claude-code";
   return normalized;
 }
 
 /**
  * Resolve the UI token from an internal provider token.
- * Maps "openai-codex" → "openai" so the dropdown selection stays consistent.
+ * Maps subscription tokens back to UI tokens so dropdown stays consistent.
  */
 export function resolveUiProviderToken(internalToken: string): string {
   const normalized = normalizeProviderToken(internalToken);
   if (normalized === "openai-codex") return "openai";
+  if (normalized === "anthropic-claude-code") return "anthropic";
   return normalized;
 }
 
 /**
  * Return the auth mode from the internal provider token.
  */
-export function resolveAuthMode(internalToken: string): OpenAIAuthMode | undefined {
+export function resolveAuthMode(internalToken: string): ProviderAuthModeUI | undefined {
   const normalized = normalizeProviderToken(internalToken);
   if (normalized === "openai" || normalized === "openai-codex") {
     return normalized === "openai-codex" ? "codex" : "apikey";
+  }
+  if (normalized === "anthropic" || normalized === "anthropic-claude-code") {
+    return normalized === "anthropic-claude-code" ? "claude-code" : "apikey";
   }
   return undefined;
 }
@@ -64,6 +73,7 @@ const PROVIDER_LABELS = new Map(
 );
 // Internal-only tokens that are not in PROVIDER_OPTIONS but still need labels.
 PROVIDER_LABELS.set("openai-codex", "OpenAI Codex");
+PROVIDER_LABELS.set("anthropic-claude-code", "Claude Code");
 
 export function normalizeProviderToken(value: string) {
   return value
@@ -88,7 +98,23 @@ export function isOpenAIProvider(token: string) {
   return normalized === "openai" || normalized === "openai-codex";
 }
 
+/** True for any Anthropic variant (plain API key or Claude Code subscription). */
+export function isAnthropicProvider(token: string) {
+  const normalized = normalizeProviderToken(token);
+  return normalized === "anthropic" || normalized === "anthropic-claude-code";
+}
+
 /** True specifically for the Codex subscription path. */
 export function isCodexProvider(token: string) {
   return normalizeProviderToken(token) === "openai-codex";
+}
+
+/** True specifically for the Claude Code subscription path. */
+export function isClaudeCodeProvider(token: string) {
+  return normalizeProviderToken(token) === "anthropic-claude-code";
+}
+
+/** True for any subscription provider (Codex or Claude Code). */
+export function isSubscriptionProvider(token: string) {
+  return isCodexProvider(token) || isClaudeCodeProvider(token);
 }
