@@ -47,6 +47,9 @@ import type {
   WorkspaceFile,
   WorkspaceMember,
   WakeReason,
+  WorkflowDefinition,
+  WorkflowRun,
+  WorkflowNodeRun,
 } from '@ujima/shared';
 
 export interface GovernanceRuleRow {
@@ -334,6 +337,20 @@ export interface ApiRepository extends ConversationRepository {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  saveWorkflowDefinition(def: WorkflowDefinition): WorkflowDefinition;
+  getWorkflowDefinition(organizationId: string, id: string): WorkflowDefinition | null;
+  getWorkflowDefinitionByName(organizationId: string, name: string): WorkflowDefinition | null;
+  listWorkflowDefinitions(organizationId: string): WorkflowDefinition[];
+  deleteWorkflowDefinition(organizationId: string, id: string): void;
+  saveWorkflowRun(run: WorkflowRun): WorkflowRun;
+  getWorkflowRun(organizationId: string, runId: string): WorkflowRun | null;
+  listWorkflowRuns(organizationId: string, status?: string): WorkflowRun[];
+  listWorkflowRunsByStatus(organizationId: string, statuses: string[]): WorkflowRun[];
+  saveWorkflowNodeRun(nodeRun: WorkflowNodeRun): WorkflowNodeRun;
+  getWorkflowNodeRun(workflowRunId: string, id: string): WorkflowNodeRun | null;
+  getWorkflowNodeRunByNode(workflowRunId: string, nodeId: string, attempt: number): WorkflowNodeRun | null;
+  getWorkflowNodeRunByChildRun(childRunId: string): WorkflowNodeRun | null;
+  listWorkflowNodeRuns(workflowRunId: string): WorkflowNodeRun[];
   enqueueWakeIntent(input: WakeIntentInput): WakeIntent;
   listPendingWakeIntents(organizationId: string, threadId: string): WakeIntent[];
   markWakeIntentDispatched(organizationId: string, intentId: string): void;

@@ -53,6 +53,8 @@ export interface WorkflowStore {
     nodeId: string,
     attempt: number,
   ): WorkflowNodeRun | null;
+  /** Reverse lookup: the node run whose agent child run is `childRunId`. */
+  getWorkflowNodeRunByChildRun(childRunId: string): WorkflowNodeRun | null;
   listWorkflowNodeRuns(workflowRunId: string): WorkflowNodeRun[];
 }
 
@@ -348,6 +350,18 @@ export function getWorkflowNodeRunByNode(
       'SELECT * FROM workflow_node_runs WHERE workflow_run_id = ? AND node_id = ? AND attempt = ?',
     )
     .get(workflowRunId, nodeId, attempt) as Row | null;
+  return row ? rowToNodeRun(row) : null;
+}
+
+export function getWorkflowNodeRunByChildRun(
+  db: DbHandle,
+  childRunId: string,
+): WorkflowNodeRun | null {
+  const row = db
+    .prepare(
+      'SELECT * FROM workflow_node_runs WHERE child_run_id = ? ORDER BY attempt DESC LIMIT 1',
+    )
+    .get(childRunId) as Row | null;
   return row ? rowToNodeRun(row) : null;
 }
 

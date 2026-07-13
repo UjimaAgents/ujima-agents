@@ -176,6 +176,7 @@ import {
   getWorkflowDefinitionByName as readWorkflowDefinitionByName,
   getWorkflowNodeRun as readWorkflowNodeRun,
   getWorkflowNodeRunByNode as readWorkflowNodeRunByNode,
+  getWorkflowNodeRunByChildRun as readWorkflowNodeRunByChildRun,
   getWorkflowRun as readWorkflowRun,
   listWorkflowDefinitions as readWorkflowDefinitions,
   listWorkflowNodeRuns as readWorkflowNodeRuns,
@@ -671,6 +672,8 @@ export class Repository {
     attempt: number,
   ): WorkflowNodeRun | null =>
     readWorkflowNodeRunByNode(this.db, workflowRunId, nodeId, attempt);
+  getWorkflowNodeRunByChildRun = (childRunId: string): WorkflowNodeRun | null =>
+    readWorkflowNodeRunByChildRun(this.db, childRunId);
   listWorkflowNodeRuns = (workflowRunId: string): WorkflowNodeRun[] =>
     readWorkflowNodeRuns(this.db, workflowRunId);
 
