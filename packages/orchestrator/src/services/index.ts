@@ -1703,6 +1703,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     tools,
     ai,
     goals,
+    workflowEngine,
     attachmentStoreRoot,
     getOrganizationIdsForSweep,
   });

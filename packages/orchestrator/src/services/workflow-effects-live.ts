@@ -155,9 +155,16 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     }
   }
 
+  async getRunStatus(input: {
+    organizationId: string;
+    runId: string;
+  }): Promise<string | null> {
+    return this.deps.repo.getRun(input.organizationId, input.runId)?.status ?? null;
+  }
+
   async notifyInitiator(input: NotifyInitiatorInput): Promise<void> {
     const actions = input.actions ? ` Actions available: ${input.actions.join(' / ')} (in the run view).` : '';
-    const content = `⚠️ Workflow "${input.workflowRun.name}" paused — ${input.reason}.${actions}`;
+    const content = `⚠️ Workflow "${input.workflowRun.name}" needs attention — ${input.reason}.${actions}`;
     this.deps.conversations.publishMessage(
       buildSystemMessage({
         organizationId: input.organizationId,

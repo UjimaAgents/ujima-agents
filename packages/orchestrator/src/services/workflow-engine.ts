@@ -116,6 +116,8 @@ export interface WorkflowEffects {
   startGoal(input: StartGoalInput): Promise<{goalId: string}>;
   statOutput(input: StatOutputInput): Promise<{sha256: string; sizeBytes: number} | null>;
   notifyInitiator(input: NotifyInitiatorInput): Promise<void>;
+  /** The status of a child agent run, for the sweeper's missed-completion recovery. */
+  getRunStatus(input: {organizationId: string; runId: string}): Promise<string | null>;
 }
 
 export interface StartRunInput {
@@ -166,6 +168,10 @@ const ACTIVE_NODE_STATUSES = new Set(['pending', 'running', 'awaiting_approval']
 const TERMINAL_DONE_STATUSES = new Set(['completed', 'skipped']);
 
 export class WorkflowEngineService {
+  /** Throttle for stuck-run reminders (in-memory; reset on restart is fine). */
+  private readonly lastReminderAt = new Map<string, number>();
+  private readonly reminderIntervalMs = 15 * 60 * 1000;
+
   constructor(
     private readonly store: WorkflowEngineStore,
     private readonly effects: WorkflowEffects,
@@ -434,6 +440,74 @@ export class WorkflowEngineService {
     for (const run of runs) {
       await this.stepRun(organizationId, run.id);
     }
+  }
+
+  /**
+   * Periodic safety sweep (runs on the scheduler tick, like the goal-task
+   * sweeper). For each non-terminal run:
+   *  - `running`: recover missed node completions (agent run went terminal but
+   *    the completion hook never fired — e.g., a crash) and re-dispatch ready
+   *    nodes. Idempotent.
+   *  - `awaiting_approval` / `paused`: re-notify the initiator, throttled so a
+   *    stuck run reminds at most once per `reminderIntervalMs`.
+   */
+  async sweep(organizationId: string): Promise<void> {
+    const runs = this.store.listWorkflowRunsByStatus(organizationId, [
+      'running',
+      'awaiting_approval',
+      'paused',
+    ]);
+    for (const run of runs) {
+      if (run.status === 'running') {
+        await this.recoverRun(run);
+      } else if (this.shouldRemind(run.id)) {
+        this.lastReminderAt.set(run.id, Date.now());
+        const reason =
+          run.status === 'awaiting_approval'
+            ? 'still awaiting approval'
+            : 'still paused — retry, skip, or abort';
+        await this.effects.notifyInitiator({
+          organizationId,
+          workflowRun: run,
+          reason,
+          actions: run.status === 'paused' ? ['retry', 'skip', 'abort'] : undefined,
+        });
+      }
+    }
+    // Drop throttle entries for runs that have since gone terminal.
+    const activeIds = new Set(runs.map((r) => r.id));
+    for (const id of [...this.lastReminderAt.keys()]) {
+      if (!activeIds.has(id)) this.lastReminderAt.delete(id);
+    }
+  }
+
+  private async recoverRun(run: WorkflowRun): Promise<void> {
+    const nodeRuns = this.store.listWorkflowNodeRuns(run.id);
+    let recovered = false;
+    for (const nr of nodeRuns) {
+      if (nr.status !== 'running' || !nr.childRunId) continue;
+      const childStatus = await this.effects.getRunStatus({
+        organizationId: run.organizationId,
+        runId: nr.childRunId,
+      });
+      if (childStatus && ['completed', 'failed', 'cancelled'].includes(childStatus)) {
+        // The agent run finished but the completion hook was missed — re-drive it.
+        await this.onNodeComplete({
+          organizationId: run.organizationId,
+          workflowRunId: run.id,
+          nodeRunId: nr.id,
+          failed: childStatus !== 'completed',
+          failureReason: childStatus !== 'completed' ? `agent_run_${childStatus}` : undefined,
+        });
+        recovered = true;
+      }
+    }
+    if (!recovered) await this.stepRun(run.organizationId, run.id);
+  }
+
+  private shouldRemind(runId: string): boolean {
+    const last = this.lastReminderAt.get(runId) ?? 0;
+    return Date.now() - last >= this.reminderIntervalMs;
   }
 
   // --- Dispatch -----------------------------------------------------------

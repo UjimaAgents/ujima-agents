@@ -60,7 +60,10 @@ class FakeStore implements WorkflowEngineStore {
   }
 }
 
-function makeEffects(opts?: {statOutput?: (i: StatOutputInput) => {sha256: string; sizeBytes: number} | null}) {
+function makeEffects(opts?: {
+  statOutput?: (i: StatOutputInput) => {sha256: string; sizeBytes: number} | null;
+  runStatus?: (runId: string) => string | null;
+}) {
   const spawns: SpawnAgentNodeInput[] = [];
   const goals: StartGoalInput[] = [];
   const approvals: RaiseApprovalInput[] = [];
@@ -83,6 +86,9 @@ function makeEffects(opts?: {statOutput?: (i: StatOutputInput) => {sha256: strin
     },
     async notifyInitiator(input) {
       notifications.push(input);
+    },
+    async getRunStatus(input) {
+      return opts?.runStatus ? opts.runStatus(input.runId) : null;
     },
   };
   return {effects, spawns, goals, approvals, notifications};
@@ -302,6 +308,40 @@ describe('WorkflowEngineService', () => {
     await engine.onNodeComplete({organizationId: 'org1', workflowRunId, nodeRunId: spawns[0]!.nodeRunId, summary: 'fail'});
 
     await engine.transition({organizationId: 'org1', workflowRunId, action: 'skip', idempotencyKey: 's1'});
+    expect(goals).toHaveLength(1);
+    expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('completed');
+  });
+
+  it('sweep reminds a stuck awaiting_approval run, throttled', async () => {
+    const {effects, spawns, notifications} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [trigger, agent('pm'), {id: 'gate', kind: 'approval', position: {x: 0, y: 0}, config: {}}, agent('eng')],
+      [edge('t', 'pm'), edge('pm', 'gate'), edge('gate', 'eng')],
+    );
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'x'});
+    await engine.onNodeComplete({organizationId: 'org1', workflowRunId, nodeRunId: spawns[0]!.nodeRunId, summary: 'd'});
+    expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('awaiting_approval');
+
+    await engine.sweep('org1');
+    expect(notifications.some((n) => n.reason.includes('awaiting approval'))).toBe(true);
+    const count = notifications.length;
+    await engine.sweep('org1'); // throttled — no second reminder
+    expect(notifications.length).toBe(count);
+  });
+
+  it('sweep recovers a running node whose agent run already finished', async () => {
+    const {effects, goals} = makeEffects({runStatus: () => 'completed'});
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [trigger, agent('pm'), {id: 'goal', kind: 'goal_handoff', position: {x: 0, y: 0}, config: {titleTemplate: 't', tasksFrom: 'json'}}],
+      [edge('t', 'pm'), edge('pm', 'goal')],
+    );
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'x'});
+    // pm is 'running' with a child run id; its onNodeComplete was never called.
+    expect(store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!.status).toBe('running');
+
+    await engine.sweep('org1'); // detects the child run is completed -> recovers
     expect(goals).toHaveLength(1);
     expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('completed');
   });

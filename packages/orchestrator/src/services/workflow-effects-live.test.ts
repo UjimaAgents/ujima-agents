@@ -48,6 +48,9 @@ class FakeRepo {
   listMembers() {
     return [{ id: 'eng', kind: 'agent', retiredAt: undefined }];
   }
+  getRun(_org: string, runId: string) {
+    return { id: runId, status: 'completed' };
+  }
 }
 
 describe('LiveWorkflowEffects (integration)', () => {
@@ -150,7 +153,7 @@ describe('LiveWorkflowEffects (integration)', () => {
 
     const run = [...repo.runs.values()][0]!;
     expect(run.status).toBe('paused');
-    expect(repo.messages.some((m) => m.content.includes('paused'))).toBe(true);
+    expect(repo.messages.some((m) => m.content.includes('no output'))).toBe(true);
     expect(repo.goalStarts).toHaveLength(0);
   });
 
