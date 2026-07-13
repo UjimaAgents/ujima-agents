@@ -6,19 +6,20 @@ scoping + in-channel tab + Run button) shipped. This tracks what's left.
 
 ## Phase 2 — remaining
 
-- [ ] **Dedicated run thread per run.** Each run should execute in its own
-  thread with the workflow's agents auto-added as members, instead of the main
-  channel thread. Fixes two things: (a) "the agent isn't in the channel" — the
-  run thread carries exactly the agents it needs; (b) the run no longer clutters
-  the channel conversation. Drop a compact "▶ running →" card in the origin
-  channel linking to the run.
-- [ ] **In-channel run card.** Render a card in the channel when a run starts /
-  advances, linking to the run view.
-- [ ] **Approver can be another agent.** Today an approval gate is human-only.
-  Allow an approval node to be resolved by a designated *agent* (auto-review),
-  not just a person — the agent inspects the upstream document and calls
-  `workflow.transition({action: approve|reject})`. Needs an `approverAgentId`
-  on the approval node + wiring the agent run to the transition tool.
+- [x] **Dedicated run thread per run.** Each run executes in its own thread
+  (`wf-run-<id>`) inside the origin channel, with the workflow's agents added as
+  members. Fixes "the agent isn't in the channel" + keeps the run out of the
+  main conversation. (effects: prepareRunThread)
+- [x] **In-channel run card.** A "▶ Workflow started → open run" card is posted
+  to the origin channel. (effect: postRunCard)
+- [x] **Approver can be another agent.** Approval nodes can name an
+  `approverAgentId`; that agent reviews the upstream output and resolves the gate
+  via `workflow.transition`. Editor exposes an "Approver" dropdown.
+
+### Follow-ups on the above
+- [ ] Surface the dedicated run thread's messages in the run view (today the
+  run view shows node status/summaries; raw agent messages live in the thread).
+- [ ] Card should update on completion/failure (currently posted only on start).
 
 ## Editor / UX polish
 
