@@ -13,15 +13,17 @@ import {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
 } from "@xyflow/react";
+import type { DragEvent } from "react";
 import {
   validateWorkflowGraph,
   type WorkflowNodeKind,
   type WorkflowValidationIssue,
 } from "@ujima/shared";
-import { ArrowLeft, Loader2, Plus } from "lucide-react";
+import { ArrowLeft, Loader2, Lock, Pencil, Plus } from "lucide-react";
 import { NODE_KIND_STYLES, workflowNodeTypes, type FlowNode } from "./nodes";
 import { NodeInspector } from "./node-inspector";
 import { flowToGraph, graphToFlow, inferPort } from "./graph-flow";
@@ -55,6 +57,7 @@ function newTriggerGraph() {
 function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { screenToFlowPosition } = useReactFlow();
   const isNew = workflowId === "new";
   const [channelId, setChannelId] = useState<string | null>(
     isNew ? searchParams.get("channelId") : null,
@@ -72,7 +75,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<WorkflowValidationIssue[]>([]);
-  const [catalog, setCatalog] = useState<WorkflowCatalog>({ agents: [], tools: [] });
+  const [catalog, setCatalog] = useState<WorkflowCatalog>({ agents: [], tools: [], skills: [] });
+  // Shared (org-wide) definitions open locked so they aren't edited by accident.
+  const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +102,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         setName(def.name);
         setDescription(def.description ?? "");
         setChannelId(def.channelId ?? null);
+        setReadOnly(!def.channelId); // org-wide → locked until "Edit"
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load."))
       .finally(() => !cancelled && setLoading(false));
@@ -104,6 +110,13 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       cancelled = true;
     };
   }, [workflowId, isNew, setNodes, setEdges]);
+
+  const isValidConnection = useCallback((conn: Connection | Edge) => {
+    // capabilities only attach side→side; main flow only top↔bottom
+    if (conn.sourceHandle === "cap-out") return conn.targetHandle === "cap-in";
+    if (conn.sourceHandle === "main-out") return conn.targetHandle === "main-in";
+    return false;
+  }, []);
 
   const onConnect = useCallback(
     (conn: Connection) => {
@@ -113,6 +126,8 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         id: `e-${conn.source}-${conn.target}-${Date.now()}`,
         source: conn.source,
         target: conn.target,
+        sourceHandle: conn.sourceHandle,
+        targetHandle: conn.targetHandle,
         animated: port === "main",
         style: port === "main" ? { strokeWidth: 2 } : { strokeWidth: 1.5, strokeDasharray: "4 4" },
         data: { port },
@@ -133,6 +148,26 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       });
     },
     [setNodes],
+  );
+
+  const onDragOver = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const onDrop = useCallback(
+    (e: DragEvent) => {
+      e.preventDefault();
+      const kind = e.dataTransfer.getData("application/workflow-node") as WorkflowNodeKind;
+      if (!kind) return;
+      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      setNodes((ns) => {
+        const node = createNode(kind, position, ns.map((n) => n.id));
+        const { flowNodes } = graphToFlow([node], []);
+        return [...ns, ...flowNodes];
+      });
+    },
+    [screenToFlowPosition, setNodes],
   );
 
   const selectedNode = useMemo(() => nodes.find((n) => n.selected)?.data.node ?? null, [nodes]);
@@ -217,16 +252,35 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         <span className="shrink-0 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
           {channelId ? "Scoped to this channel" : "All channels"}
         </span>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-1.5 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:opacity-60"
-        >
-          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {isNew ? "Create" : "Save"}
-        </button>
+        {readOnly ? (
+          <button
+            type="button"
+            onClick={() => setReadOnly(false)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3.5 py-1.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-1.5 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:opacity-60"
+          >
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isNew ? "Create" : "Save"}
+          </button>
+        )}
       </header>
+
+      {readOnly && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <Lock className="h-3.5 w-3.5 shrink-0" />
+          This is a shared, org-wide workflow. Editing affects every channel — click{" "}
+          <span className="font-semibold">Edit</span> to modify it.
+        </div>
+      )}
 
       {(error || issues.length > 0) && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
@@ -238,6 +292,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       )}
 
       <div className="flex min-h-0 flex-1">
+        {!readOnly && (
         <aside className="w-44 shrink-0 space-y-1 overflow-y-auto border-r border-zinc-200 p-2 dark:border-zinc-800">
           <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Add node</p>
           {PALETTE_KINDS.map((kind) => {
@@ -247,8 +302,10 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
               <button
                 key={kind}
                 type="button"
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData("application/workflow-node", kind)}
                 onClick={() => addNode(kind)}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="flex w-full cursor-grab items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing dark:text-zinc-300 dark:hover:bg-zinc-800"
               >
                 <span className={`flex h-6 w-6 items-center justify-center rounded-md ${style.iconWrap}`}>
                   <Icon className="h-3.5 w-3.5" />
@@ -259,14 +316,18 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             );
           })}
         </aside>
+        )}
 
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1" onDrop={readOnly ? undefined : onDrop} onDragOver={readOnly ? undefined : onDragOver}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            isValidConnection={isValidConnection}
+            nodesDraggable={!readOnly}
+            nodesConnectable={!readOnly}
             nodeTypes={workflowNodeTypes}
             fitView
             fitViewOptions={{ maxZoom: 0.9, padding: 0.35 }}

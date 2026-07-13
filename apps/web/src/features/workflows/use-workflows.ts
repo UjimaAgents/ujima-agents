@@ -48,9 +48,19 @@ export interface WorkflowAgent {
   name: string;
   role: string;
 }
+export interface WorkflowTool {
+  id: string;
+  label: string;
+  group: string;
+}
+export interface WorkflowSkill {
+  name: string;
+  description: string;
+}
 export interface WorkflowCatalog {
   agents: WorkflowAgent[];
-  tools: string[];
+  tools: WorkflowTool[];
+  skills: WorkflowSkill[];
 }
 
 export async function getWorkflowCatalog(): Promise<WorkflowCatalog> {

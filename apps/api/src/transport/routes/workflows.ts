@@ -84,15 +84,38 @@ const WORKFLOW_TOOL_CATALOG = [
 ];
 
 export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRouteDeps): void {
-  // --- Catalog (agents + tools) for the editor dropdowns ------------------
+  // --- Catalog (agents + tools + skills) for the editor dropdowns ---------
   api.get('/workflow-catalog', async (req, reply) => {
     const auth = requireMember(deps, req, reply);
     if (!auth) return;
+    const orgId = auth.user.organizationId;
+
     const agents = deps.repo
-      .listMembers(auth.user.organizationId)
+      .listMembers(orgId)
       .filter((m) => m.kind === 'agent' && !m.retiredAt)
       .map((m) => ({ id: m.id, name: m.name, role: m.roleName }));
-    return reply.status(200).send({ agents, tools: WORKFLOW_TOOL_CATALOG });
+
+    // Builtin tools + every MCP server's cached tools.
+    const tools: { id: string; label: string; group: string }[] = WORKFLOW_TOOL_CATALOG.map(
+      (id) => ({ id, label: id, group: 'builtin' }),
+    );
+    for (const server of deps.repo.listMcpServers(orgId)) {
+      const cache = deps.repo.getMcpToolCache(orgId, server.id);
+      for (const tool of cache?.tools ?? []) {
+        tools.push({
+          id: `mcp:${server.id}:${tool.name}`,
+          label: `${server.name} · ${tool.name}`,
+          group: server.name,
+        });
+      }
+    }
+
+    const skills = (deps.repo.listOrganizationSkillInstalls?.(orgId) ?? []).map((s) => ({
+      name: s.skillName,
+      description: s.description,
+    }));
+
+    return reply.status(200).send({ agents, tools, skills });
   });
 
   // --- Definitions --------------------------------------------------------

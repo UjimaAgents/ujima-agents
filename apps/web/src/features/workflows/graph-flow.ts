@@ -36,14 +36,19 @@ export function graphToFlow(
     position: node.position,
     data: { node },
   }));
-  const flowEdges: Edge[] = edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    animated: edge.targetPort === "main",
-    style: edgeStyle(edge.targetPort),
-    data: { port: edge.targetPort },
-  }));
+  const flowEdges: Edge[] = edges.map((edge) => {
+    const isMain = edge.targetPort === "main";
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: isMain ? "main-out" : "cap-out",
+      targetHandle: isMain ? "main-in" : "cap-in",
+      animated: isMain,
+      style: edgeStyle(edge.targetPort),
+      data: { port: edge.targetPort },
+    };
+  });
   return { flowNodes, flowEdges };
 }
 

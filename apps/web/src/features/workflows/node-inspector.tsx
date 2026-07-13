@@ -146,13 +146,40 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
         )}
 
         {node.kind === "skill" && (
-          <FieldShell label="Skill name" htmlFor="skill-name" hint="Attached to an agent as an ai_skill capability.">
-            <TextInput
-              id="skill-name"
-              value={node.config.skillName}
-              placeholder="e.g. brd"
-              onChange={(e) => onChange(patch(node, { skillName: e.target.value }))}
-            />
+          <FieldShell
+            label="Skill"
+            htmlFor="skill-name"
+            hint={
+              catalog.skills.length > 0
+                ? "Attached to an agent as an ai_skill capability."
+                : "No installed skills found — type a skill name. Install skills in Settings."
+            }
+          >
+            {catalog.skills.length > 0 ? (
+              <select
+                id="skill-name"
+                className={SELECT_CLASS}
+                value={node.config.skillName}
+                onChange={(e) => onChange(patch(node, { skillName: e.target.value }))}
+              >
+                <option value="">Select a skill…</option>
+                {catalog.skills.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name}
+                  </option>
+                ))}
+                {node.config.skillName && !catalog.skills.some((s) => s.name === node.config.skillName) && (
+                  <option value={node.config.skillName}>{node.config.skillName} (current)</option>
+                )}
+              </select>
+            ) : (
+              <TextInput
+                id="skill-name"
+                value={node.config.skillName}
+                placeholder="e.g. brd"
+                onChange={(e) => onChange(patch(node, { skillName: e.target.value }))}
+              />
+            )}
           </FieldShell>
         )}
 
@@ -165,12 +192,21 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
               onChange={(e) => onChange(patch(node, { toolId: e.target.value }))}
             >
               <option value="">Select a tool…</option>
-              {catalog.tools.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+              {Object.entries(
+                catalog.tools.reduce<Record<string, typeof catalog.tools>>((acc, t) => {
+                  (acc[t.group] ??= []).push(t);
+                  return acc;
+                }, {}),
+              ).map(([group, tools]) => (
+                <optgroup key={group} label={group}>
+                  {tools.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
-              {node.config.toolId && !catalog.tools.includes(node.config.toolId) && (
+              {node.config.toolId && !catalog.tools.some((t) => t.id === node.config.toolId) && (
                 <option value={node.config.toolId}>{node.config.toolId} (current)</option>
               )}
             </select>

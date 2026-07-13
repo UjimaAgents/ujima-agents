@@ -91,6 +91,10 @@ export function nodeSubtitle(node: WorkflowNode): string {
 
 const handleClass =
   "!h-2.5 !w-2.5 !border-2 !border-white !bg-zinc-400 dark:!border-zinc-900 dark:!bg-zinc-500";
+// Capability ports (skill/tool → agent) are violet + on the side, to read as
+// "attach a capability", distinct from the vertical grey main flow.
+const capHandleClass =
+  "!h-2.5 !w-2.5 !border-2 !border-white !bg-violet-500 dark:!border-zinc-900 dark:!bg-violet-400";
 
 export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
   const { node, status } = data;
@@ -115,9 +119,17 @@ export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
           title={statusStyle.label}
         />
       )}
-      {/* main flow: sub-nodes don't accept a top (main) input */}
+      {/* main flow (vertical, grey) — main-flow nodes only */}
       {!isSub && node.kind !== "trigger" && (
-        <Handle type="target" position={Position.Top} className={handleClass} />
+        <Handle id="main-in" type="target" position={Position.Top} className={handleClass} />
+      )}
+      {/* agent capability input (right, violet): drag a skill/tool's dot here */}
+      {node.kind === "agent" && (
+        <Handle id="cap-in" type="target" position={Position.Right} className={capHandleClass} />
+      )}
+      {/* sub-node capability output (left, violet): drag into an agent's right dot */}
+      {isSub && (
+        <Handle id="cap-out" type="source" position={Position.Left} className={capHandleClass} />
       )}
       <div className="flex items-center gap-1.5">
         <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${style.iconWrap}`}>
@@ -132,7 +144,10 @@ export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
           </div>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className={handleClass} />
+      {/* main flow output (bottom) — main-flow nodes only */}
+      {!isSub && (
+        <Handle id="main-out" type="source" position={Position.Bottom} className={handleClass} />
+      )}
     </div>
   );
 }
