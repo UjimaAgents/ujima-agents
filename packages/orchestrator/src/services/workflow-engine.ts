@@ -121,6 +121,14 @@ export interface PostRunCardInput {
   workflowRunId: string;
 }
 
+export interface PostRunUpdateInput {
+  organizationId: string;
+  channelId: string;
+  workflowName: string;
+  workflowRunId: string;
+  status: 'completed' | 'failed';
+}
+
 export interface SpawnApproverAgentInput {
   organizationId: string;
   workflowRunId: string;
@@ -154,6 +162,8 @@ export interface WorkflowEffects {
   prepareRunThread(input: PrepareRunThreadInput): Promise<{threadId: string}>;
   /** Post a "run started" card into the origin channel. */
   postRunCard(input: PostRunCardInput): Promise<void>;
+  /** Post a "run completed/failed" card into the origin channel. */
+  postRunUpdate(input: PostRunUpdateInput): Promise<void>;
   /** Spawn an agent to review + resolve an approval gate via workflow.transition. */
   spawnApproverAgent(input: SpawnApproverAgentInput): Promise<void>;
 }
@@ -332,7 +342,7 @@ export class WorkflowEngineService {
       if (!fresh || fresh.status !== 'running') return; // an approval paused the run
     }
 
-    this.maybeComplete(organizationId, workflowRunId);
+    await this.maybeComplete(organizationId, workflowRunId);
   }
 
   /**
@@ -877,7 +887,7 @@ export class WorkflowEngineService {
     return undefined;
   }
 
-  private maybeComplete(organizationId: string, workflowRunId: string): void {
+  private async maybeComplete(organizationId: string, workflowRunId: string): Promise<void> {
     const run = this.store.getWorkflowRun(organizationId, workflowRunId);
     if (!run || run.status !== 'running') return;
     const graph = this.parseGraph(run);
@@ -890,6 +900,13 @@ export class WorkflowEngineService {
     });
     if (allTerminal && !anyActive) {
       this.setRunStatus(organizationId, workflowRunId, 'completed');
+      await this.effects.postRunUpdate({
+        organizationId,
+        channelId: run.channelId,
+        workflowName: run.name,
+        workflowRunId,
+        status: 'completed',
+      });
     }
   }
 

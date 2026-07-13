@@ -10,6 +10,7 @@ import { buildSystemMessage } from './message-factory.js';
 import type {
   NotifyInitiatorInput,
   PostRunCardInput,
+  PostRunUpdateInput,
   PrepareRunThreadInput,
   RaiseApprovalInput,
   SpawnAgentNodeInput,
@@ -187,6 +188,22 @@ export class LiveWorkflowEffects implements WorkflowEffects {
       buildSystemMessage({
         organizationId: input.organizationId,
         threadId: input.originThreadId,
+        channelId: input.channelId,
+        content,
+      }),
+      [],
+      undefined,
+      {wakePolicy: 'never'},
+    );
+  }
+
+  async postRunUpdate(input: PostRunUpdateInput): Promise<void> {
+    const done = input.status === 'completed';
+    const content = `${done ? '✅' : '⛔'} Workflow "${input.workflowName}" ${done ? 'completed' : 'failed'} — [open run →](/workflows/runs/${input.workflowRunId})`;
+    this.deps.conversations.publishMessage(
+      buildSystemMessage({
+        organizationId: input.organizationId,
+        threadId: input.channelId,
         channelId: input.channelId,
         content,
       }),

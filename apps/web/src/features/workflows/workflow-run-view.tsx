@@ -195,25 +195,46 @@ export function WorkflowRunView({ runId }: { runId: string }) {
           </ReactFlow>
         </div>
 
-        <aside className="w-80 shrink-0 space-y-2 overflow-y-auto border-l border-zinc-200 p-3 dark:border-zinc-800">
-          <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Steps</p>
-          {[...statusByNode.values()]
-            .sort((a, b) => (a.startedAt ?? "").localeCompare(b.startedAt ?? ""))
-            .map((nr) => {
-              const s = NODE_STATUS_STYLES[nr.status];
-              return (
-                <div key={nr.id} className="rounded-lg border border-zinc-200 p-2.5 text-xs dark:border-zinc-800">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full ${s.dot}`} />
-                    <span className="font-semibold text-zinc-800 dark:text-zinc-200">{nr.nodeId}</span>
-                    <span className="ml-auto text-[10px] uppercase text-zinc-400">{s.label}</span>
+        <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
+          <div className="shrink-0 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "45%" }}>
+            <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Steps</p>
+            {[...statusByNode.values()]
+              .sort((a, b) => (a.startedAt ?? "").localeCompare(b.startedAt ?? ""))
+              .map((nr) => {
+                const s = NODE_STATUS_STYLES[nr.status];
+                return (
+                  <div key={nr.id} className="rounded-lg border border-zinc-200 p-2.5 text-xs dark:border-zinc-800">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`h-2 w-2 rounded-full ${s.dot}`} />
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200">{nr.nodeId}</span>
+                      <span className="ml-auto text-[10px] uppercase text-zinc-400">{s.label}</span>
+                    </div>
+                    {nr.summary && <p className="mt-1 text-zinc-600 dark:text-zinc-400">{nr.summary}</p>}
+                    {nr.outputPath && <p className="mt-1 truncate font-mono text-[10px] text-zinc-400">{nr.outputPath}</p>}
+                    {nr.failureReason && <p className="mt-1 text-red-500">{nr.failureReason}</p>}
                   </div>
-                  {nr.summary && <p className="mt-1 text-zinc-600 dark:text-zinc-400">{nr.summary}</p>}
-                  {nr.outputPath && <p className="mt-1 truncate font-mono text-[10px] text-zinc-400">{nr.outputPath}</p>}
-                  {nr.failureReason && <p className="mt-1 text-red-500">{nr.failureReason}</p>}
-                </div>
-              );
-            })}
+                );
+              })}
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col border-t border-zinc-200 dark:border-zinc-800">
+            <p className="shrink-0 px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+              Conversation
+            </p>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3">
+              {detail.messages.length === 0 ? (
+                <p className="px-1 text-xs text-zinc-400">No messages yet.</p>
+              ) : (
+                detail.messages.map((m) => (
+                  <div key={m.id} className="rounded-lg bg-zinc-50 p-2 text-xs dark:bg-zinc-900/60">
+                    <p className="font-semibold text-zinc-700 dark:text-zinc-300">{m.senderName}</p>
+                    <p className="mt-0.5 whitespace-pre-wrap break-words text-zinc-600 dark:text-zinc-400">
+                      {m.content.length > 600 ? `${m.content.slice(0, 600)}…` : m.content}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </aside>
       </div>
     </div>

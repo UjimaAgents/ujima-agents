@@ -238,9 +238,22 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     if (!auth) return;
     const run = deps.repo.getWorkflowRun(auth.user.organizationId, req.params.id);
     if (!run) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Workflow run not found' });
+    // The run executes in a dedicated thread — surface its conversation.
+    const messages = deps.repo
+      .listMessages(auth.user.organizationId, run.threadId, undefined, 100)
+      .data.slice()
+      .reverse()
+      .map((m) => ({
+        id: m.id,
+        senderName: deps.repo.getMember(auth.user.organizationId, m.senderId)?.name ?? m.senderId,
+        senderKind: m.senderKind,
+        content: m.content,
+        createdAt: m.createdAt,
+      }));
     return reply.status(200).send({
       run,
       nodeRuns: deps.repo.listWorkflowNodeRuns(run.id),
+      messages,
     });
   });
 

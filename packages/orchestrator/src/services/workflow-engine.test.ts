@@ -10,6 +10,7 @@ import {
   WorkflowEngineService,
   type NotifyInitiatorInput,
   type PostRunCardInput,
+  type PostRunUpdateInput,
   type RaiseApprovalInput,
   type SpawnAgentNodeInput,
   type SpawnApproverAgentInput,
@@ -72,6 +73,7 @@ function makeEffects(opts?: {
   const notifications: NotifyInitiatorInput[] = [];
   const approverSpawns: SpawnApproverAgentInput[] = [];
   const cards: PostRunCardInput[] = [];
+  const updates: PostRunUpdateInput[] = [];
   const effects: WorkflowEffects = {
     async spawnAgentNode(input) {
       spawns.push(input);
@@ -100,11 +102,14 @@ function makeEffects(opts?: {
     async postRunCard(input) {
       cards.push(input);
     },
+    async postRunUpdate(input) {
+      updates.push(input);
+    },
     async spawnApproverAgent(input) {
       approverSpawns.push(input);
     },
   };
-  return {effects, spawns, goals, approvals, notifications, approverSpawns, cards};
+  return {effects, spawns, goals, approvals, notifications, approverSpawns, cards, updates};
 }
 
 // --- Graph builders -------------------------------------------------------
@@ -138,7 +143,7 @@ describe('WorkflowEngineService', () => {
   });
 
   it('runs a linear SOP: trigger -> agent -> goal_handoff', async () => {
-    const {effects, spawns, goals} = makeEffects();
+    const {effects, spawns, goals, updates} = makeEffects();
     const engine = new WorkflowEngineService(store, effects);
     const g = graph(
       [
@@ -168,6 +173,8 @@ describe('WorkflowEngineService', () => {
     expect(goals[0]!.title).toBe('Add user auth');
     expect(goals[0]!.tasks).toEqual([{title: 'Build auth'}]);
     expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('completed');
+    // a completion card was posted to the origin channel
+    expect(updates.some((u) => u.status === 'completed')).toBe(true);
   });
 
   it('passes the envelope downstream via tokens', async () => {

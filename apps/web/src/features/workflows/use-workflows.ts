@@ -131,9 +131,17 @@ export async function listWorkflowRuns(status?: string): Promise<WorkflowRun[]> 
   return body.runs;
 }
 
+export interface WorkflowRunMessage {
+  id: string;
+  senderName: string;
+  senderKind: string;
+  content: string;
+  createdAt: string;
+}
 export interface WorkflowRunDetail {
   run: WorkflowRun;
   nodeRuns: WorkflowNodeRun[];
+  messages: WorkflowRunMessage[];
 }
 
 export async function getWorkflowRun(id: string): Promise<WorkflowRunDetail> {
