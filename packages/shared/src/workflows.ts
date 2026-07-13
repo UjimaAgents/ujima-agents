@@ -74,6 +74,11 @@ export const ToolNodeConfigSchema = z.object({
 
 export const ApprovalNodeConfigSchema = z.object({
   prompt: z.string().optional(),
+  /**
+   * When set, a designated agent reviews the upstream output and resolves the
+   * gate via `workflow.transition` (approve/reject) instead of a human.
+   */
+  approverAgentId: IdSchema.optional(),
 });
 
 export const GoalHandoffNodeConfigSchema = z.object({

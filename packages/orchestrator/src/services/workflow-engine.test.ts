@@ -9,8 +9,10 @@ import {
 import {
   WorkflowEngineService,
   type NotifyInitiatorInput,
+  type PostRunCardInput,
   type RaiseApprovalInput,
   type SpawnAgentNodeInput,
+  type SpawnApproverAgentInput,
   type StartGoalInput,
   type StatOutputInput,
   type WorkflowEffects,
@@ -68,6 +70,8 @@ function makeEffects(opts?: {
   const goals: StartGoalInput[] = [];
   const approvals: RaiseApprovalInput[] = [];
   const notifications: NotifyInitiatorInput[] = [];
+  const approverSpawns: SpawnApproverAgentInput[] = [];
+  const cards: PostRunCardInput[] = [];
   const effects: WorkflowEffects = {
     async spawnAgentNode(input) {
       spawns.push(input);
@@ -90,8 +94,17 @@ function makeEffects(opts?: {
     async getRunStatus(input) {
       return opts?.runStatus ? opts.runStatus(input.runId) : null;
     },
+    async prepareRunThread(input) {
+      return {threadId: `wf-run-${input.workflowRunId}`};
+    },
+    async postRunCard(input) {
+      cards.push(input);
+    },
+    async spawnApproverAgent(input) {
+      approverSpawns.push(input);
+    },
   };
-  return {effects, spawns, goals, approvals, notifications};
+  return {effects, spawns, goals, approvals, notifications, approverSpawns, cards};
 }
 
 // --- Graph builders -------------------------------------------------------
@@ -344,6 +357,42 @@ describe('WorkflowEngineService', () => {
     await engine.sweep('org1'); // detects the child run is completed -> recovers
     expect(goals).toHaveLength(1);
     expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('completed');
+  });
+
+  it('runs in a dedicated thread and posts an origin-channel card', async () => {
+    const {effects, spawns, cards} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph([trigger, agent('pm')], [edge('t', 'pm')]);
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'build'});
+    // the run + its agent runs use the dedicated thread, not the origin thread
+    expect(store.getWorkflowRun('org1', workflowRunId)!.threadId).toBe(`wf-run-${workflowRunId}`);
+    expect(spawns[0]!.threadId).toBe(`wf-run-${workflowRunId}`);
+    // a card was posted to the origin channel/thread
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.channelId).toBe('c1');
+    expect(cards[0]!.originThreadId).toBe('th1');
+  });
+
+  it('spawns an approver agent when the gate has an approverAgentId', async () => {
+    const {effects, spawns, approverSpawns} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [
+        trigger,
+        agent('pm'),
+        {id: 'gate', kind: 'approval', position: {x: 0, y: 0}, config: {approverAgentId: 'lead'}},
+        agent('eng'),
+      ],
+      [edge('t', 'pm'), edge('pm', 'gate'), edge('gate', 'eng')],
+    );
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'gated'});
+    await engine.onNodeComplete({organizationId: 'org1', workflowRunId, nodeRunId: spawns[0]!.nodeRunId, summary: 'PM'});
+    expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('awaiting_approval');
+    expect(approverSpawns).toHaveLength(1);
+    expect(approverSpawns[0]!.approverAgentId).toBe('lead');
+    // the approver approves via a transition -> eng dispatched
+    await engine.transition({organizationId: 'org1', workflowRunId, action: 'approve', idempotencyKey: 'k1'});
+    expect(spawns.some((s) => s.agentId === 'eng')).toBe(true);
   });
 
   it('rejects an invalid graph at startRun', async () => {

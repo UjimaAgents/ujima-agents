@@ -101,6 +101,38 @@ export interface StatOutputInput {
   path: string;
 }
 
+export interface PrepareRunThreadInput {
+  organizationId: string;
+  channelId: string;
+  workflowName: string;
+  workflowRunId: string;
+  initiatedBy: string;
+  /** Agents referenced by the graph — added as members of the run thread. */
+  agentIds: string[];
+}
+
+export interface PostRunCardInput {
+  organizationId: string;
+  /** Origin channel + thread the run was triggered from (where the card goes). */
+  channelId: string;
+  originThreadId: string;
+  runThreadId: string;
+  workflowName: string;
+  workflowRunId: string;
+}
+
+export interface SpawnApproverAgentInput {
+  organizationId: string;
+  workflowRunId: string;
+  workflowName: string;
+  approverAgentId: string;
+  channelId: string;
+  threadId: string;
+  nodeId: string;
+  priorSummary?: string;
+  priorOutputPath?: string;
+}
+
 export interface NotifyInitiatorInput {
   organizationId: string;
   workflowRun: WorkflowRun;
@@ -118,6 +150,12 @@ export interface WorkflowEffects {
   notifyInitiator(input: NotifyInitiatorInput): Promise<void>;
   /** The status of a child agent run, for the sweeper's missed-completion recovery. */
   getRunStatus(input: {organizationId: string; runId: string}): Promise<string | null>;
+  /** Create the dedicated per-run thread (agents added as members). */
+  prepareRunThread(input: PrepareRunThreadInput): Promise<{threadId: string}>;
+  /** Post a "run started" card into the origin channel. */
+  postRunCard(input: PostRunCardInput): Promise<void>;
+  /** Spawn an agent to review + resolve an approval gate via workflow.transition. */
+  spawnApproverAgent(input: SpawnApproverAgentInput): Promise<void>;
 }
 
 export interface StartRunInput {
@@ -188,6 +226,27 @@ export class WorkflowEngineService {
     const sha = createHash('sha256').update(snapshot).digest('hex');
     const nowIso = new Date().toISOString();
     const runId = randomUUID();
+
+    // Every agent the run may use (agent nodes + approver agents) — these become
+    // members of the dedicated run thread, so "is the agent in the channel?"
+    // stops mattering. The run executes in that thread, isolated from the
+    // origin channel conversation.
+    const agentIds = new Set<string>();
+    for (const node of graph.nodes) {
+      if (node.kind === 'agent' && node.config.agentId) agentIds.add(node.config.agentId);
+      if (node.kind === 'approval' && node.config.approverAgentId) {
+        agentIds.add(node.config.approverAgentId);
+      }
+    }
+    const {threadId: runThreadId} = await this.effects.prepareRunThread({
+      organizationId: input.organizationId,
+      channelId: input.channelId,
+      workflowName: name,
+      workflowRunId: runId,
+      initiatedBy: input.initiatedBy,
+      agentIds: [...agentIds],
+    });
+
     const run: WorkflowRun = {
       id: runId,
       organizationId: input.organizationId,
@@ -199,7 +258,7 @@ export class WorkflowEngineService {
       status: 'running',
       initiatedBy: input.initiatedBy,
       channelId: input.channelId,
-      threadId: input.threadId,
+      threadId: runThreadId,
       lastTransitionToken: null,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -230,6 +289,15 @@ export class WorkflowEngineService {
           completedAt: nowIso,
         });
       }
+    });
+
+    await this.effects.postRunCard({
+      organizationId: input.organizationId,
+      channelId: input.channelId,
+      originThreadId: input.threadId,
+      runThreadId,
+      workflowName: name,
+      workflowRunId: runId,
     });
 
     await this.stepRun(input.organizationId, runId);
@@ -647,6 +715,24 @@ export class WorkflowEngineService {
       this.store.saveWorkflowNodeRun({...base, approvalRequestId});
       this.setRunStatus(run.organizationId, run.id, 'awaiting_approval');
     });
+
+    // Agent-as-approver: a designated agent reviews the upstream output and
+    // resolves the gate via workflow.transition (its run is NOT a workflow node
+    // run, so it won't advance the graph on completion — only the transition does).
+    if (node.config.approverAgentId) {
+      const priorOutput = this.nearestUpstreamOutput(graph, node.id, outputs);
+      await this.effects.spawnApproverAgent({
+        organizationId: run.organizationId,
+        workflowRunId: run.id,
+        workflowName: run.name,
+        approverAgentId: node.config.approverAgentId,
+        channelId: run.channelId,
+        threadId: run.threadId,
+        nodeId: node.id,
+        priorSummary,
+        priorOutputPath: priorOutput?.output_file ?? undefined,
+      });
+    }
   }
 
   private async dispatchGoalHandoff(
@@ -775,6 +861,18 @@ export class WorkflowEngineService {
     for (const pred of this.mainPredecessors(graph, nodeId)) {
       const out = outputs.get(pred);
       if (out?.summary) return out.summary;
+    }
+    return undefined;
+  }
+
+  private nearestUpstreamOutput(
+    graph: WorkflowGraph,
+    nodeId: string,
+    outputs: Map<string, NodeOutput>,
+  ): NodeOutput | undefined {
+    for (const pred of this.mainPredecessors(graph, nodeId)) {
+      const out = outputs.get(pred);
+      if (out?.output_file) return out;
     }
     return undefined;
   }

@@ -9,8 +9,11 @@ import type { CreateRunInput } from './spirit-types.js';
 import { buildSystemMessage } from './message-factory.js';
 import type {
   NotifyInitiatorInput,
+  PostRunCardInput,
+  PrepareRunThreadInput,
   RaiseApprovalInput,
   SpawnAgentNodeInput,
+  SpawnApproverAgentInput,
   StartGoalInput,
   StatOutputInput,
   WorkflowEffects,
@@ -160,6 +163,72 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     runId: string;
   }): Promise<string | null> {
     return this.deps.repo.getRun(input.organizationId, input.runId)?.status ?? null;
+  }
+
+  async prepareRunThread(input: PrepareRunThreadInput): Promise<{threadId: string}> {
+    // A dedicated thread inside the origin channel with the workflow's agents as
+    // members — agents run here (isolated), and membership is guaranteed.
+    const threadId = `wf-run-${input.workflowRunId}`;
+    const memberIds = [...new Set([input.initiatedBy, ...input.agentIds])];
+    this.deps.repo.ensureThread({
+      id: threadId,
+      organizationId: input.organizationId,
+      channelId: input.channelId,
+      memberIds,
+      title: `Workflow: ${input.workflowName}`,
+      createdAt: new Date().toISOString(),
+    });
+    return {threadId};
+  }
+
+  async postRunCard(input: PostRunCardInput): Promise<void> {
+    const content = `▶ Workflow "${input.workflowName}" started in this channel — [open run →](/workflows/runs/${input.workflowRunId})`;
+    this.deps.conversations.publishMessage(
+      buildSystemMessage({
+        organizationId: input.organizationId,
+        threadId: input.originThreadId,
+        channelId: input.channelId,
+        content,
+      }),
+      [],
+      undefined,
+      {wakePolicy: 'never'},
+    );
+  }
+
+  async spawnApproverAgent(input: SpawnApproverAgentInput): Promise<void> {
+    const runId = randomUUID();
+    const content = [
+      `## Approval review`,
+      `You are the approver for the "${input.nodeId}" gate of workflow "${input.workflowName}" (run \`${input.workflowRunId}\`).`,
+      input.priorSummary ? `Prior step summary: ${input.priorSummary}` : '',
+      input.priorOutputPath
+        ? `Read the document at \`${input.priorOutputPath}\` with the view tool and judge whether it meets the bar.`
+        : '',
+      `Then call \`workflow.transition\` with { run_id: "${input.workflowRunId}", action: "approve" or "reject", idempotency_key: a fresh uuid, and rejection_reason if you reject }.`,
+      `Your only job is to approve or reject this gate — do nothing else.`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const message = buildSystemMessage({
+      organizationId: input.organizationId,
+      threadId: input.threadId,
+      channelId: input.channelId,
+      content,
+    });
+    this.deps.conversations.publishMessage(message, [], undefined, {wakePolicy: 'never'});
+    void this.deps.spirits
+      .createRun({
+        organizationId: input.organizationId,
+        agentId: input.approverAgentId,
+        threadId: input.threadId,
+        runId,
+        sourceMessageId: message.id,
+        summary: `Workflow ${input.workflowName} · approve gate ${input.nodeId}`,
+      })
+      .catch(() => {
+        // approver run failed to start; the gate stays open for a human.
+      });
   }
 
   async notifyInitiator(input: NotifyInitiatorInput): Promise<void> {

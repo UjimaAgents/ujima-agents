@@ -16,7 +16,7 @@ const NODE_HELP: Record<WorkflowNodeKind, string> = {
   agent:
     "A step run by an agent. It reads the upstream documents, does the work, saves a file, then hands off to the next step.",
   approval:
-    "A human gate. The workflow pauses here until someone approves or rejects in the run view before the next step runs. (An agent approver is on the roadmap.)",
+    "A gate. The workflow pauses here until it's approved. By default a human approves in the run view; pick an Approver agent to have an agent review the upstream output and approve/reject automatically.",
   goal_handoff:
     "Terminal step. Creates a goal from the workflow's output, then the goal system takes over the follow-up work.",
   skill:
@@ -214,15 +214,39 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
         )}
 
         {node.kind === "approval" && (
-          <FieldShell label="Prompt" htmlFor="approval-prompt" hint="Optional note shown on the approval card.">
-            <TextArea
-              id="approval-prompt"
-              rows={4}
-              value={node.config.prompt ?? ""}
-              placeholder="Approve the BRD before engineering starts?"
-              onChange={(e) => onChange(patch(node, { prompt: e.target.value || undefined }))}
-            />
-          </FieldShell>
+          <>
+            <FieldShell
+              label="Approver"
+              htmlFor="approver"
+              hint="Who resolves this gate. An agent reviews the upstream output and approves/rejects automatically."
+            >
+              <select
+                id="approver"
+                className={SELECT_CLASS}
+                value={node.config.approverAgentId ?? ""}
+                onChange={(e) => onChange(patch(node, { approverAgentId: e.target.value || undefined }))}
+              >
+                <option value="">Human (approve in the run view)</option>
+                {catalog.agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} — {a.role}
+                  </option>
+                ))}
+                {node.config.approverAgentId && !catalog.agents.some((a) => a.id === node.config.approverAgentId) && (
+                  <option value={node.config.approverAgentId}>{node.config.approverAgentId} (current)</option>
+                )}
+              </select>
+            </FieldShell>
+            <FieldShell label="Prompt" htmlFor="approval-prompt" hint="Optional note shown on the approval card / given to the approver.">
+              <TextArea
+                id="approval-prompt"
+                rows={4}
+                value={node.config.prompt ?? ""}
+                placeholder="Approve the BRD before engineering starts?"
+                onChange={(e) => onChange(patch(node, { prompt: e.target.value || undefined }))}
+              />
+            </FieldShell>
+          </>
         )}
 
         {node.kind === "goal_handoff" && (

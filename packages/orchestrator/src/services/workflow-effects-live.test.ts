@@ -51,6 +51,11 @@ class FakeRepo {
   getRun(_org: string, runId: string) {
     return { id: runId, status: 'completed' };
   }
+  threads: unknown[] = [];
+  ensureThread(thread: unknown) {
+    this.threads.push(thread);
+    return thread;
+  }
 }
 
 describe('LiveWorkflowEffects (integration)', () => {
