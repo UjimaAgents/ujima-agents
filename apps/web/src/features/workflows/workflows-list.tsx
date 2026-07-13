@@ -46,13 +46,21 @@ export function WorkflowsList() {
             Author SOPs — sequenced agent pipelines that pass documents down the line.
           </p>
         </div>
-        <Link
-          href="/workflows/new"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
-        >
-          <Plus className="h-4 w-4" />
-          New workflow
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/workflows/runs"
+            className="rounded-lg border border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            Runs
+          </Link>
+          <Link
+            href="/workflows/new"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+          >
+            <Plus className="h-4 w-4" />
+            New workflow
+          </Link>
+        </div>
       </div>
 
       {error && (

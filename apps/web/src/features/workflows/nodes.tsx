@@ -10,10 +10,19 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import type { WorkflowNode, WorkflowNodeKind } from "@ujima/shared";
+import type { WorkflowNode, WorkflowNodeKind, WorkflowNodeRunStatus } from "@ujima/shared";
 
-export type FlowNodeData = { node: WorkflowNode };
+export type FlowNodeData = { node: WorkflowNode; status?: WorkflowNodeRunStatus };
 export type FlowNode = Node<FlowNodeData, "workflow">;
+
+export const NODE_STATUS_STYLES: Record<WorkflowNodeRunStatus, { label: string; ring: string; dot: string }> = {
+  pending: { label: "Pending", ring: "ring-2 ring-zinc-300 dark:ring-zinc-600", dot: "bg-zinc-400" },
+  running: { label: "Running", ring: "ring-2 ring-blue-400 dark:ring-blue-400/70", dot: "bg-blue-500 animate-pulse" },
+  awaiting_approval: { label: "Awaiting approval", ring: "ring-2 ring-amber-400 dark:ring-amber-400/70", dot: "bg-amber-500" },
+  completed: { label: "Completed", ring: "ring-2 ring-emerald-400 dark:ring-emerald-400/70", dot: "bg-emerald-500" },
+  failed: { label: "Failed", ring: "ring-2 ring-red-400 dark:ring-red-400/70", dot: "bg-red-500" },
+  skipped: { label: "Skipped", ring: "ring-2 ring-zinc-300 dark:ring-zinc-600", dot: "bg-zinc-400" },
+};
 
 interface KindStyle {
   icon: LucideIcon;
@@ -84,8 +93,9 @@ const handleClass =
   "!h-2.5 !w-2.5 !border-2 !border-white !bg-zinc-400 dark:!border-zinc-900 dark:!bg-zinc-500";
 
 export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
-  const { node } = data;
+  const { node, status } = data;
   const style = NODE_KIND_STYLES[node.kind];
+  const statusStyle = status ? NODE_STATUS_STYLES[status] : null;
   const Icon = style.icon;
   const isSub = node.kind === "skill" || node.kind === "tool";
   const title = node.label?.trim() || style.label;
@@ -93,12 +103,18 @@ export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
   return (
     <div
       className={[
-        "min-w-40 max-w-56 rounded-xl border bg-white px-3 py-2 shadow-sm transition dark:bg-zinc-900",
+        "relative min-w-40 max-w-56 rounded-xl border bg-white px-3 py-2 shadow-sm transition dark:bg-zinc-900",
         style.accent,
-        selected ? "ring-2 ring-purple-400/70 dark:ring-purple-400/60" : "",
+        statusStyle ? statusStyle.ring : selected ? "ring-2 ring-purple-400/70 dark:ring-purple-400/60" : "",
         isSub ? "border-dashed" : "",
       ].join(" ")}
     >
+      {statusStyle && (
+        <span
+          className={`absolute -right-1.5 -top-1.5 h-3 w-3 rounded-full border-2 border-white dark:border-zinc-900 ${statusStyle.dot}`}
+          title={statusStyle.label}
+        />
+      )}
       {/* main flow: sub-nodes don't accept a top (main) input */}
       {!isSub && node.kind !== "trigger" && (
         <Handle type="target" position={Position.Top} className={handleClass} />

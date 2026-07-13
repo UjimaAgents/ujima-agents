@@ -1,6 +1,13 @@
 "use client";
 
-import type { WorkflowDefinition, WorkflowEdge, WorkflowNode } from "@ujima/shared";
+import type {
+  WorkflowDefinition,
+  WorkflowEdge,
+  WorkflowNode,
+  WorkflowNodeRun,
+  WorkflowRun,
+  WorkflowTransitionAction,
+} from "@ujima/shared";
 
 export interface WorkflowInput {
   name: string;
@@ -72,4 +79,40 @@ export async function deleteWorkflow(id: string): Promise<void> {
   if (!res.ok && res.status !== 204) {
     throw new WorkflowApiError("Unable to delete workflow.", res.status);
   }
+}
+
+// --- Runs -----------------------------------------------------------------
+
+export async function listWorkflowRuns(status?: string): Promise<WorkflowRun[]> {
+  const url = status ? `/api/workflow-runs?status=${encodeURIComponent(status)}` : "/api/workflow-runs";
+  const res = await fetch(url, { cache: "no-store" });
+  const body = await parse<{ runs: WorkflowRun[] }>(res, "Unable to list workflow runs.");
+  return body.runs;
+}
+
+export interface WorkflowRunDetail {
+  run: WorkflowRun;
+  nodeRuns: WorkflowNodeRun[];
+}
+
+export async function getWorkflowRun(id: string): Promise<WorkflowRunDetail> {
+  const res = await fetch(`/api/workflow-runs/${encodeURIComponent(id)}`, { cache: "no-store" });
+  return parse<WorkflowRunDetail>(res, "Unable to load workflow run.");
+}
+
+export async function transitionWorkflowRun(
+  id: string,
+  action: WorkflowTransitionAction,
+  rejectionReason?: string,
+): Promise<void> {
+  const res = await fetch(`/api/workflow-runs/${encodeURIComponent(id)}/transition`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action,
+      idempotency_key: `${action}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      rejection_reason: rejectionReason,
+    }),
+  });
+  await parse<unknown>(res, "Unable to update workflow run.");
 }
