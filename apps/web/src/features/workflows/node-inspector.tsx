@@ -1,15 +1,33 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
-import type { WorkflowNode } from "@ujima/shared";
+import type { WorkflowNode, WorkflowNodeKind } from "@ujima/shared";
 import { FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
 import { NODE_KIND_STYLES } from "./nodes";
+import type { WorkflowCatalog } from "./use-workflows";
 
 const SELECT_CLASS =
   "w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
 
+/** Short explanation of what each node type does + how it works. */
+const NODE_HELP: Record<WorkflowNodeKind, string> = {
+  trigger:
+    "The entry point. The workflow starts here when you run it (channel Run button or @workflow). Whatever you type as input flows in as {{input}}.",
+  agent:
+    "A step run by an agent. It reads the upstream documents, does the work, saves a file, then hands off to the next step.",
+  approval:
+    "A human gate. The workflow pauses here until someone approves or rejects in the run view before the next step runs. (An agent approver is on the roadmap.)",
+  goal_handoff:
+    "Terminal step. Creates a goal from the workflow's output, then the goal system takes over the follow-up work.",
+  skill:
+    "A skill capability attached to an agent (dashed link) — the agent may use it while running its step. It is not a step on its own.",
+  tool:
+    "A tool capability attached to an agent (dashed link) — the agent may call it while running its step. It is not a step on its own.",
+};
+
 interface Props {
   node: WorkflowNode | null;
+  catalog: WorkflowCatalog;
   onChange: (next: WorkflowNode) => void;
   onDelete: () => void;
 }
@@ -19,7 +37,7 @@ function patch(node: WorkflowNode, config: Record<string, unknown>): WorkflowNod
   return { ...node, config: { ...node.config, ...config } } as WorkflowNode;
 }
 
-export function NodeInspector({ node, onChange, onDelete }: Props) {
+export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
   if (!node) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
@@ -50,6 +68,10 @@ export function NodeInspector({ node, onChange, onDelete }: Props) {
         </button>
       </div>
 
+      <p className="border-b border-zinc-200 px-4 py-2.5 text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+        {NODE_HELP[node.kind]}
+      </p>
+
       <div className="flex-1 space-y-5 overflow-y-auto p-4">
         <FieldShell label="Label" htmlFor="node-label" hint="Optional display name for this node.">
           <TextInput
@@ -77,13 +99,23 @@ export function NodeInspector({ node, onChange, onDelete }: Props) {
 
         {node.kind === "agent" && (
           <>
-            <FieldShell label="Agent" htmlFor="agent-id" hint="The agent id that runs this step.">
-              <TextInput
+            <FieldShell label="Agent" htmlFor="agent-id" hint="The agent that runs this step.">
+              <select
                 id="agent-id"
+                className={SELECT_CLASS}
                 value={node.config.agentId}
-                placeholder="e.g. pm"
                 onChange={(e) => onChange(patch(node, { agentId: e.target.value }))}
-              />
+              >
+                <option value="">Select an agent…</option>
+                {catalog.agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} — {a.role}
+                  </option>
+                ))}
+                {node.config.agentId && !catalog.agents.some((a) => a.id === node.config.agentId) && (
+                  <option value={node.config.agentId}>{node.config.agentId} (current)</option>
+                )}
+              </select>
             </FieldShell>
             <FieldShell
               label="Prompt"
@@ -125,13 +157,23 @@ export function NodeInspector({ node, onChange, onDelete }: Props) {
         )}
 
         {node.kind === "tool" && (
-          <FieldShell label="Tool id" htmlFor="tool-id" hint="Attached to an agent as an ai_tool capability.">
-            <TextInput
+          <FieldShell label="Tool" htmlFor="tool-id" hint="Attached to an agent as an ai_tool capability.">
+            <select
               id="tool-id"
+              className={SELECT_CLASS}
               value={node.config.toolId}
-              placeholder="e.g. web_search"
               onChange={(e) => onChange(patch(node, { toolId: e.target.value }))}
-            />
+            >
+              <option value="">Select a tool…</option>
+              {catalog.tools.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+              {node.config.toolId && !catalog.tools.includes(node.config.toolId) && (
+                <option value={node.config.toolId}>{node.config.toolId} (current)</option>
+              )}
+            </select>
           </FieldShell>
         )}
 

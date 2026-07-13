@@ -30,7 +30,9 @@ import {
   WorkflowApiError,
   createWorkflow,
   getWorkflow,
+  getWorkflowCatalog,
   updateWorkflow,
+  type WorkflowCatalog,
   type WorkflowInput,
 } from "./use-workflows";
 
@@ -70,6 +72,17 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<WorkflowValidationIssue[]>([]);
+  const [catalog, setCatalog] = useState<WorkflowCatalog>({ agents: [], tools: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+    getWorkflowCatalog()
+      .then((c) => !cancelled && setCatalog(c))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Load an existing definition (the "new" case is seeded as initial state).
   useEffect(() => {
@@ -256,6 +269,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             onConnect={onConnect}
             nodeTypes={workflowNodeTypes}
             fitView
+            fitViewOptions={{ maxZoom: 0.9, padding: 0.35 }}
+            minZoom={0.2}
+            maxZoom={1.5}
             proOptions={{ hideAttribution: true }}
             className="bg-zinc-50 dark:bg-zinc-950"
           >
@@ -271,7 +287,12 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         </div>
 
         <aside className="w-80 shrink-0 border-l border-zinc-200 dark:border-zinc-800">
-          <NodeInspector node={selectedNode} onChange={updateSelected} onDelete={deleteSelected} />
+          <NodeInspector
+            node={selectedNode}
+            catalog={catalog}
+            onChange={updateSelected}
+            onDelete={deleteSelected}
+          />
         </aside>
       </div>
     </div>

@@ -183,6 +183,9 @@ export function WorkflowRunView({ runId }: { runId: string }) {
             nodesConnectable={false}
             elementsSelectable={false}
             fitView
+            fitViewOptions={{ maxZoom: 0.9, padding: 0.35 }}
+            minZoom={0.2}
+            maxZoom={1.5}
             proOptions={{ hideAttribution: true }}
             className="bg-zinc-50 dark:bg-zinc-950"
           >

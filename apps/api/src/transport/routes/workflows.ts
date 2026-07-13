@@ -72,7 +72,29 @@ function validate(
   return result.issues.map((i) => ({ code: i.code, message: i.message }));
 }
 
+// Curated set of tools that make sense as agent sub-nodes in a workflow.
+const WORKFLOW_TOOL_CATALOG = [
+  'web_search',
+  'fetch',
+  'download',
+  'view',
+  'ls',
+  'glob',
+  'grep',
+];
+
 export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRouteDeps): void {
+  // --- Catalog (agents + tools) for the editor dropdowns ------------------
+  api.get('/workflow-catalog', async (req, reply) => {
+    const auth = requireMember(deps, req, reply);
+    if (!auth) return;
+    const agents = deps.repo
+      .listMembers(auth.user.organizationId)
+      .filter((m) => m.kind === 'agent' && !m.retiredAt)
+      .map((m) => ({ id: m.id, name: m.name, role: m.roleName }));
+    return reply.status(200).send({ agents, tools: WORKFLOW_TOOL_CATALOG });
+  });
+
   // --- Definitions --------------------------------------------------------
 
   api.get('/workflows', async (

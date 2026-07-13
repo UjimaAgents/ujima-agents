@@ -103,7 +103,7 @@ export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
   return (
     <div
       className={[
-        "relative min-w-40 max-w-56 rounded-xl border bg-white px-3 py-2 shadow-sm transition dark:bg-zinc-900",
+        "relative min-w-32 max-w-48 rounded-lg border bg-white px-2 py-1.5 shadow-sm transition dark:bg-zinc-900",
         style.accent,
         statusStyle ? statusStyle.ring : selected ? "ring-2 ring-purple-400/70 dark:ring-purple-400/60" : "",
         isSub ? "border-dashed" : "",
@@ -119,15 +119,15 @@ export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
       {!isSub && node.kind !== "trigger" && (
         <Handle type="target" position={Position.Top} className={handleClass} />
       )}
-      <div className="flex items-center gap-2">
-        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${style.iconWrap}`}>
-          <Icon className="h-4 w-4" />
+      <div className="flex items-center gap-1.5">
+        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${style.iconWrap}`}>
+          <Icon className="h-3 w-3" />
         </span>
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+          <div className="truncate text-[11px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
             {title}
           </div>
-          <div className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+          <div className="truncate text-[10px] leading-tight text-zinc-500 dark:text-zinc-400">
             {nodeSubtitle(node)}
           </div>
         </div>

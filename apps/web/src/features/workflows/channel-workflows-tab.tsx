@@ -21,7 +21,6 @@ export function ChannelWorkflowsTab({ channelId, threadId }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     listWorkflows(channelId)
       .then((items) => !cancelled && setWorkflows(items))
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load."))
@@ -50,24 +49,27 @@ export function ChannelWorkflowsTab({ channelId, threadId }: Props) {
   );
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-4">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Workflows</h2>
-          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            SOPs you can run in this channel. Runs open in the workflow run view.
-          </p>
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <div className="mx-auto flex max-w-3xl items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Workflows</h2>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              SOPs you can run in this channel. Runs open in the workflow run view.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.push(`/workflows/new?channelId=${encodeURIComponent(channelId)}`)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New for this channel
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => router.push(`/workflows/new?channelId=${encodeURIComponent(channelId)}`)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New for this channel
-        </button>
       </div>
 
+      <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto px-4 py-4">
       {error && (
         <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
           {error}
@@ -129,6 +131,7 @@ export function ChannelWorkflowsTab({ channelId, threadId }: Props) {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

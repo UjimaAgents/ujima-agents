@@ -43,6 +43,21 @@ async function parse<T>(res: Response, fallback: string): Promise<T> {
   return body as T;
 }
 
+export interface WorkflowAgent {
+  id: string;
+  name: string;
+  role: string;
+}
+export interface WorkflowCatalog {
+  agents: WorkflowAgent[];
+  tools: string[];
+}
+
+export async function getWorkflowCatalog(): Promise<WorkflowCatalog> {
+  const res = await fetch("/api/workflow-catalog", { cache: "no-store" });
+  return parse<WorkflowCatalog>(res, "Unable to load workflow catalog.");
+}
+
 export async function listWorkflows(channelId?: string): Promise<WorkflowDefinition[]> {
   const url = channelId ? `/api/workflows?channelId=${encodeURIComponent(channelId)}` : "/api/workflows";
   const res = await fetch(url, { cache: "no-store" });
