@@ -1758,6 +1758,14 @@ const MIGRATIONS: Migration[] = [
         ON runs(workflow_run_id);
     `,
   },
+  {
+    id: "061_workflow_channel_scope",
+    up: `
+      ALTER TABLE workflow_definitions ADD COLUMN channel_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_workflow_definitions_channel
+        ON workflow_definitions(organization_id, channel_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

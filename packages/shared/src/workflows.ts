@@ -147,6 +147,8 @@ export type WorkflowGraph = z.infer<typeof WorkflowGraphSchema>;
 export const WorkflowDefinitionSchema = z.object({
   id: IdSchema,
   organizationId: IdSchema,
+  /** When set, the workflow is scoped to this channel; null/absent = org-wide. */
+  channelId: IdSchema.nullable().optional(),
   name: z.string().min(1),
   description: z.string().optional(),
   nodes: z.array(WorkflowNodeSchema),

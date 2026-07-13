@@ -39,6 +39,11 @@ export interface WorkflowStore {
     name: string,
   ): WorkflowDefinition | null;
   listWorkflowDefinitions(organizationId: string): WorkflowDefinition[];
+  /** Workflows runnable in a channel: channel-scoped to it + org-wide (null channel). */
+  listWorkflowDefinitionsForChannel(
+    organizationId: string,
+    channelId: string,
+  ): WorkflowDefinition[];
   deleteWorkflowDefinition(organizationId: string, id: string): void;
 
   saveWorkflowRun(run: WorkflowRun): WorkflowRun;
@@ -68,6 +73,7 @@ function rowToDefinition(row: Row): WorkflowDefinition {
   return WorkflowDefinitionSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
+    channelId: optionalRowString(row, 'channel_id') ?? null,
     name: rowString(row, 'name'),
     description: optionalRowString(row, 'description'),
     nodes: graph.nodes ?? [],
@@ -86,9 +92,10 @@ export function saveWorkflowDefinition(
   const graphJson = JSON.stringify({nodes: payload.nodes, edges: payload.edges});
   db.prepare(
     `INSERT INTO workflow_definitions (
-       id, organization_id, name, description, graph_json, version, created_by, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       id, organization_id, channel_id, name, description, graph_json, version, created_by, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
+       channel_id = excluded.channel_id,
        name = excluded.name,
        description = excluded.description,
        graph_json = excluded.graph_json,
@@ -97,6 +104,7 @@ export function saveWorkflowDefinition(
   ).run(
     payload.id,
     payload.organizationId,
+    payload.channelId ?? null,
     payload.name,
     payload.description ?? null,
     graphJson,
@@ -141,6 +149,21 @@ export function listWorkflowDefinitions(
       'SELECT * FROM workflow_definitions WHERE organization_id = ? ORDER BY name ASC',
     )
     .all(organizationId) as Row[];
+  return rows.map(rowToDefinition);
+}
+
+export function listWorkflowDefinitionsForChannel(
+  db: DbHandle,
+  organizationId: string,
+  channelId: string,
+): WorkflowDefinition[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM workflow_definitions
+       WHERE organization_id = ? AND (channel_id = ? OR channel_id IS NULL)
+       ORDER BY channel_id IS NULL, name ASC`,
+    )
+    .all(organizationId, channelId) as Row[];
   return rows.map(rowToDefinition);
 }
 

@@ -179,6 +179,7 @@ import {
   getWorkflowNodeRunByChildRun as readWorkflowNodeRunByChildRun,
   getWorkflowRun as readWorkflowRun,
   listWorkflowDefinitions as readWorkflowDefinitions,
+  listWorkflowDefinitionsForChannel as readWorkflowDefinitionsForChannel,
   listWorkflowNodeRuns as readWorkflowNodeRuns,
   listWorkflowRuns as readWorkflowRuns,
   listWorkflowRunsByStatus as readWorkflowRunsByStatus,
@@ -648,6 +649,11 @@ export class Repository {
     readWorkflowDefinitionByName(this.db, organizationId, name);
   listWorkflowDefinitions = (organizationId: string): WorkflowDefinition[] =>
     readWorkflowDefinitions(this.db, organizationId);
+  listWorkflowDefinitionsForChannel = (
+    organizationId: string,
+    channelId: string,
+  ): WorkflowDefinition[] =>
+    readWorkflowDefinitionsForChannel(this.db, organizationId, channelId);
   deleteWorkflowDefinition = (organizationId: string, id: string): void =>
     removeWorkflowDefinition(this.db, organizationId, id);
   saveWorkflowRun = (run: WorkflowRun): WorkflowRun =>

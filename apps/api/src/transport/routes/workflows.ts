@@ -26,6 +26,7 @@ type AuthedMember = AuthState & {
 const DefinitionInputSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
+  channelId: z.string().min(1).nullable().optional(),
   nodes: z.array(WorkflowNodeSchema),
   edges: z.array(WorkflowEdgeSchema),
 });
@@ -74,12 +75,16 @@ function validate(
 export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRouteDeps): void {
   // --- Definitions --------------------------------------------------------
 
-  api.get('/workflows', async (req, reply) => {
+  api.get('/workflows', async (
+    req: FastifyRequest<{ Querystring: { channelId?: string } }>,
+    reply,
+  ) => {
     const auth = requireMember(deps, req, reply);
     if (!auth) return;
-    return reply.status(200).send({
-      workflows: deps.repo.listWorkflowDefinitions(auth.user.organizationId),
-    });
+    const workflows = req.query.channelId
+      ? deps.repo.listWorkflowDefinitionsForChannel(auth.user.organizationId, req.query.channelId)
+      : deps.repo.listWorkflowDefinitions(auth.user.organizationId);
+    return reply.status(200).send({ workflows });
   });
 
   api.get('/workflows/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
@@ -111,6 +116,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
       const def: WorkflowDefinition = {
         id: randomUUID(),
         organizationId: auth.user.organizationId,
+        channelId: body.channelId ?? null,
         name: body.name,
         description: body.description,
         nodes: body.nodes,
@@ -147,6 +153,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
       }
       const def: WorkflowDefinition = {
         ...existing,
+        channelId: body.channelId === undefined ? existing.channelId : body.channelId,
         name: body.name,
         description: body.description,
         nodes: body.nodes,

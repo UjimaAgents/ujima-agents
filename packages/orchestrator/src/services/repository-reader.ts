@@ -341,6 +341,7 @@ export interface ApiRepository extends ConversationRepository {
   getWorkflowDefinition(organizationId: string, id: string): WorkflowDefinition | null;
   getWorkflowDefinitionByName(organizationId: string, name: string): WorkflowDefinition | null;
   listWorkflowDefinitions(organizationId: string): WorkflowDefinition[];
+  listWorkflowDefinitionsForChannel(organizationId: string, channelId: string): WorkflowDefinition[];
   deleteWorkflowDefinition(organizationId: string, id: string): void;
   saveWorkflowRun(run: WorkflowRun): WorkflowRun;
   getWorkflowRun(organizationId: string, runId: string): WorkflowRun | null;
