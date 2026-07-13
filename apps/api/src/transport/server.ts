@@ -24,6 +24,7 @@ import type {
   TaskSessionService,
   TeamStore,
   WorkspaceService,
+  WorkflowEngineService,
 } from "@ujima/orchestrator";
 import { isTelegramPollingEnabled } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
@@ -114,6 +115,7 @@ export interface TransportOptions {
       tierCuration: TierCurationService;
       governance: GovernanceService;
       pluginRegistry: PluginRegistryService;
+      workflowEngine: WorkflowEngineService;
     };
   };
 }
@@ -402,6 +404,7 @@ export function createTransport(opts: TransportOptions): Transport {
         registerWorkflowRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
+          workflowEngine: services.workflowEngine,
         });
       }
     },

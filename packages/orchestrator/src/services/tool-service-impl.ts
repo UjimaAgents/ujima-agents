@@ -30,7 +30,7 @@ import {
   ORCHESTRATOR_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
 } from "../tools/index.js";
-import type { DelegateHandlers } from "../tools/types.js";
+import type { DelegateHandlers, WorkflowEngineToolAccess } from "../tools/types.js";
 import {
   approvalWaitResult,
   buildToolApprovalScope,
@@ -454,6 +454,17 @@ export class ToolServiceImpl implements ToolService {
     return result;
   }
 
+  /**
+   * Late-bound at the composition root: the workflow engine can't exist until
+   * SpiritService does, and SpiritService needs the tool service. Setting it
+   * afterwards lets `workflow.run` / `workflow.transition` reach the engine.
+   */
+  private workflowEngine?: WorkflowEngineToolAccess;
+
+  setWorkflowEngine(engine: WorkflowEngineToolAccess): void {
+    this.workflowEngine = engine;
+  }
+
   private async executeTool(invocation: ToolInvocationInput): Promise<unknown> {
     const tool = ORCHESTRATOR_TOOLS[invocation.toolId];
 
@@ -465,6 +476,7 @@ export class ToolServiceImpl implements ToolService {
         conversations: this.conversations,
         goals: this.goals,
         ...this.delegates,
+        workflowEngine: this.workflowEngine,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
         agentAttachmentRoot: this.agentAttachmentRoot,
         attachmentStoreRoot: this.attachmentStoreRoot,

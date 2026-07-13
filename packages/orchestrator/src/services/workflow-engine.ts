@@ -58,6 +58,7 @@ export interface SpawnAgentNodeInput {
   organizationId: string;
   workflowRunId: string;
   workflowName: string;
+  initiatedBy: string;
   nodeRunId: string;
   nodeId: string;
   agentId: string;
@@ -88,6 +89,7 @@ export interface RaiseApprovalInput {
 export interface StartGoalInput {
   organizationId: string;
   workflowRunId: string;
+  initiatedBy: string;
   channelId: string;
   threadId: string;
   title: string;
@@ -498,6 +500,7 @@ export class WorkflowEngineService {
         organizationId: run.organizationId,
         workflowRunId: run.id,
         workflowName: run.name,
+        initiatedBy: run.initiatedBy,
         nodeRunId,
         nodeId: node.id,
         agentId: node.config.agentId,
@@ -608,6 +611,7 @@ export class WorkflowEngineService {
       const {goalId} = await this.effects.startGoal({
         organizationId: run.organizationId,
         workflowRunId: run.id,
+        initiatedBy: run.initiatedBy,
         channelId: run.channelId,
         threadId: run.threadId,
         title,

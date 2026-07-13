@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Repository } from '@ujima/runtime-core';
-import type { AuthService, AuthState } from '@ujima/orchestrator';
+import type { AuthService, AuthState, WorkflowEngineService } from '@ujima/orchestrator';
 import {
   WorkflowEdgeSchema,
   WorkflowNodeSchema,
+  WorkflowTransitionActionSchema,
   validateWorkflowGraph,
   type WorkflowDefinition,
 } from '@ujima/shared';
@@ -14,6 +15,7 @@ import { readSessionToken } from '../session-token.js';
 interface WorkflowRouteDeps {
   repo: Repository;
   auth: AuthService;
+  workflowEngine: WorkflowEngineService;
 }
 
 type AuthedMember = AuthState & {
@@ -188,5 +190,67 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
       run,
       nodeRuns: deps.repo.listWorkflowNodeRuns(run.id),
     });
+  });
+
+  // Start a run. Requires a channel + thread to run the agent steps in.
+  api.post('/workflows/:id/run', async (
+    req: FastifyRequest<{ Params: { id: string } }>,
+    reply,
+  ) => {
+    const auth = requireMember(deps, req, reply);
+    if (!auth) return;
+    const parsed = z
+      .object({ input: z.string().default(''), channelId: z.string().min(1), threadId: z.string().min(1) })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ code: 'ERR_BAD_REQUEST', message: 'channelId and threadId are required' });
+    }
+    const def = deps.repo.getWorkflowDefinition(auth.user.organizationId, req.params.id);
+    if (!def) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Workflow not found' });
+    try {
+      const { workflowRunId } = await deps.workflowEngine.startRun({
+        organizationId: auth.user.organizationId,
+        definitionId: def.id,
+        input: parsed.data.input,
+        initiatedBy: auth.member.id,
+        channelId: parsed.data.channelId,
+        threadId: parsed.data.threadId,
+      });
+      return reply.status(201).send({ workflow_run_id: workflowRunId });
+    } catch (error) {
+      return sendRouteError(reply, error);
+    }
+  });
+
+  const TransitionBodySchema = z.object({
+    action: WorkflowTransitionActionSchema,
+    idempotency_key: z.string().min(1),
+    rejection_reason: z.string().optional(),
+  });
+
+  api.post('/workflow-runs/:id/transition', async (
+    req: FastifyRequest<{ Params: { id: string } }>,
+    reply,
+  ) => {
+    const auth = requireMember(deps, req, reply);
+    if (!auth) return;
+    const run = deps.repo.getWorkflowRun(auth.user.organizationId, req.params.id);
+    if (!run) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Workflow run not found' });
+    const parsed = TransitionBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ code: 'ERR_BAD_REQUEST', message: 'action and idempotency_key are required' });
+    }
+    try {
+      const result = await deps.workflowEngine.transition({
+        organizationId: auth.user.organizationId,
+        workflowRunId: run.id,
+        action: parsed.data.action,
+        idempotencyKey: parsed.data.idempotency_key,
+        rejectionReason: parsed.data.rejection_reason,
+      });
+      return reply.status(200).send(result);
+    } catch (error) {
+      return sendRouteError(reply, error);
+    }
   });
 }

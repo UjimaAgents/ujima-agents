@@ -202,7 +202,7 @@ export class SpiritService extends SpiritServiceSupervisor {
     }
 
     const run = RunStateSchema.parse({
-      id: randomUUID(),
+      id: input.runId ?? randomUUID(),
       organizationId: input.organizationId,
       agentId: input.agentId,
       threadId: input.threadId,
