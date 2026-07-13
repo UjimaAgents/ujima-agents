@@ -1714,8 +1714,17 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     // thread. Gated to real human messages so the engine's own system prompts
     // and agent replies can't re-trigger it.
     const trimmed = (msg.content ?? '').trim();
-    const wfMatch = /^@workflow\s+(\S+)\s*([\s\S]*)$/i.exec(trimmed);
-    const wfName = wfMatch?.[1];
+    // Accepts both "@workflow <name> <input>" and the composer's asset token
+    // "@workflow:<name> <input>".
+    const wfMatch = /^@workflow[:\s]+([^\s:]+)\s*([\s\S]*)$/i.exec(trimmed);
+    let wfName = wfMatch?.[1];
+    if (wfName) {
+      try {
+        wfName = decodeURIComponent(wfName);
+      } catch {
+        // keep raw name if it isn't valid percent-encoding
+      }
+    }
     if (wfName && msg.senderKind === 'human' && msg.senderId !== 'system' && msg.threadId) {
       const threadId = msg.threadId;
       const channelId = msg.channelId ?? threadId;
