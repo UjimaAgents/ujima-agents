@@ -1693,6 +1693,71 @@ const MIGRATIONS: Migration[] = [
         ON wake_intents(organization_id, member_id, status);
     `,
   },
+  {
+    id: "060_workflows",
+    up: `
+      CREATE TABLE IF NOT EXISTS workflow_definitions (
+        id               TEXT PRIMARY KEY,
+        organization_id  TEXT NOT NULL,
+        name             TEXT NOT NULL,
+        description      TEXT,
+        graph_json       TEXT NOT NULL,
+        version          INTEGER NOT NULL DEFAULT 1,
+        created_by       TEXT,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_definitions_org
+        ON workflow_definitions(organization_id, name);
+
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        id                     TEXT PRIMARY KEY,
+        organization_id        TEXT NOT NULL,
+        workflow_definition_id TEXT,
+        name                   TEXT NOT NULL,
+        graph_snapshot         TEXT NOT NULL,
+        graph_sha256           TEXT NOT NULL,
+        input_text             TEXT,
+        status                 TEXT NOT NULL,
+        initiated_by           TEXT NOT NULL,
+        channel_id             TEXT NOT NULL,
+        thread_id              TEXT NOT NULL,
+        last_transition_token  TEXT,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_org_status
+        ON workflow_runs(organization_id, status, updated_at);
+
+      CREATE TABLE IF NOT EXISTS workflow_node_runs (
+        id                  TEXT PRIMARY KEY,
+        workflow_run_id     TEXT NOT NULL REFERENCES workflow_runs(id),
+        node_id             TEXT NOT NULL,
+        attempt             INTEGER NOT NULL,
+        kind                TEXT NOT NULL,
+        agent_id            TEXT,
+        child_run_id        TEXT,
+        output_path         TEXT,
+        output_sha256       TEXT,
+        output_size_bytes   INTEGER,
+        output_json         TEXT,
+        summary             TEXT,
+        approval_request_id TEXT,
+        status              TEXT NOT NULL,
+        failure_reason      TEXT,
+        started_at          TEXT,
+        completed_at        TEXT,
+        UNIQUE (workflow_run_id, node_id, attempt)
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run
+        ON workflow_node_runs(workflow_run_id, status);
+
+      ALTER TABLE runs ADD COLUMN workflow_run_id TEXT;
+      ALTER TABLE runs ADD COLUMN workflow_node_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_runs_workflow
+        ON runs(workflow_run_id);
+    `,
+  },
 ];
 
 export interface DbOptions {

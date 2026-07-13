@@ -43,6 +43,9 @@ import type {
   InteractiveQuestion,
   WorkspaceFile,
   WorkspaceMember,
+  WorkflowDefinition,
+  WorkflowRun,
+  WorkflowNodeRun,
 } from '@ujima/shared';
 import {
   findAuthUsersByEmail as readAuthUsersByEmail,
@@ -167,6 +170,21 @@ import {
   listRunSteps as readRunSteps,
   saveRunStep as writeRunStep,
 } from './run-steps.js';
+import {
+  deleteWorkflowDefinition as removeWorkflowDefinition,
+  getWorkflowDefinition as readWorkflowDefinition,
+  getWorkflowDefinitionByName as readWorkflowDefinitionByName,
+  getWorkflowNodeRun as readWorkflowNodeRun,
+  getWorkflowNodeRunByNode as readWorkflowNodeRunByNode,
+  getWorkflowRun as readWorkflowRun,
+  listWorkflowDefinitions as readWorkflowDefinitions,
+  listWorkflowNodeRuns as readWorkflowNodeRuns,
+  listWorkflowRuns as readWorkflowRuns,
+  listWorkflowRunsByStatus as readWorkflowRunsByStatus,
+  saveWorkflowDefinition as writeWorkflowDefinition,
+  saveWorkflowNodeRun as writeWorkflowNodeRun,
+  saveWorkflowRun as writeWorkflowRun,
+} from './workflow-store.js';
 import {
   findOpenTaskSessionForChannel as readOpenTaskSessionForChannel,
   getTaskSession as readTaskSession,
@@ -615,6 +633,46 @@ export class Repository {
     threadId: string,
     messageId: string,
   ): boolean => readPendingWakeIntent(this.db, organizationId, memberId, threadId, messageId);
+
+  saveWorkflowDefinition = (def: WorkflowDefinition): WorkflowDefinition =>
+    writeWorkflowDefinition(this.db, def);
+  getWorkflowDefinition = (
+    organizationId: string,
+    id: string,
+  ): WorkflowDefinition | null => readWorkflowDefinition(this.db, organizationId, id);
+  getWorkflowDefinitionByName = (
+    organizationId: string,
+    name: string,
+  ): WorkflowDefinition | null =>
+    readWorkflowDefinitionByName(this.db, organizationId, name);
+  listWorkflowDefinitions = (organizationId: string): WorkflowDefinition[] =>
+    readWorkflowDefinitions(this.db, organizationId);
+  deleteWorkflowDefinition = (organizationId: string, id: string): void =>
+    removeWorkflowDefinition(this.db, organizationId, id);
+  saveWorkflowRun = (run: WorkflowRun): WorkflowRun =>
+    writeWorkflowRun(this.db, run);
+  getWorkflowRun = (organizationId: string, runId: string): WorkflowRun | null =>
+    readWorkflowRun(this.db, organizationId, runId);
+  listWorkflowRuns = (organizationId: string, status?: string): WorkflowRun[] =>
+    readWorkflowRuns(this.db, organizationId, status);
+  listWorkflowRunsByStatus = (
+    organizationId: string,
+    statuses: string[],
+  ): WorkflowRun[] => readWorkflowRunsByStatus(this.db, organizationId, statuses);
+  saveWorkflowNodeRun = (nodeRun: WorkflowNodeRun): WorkflowNodeRun =>
+    writeWorkflowNodeRun(this.db, nodeRun);
+  getWorkflowNodeRun = (
+    workflowRunId: string,
+    id: string,
+  ): WorkflowNodeRun | null => readWorkflowNodeRun(this.db, workflowRunId, id);
+  getWorkflowNodeRunByNode = (
+    workflowRunId: string,
+    nodeId: string,
+    attempt: number,
+  ): WorkflowNodeRun | null =>
+    readWorkflowNodeRunByNode(this.db, workflowRunId, nodeId, attempt);
+  listWorkflowNodeRuns = (workflowRunId: string): WorkflowNodeRun[] =>
+    readWorkflowNodeRuns(this.db, workflowRunId);
 
   saveTaskSession = (session: TaskSession): TaskSession =>
     writeTaskSession(this.db, session);
@@ -1103,8 +1161,9 @@ import type { ChannelStore } from './channel-store.js';
 import type { MessageStore } from './message-store.js';
 import type { MemberStore } from './member-store.js';
 import type { RunStore } from './run-store.js';
+import type { WorkflowStore } from './workflow-store.js';
 
-export interface Repository extends PluginRepository, ChannelStore, MessageStore, MemberStore, RunStore {}
+export interface Repository extends PluginRepository, ChannelStore, MessageStore, MemberStore, RunStore, WorkflowStore {}
 
 export type {
   BootstrapSnapshot,

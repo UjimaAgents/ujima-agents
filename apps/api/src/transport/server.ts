@@ -71,6 +71,7 @@ import {
   registerTelegramWebhookRoute,
 } from "./routes/notifications.js";
 import {registerGoalRoutes} from "./routes/goals.js";
+import {registerWorkflowRoutes} from "./routes/workflows.js";
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -395,6 +396,10 @@ export function createTransport(opts: TransportOptions): Transport {
           conversations: services.conversations,
         });
         registerChannelMemberModeRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+        });
+        registerWorkflowRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
         });

@@ -20,6 +20,36 @@ export {
 } from './types';
 
 export { AiService } from './ai-service.js';
+export {
+  WorkflowEngineService,
+  WorkflowValidationError,
+} from './services/workflow-engine.js';
+export type {
+  WorkflowEngineStore,
+  WorkflowEffects,
+  SpawnAgentNodeInput,
+  RaiseApprovalInput,
+  StartGoalInput,
+  StatOutputInput,
+  NotifyInitiatorInput,
+  StartRunInput,
+  NodeCompleteInput,
+  TransitionInput,
+  TransitionResult,
+} from './services/workflow-engine.js';
+export {
+  resolveAttachedSubnodes,
+  resolveTokens,
+  buildNodeOutputs,
+  buildWorkflowWakeContext,
+  defaultAgentOutputPath,
+  resolveGoalHandoff,
+} from './services/workflow-node-executors.js';
+export type {
+  SkillRef,
+  AttachedSubnodes,
+  TokenContext,
+} from './services/workflow-node-executors.js';
 export { buildMcpToolDefinitionsV2 } from './services/connector-spawn-v2.js';
 export type { SpiritMcpPool } from './services/spirit-types.js';
 export type { McpRuntimeConnection } from './services/mcp-runtime.js';
