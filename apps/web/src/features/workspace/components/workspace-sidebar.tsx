@@ -8,6 +8,7 @@ import {
   CircleUserRound,
   Hash,
   KanbanSquare,
+  Workflow,
   LogOut,
   Moon,
   PanelRight,
@@ -544,6 +545,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
               label="Tasks"
               active={tasksActive}
               onClick={onOpenTasks}
+            />
+            <SidebarItem
+              icon={<Workflow className="h-4 w-4" />}
+              label="Workflows"
+              onClick={() => router.push("/workflows")}
             />
           </div>
         </div>
