@@ -25,6 +25,7 @@ import {
   type ChatMessageData,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
+import { ChannelWorkflowsTab } from "@/features/workflows/channel-workflows-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
 import {
   getDirectMessageThreadId,
@@ -75,6 +76,7 @@ const CHANNEL_TABS: ChatTab[] = [
   { id: "members", label: "Members" },
   { id: "approvals", label: "Approvals" },
   { id: "tasks", label: "Tasks" },
+  { id: "workflows", label: "Workflows" },
   { id: "culture", label: "Culture" },
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
@@ -1199,6 +1201,15 @@ export function ChannelView({
             />
           ) : (
             <TabEmpty context="tasks" label="No organization context available." />
+          )
+        ) : activeTab === "workflows" ? (
+          conversation.type === "channel" && organizationId ? (
+            <ChannelWorkflowsTab
+              channelId={conversation.id}
+              threadId={currentThreadId ?? conversation.id}
+            />
+          ) : (
+            <TabEmpty context="generic" label="Workflows are available in channels." />
           )
         ) : activeTab === "culture" ? (
           (conversation.type === "channel" || conversation.type === "agent") && organizationId ? (

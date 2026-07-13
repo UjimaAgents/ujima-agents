@@ -12,6 +12,7 @@ import type {
 export interface WorkflowInput {
   name: string;
   description?: string;
+  channelId?: string | null;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
 }
@@ -42,10 +43,25 @@ async function parse<T>(res: Response, fallback: string): Promise<T> {
   return body as T;
 }
 
-export async function listWorkflows(): Promise<WorkflowDefinition[]> {
-  const res = await fetch("/api/workflows", { cache: "no-store" });
+export async function listWorkflows(channelId?: string): Promise<WorkflowDefinition[]> {
+  const url = channelId ? `/api/workflows?channelId=${encodeURIComponent(channelId)}` : "/api/workflows";
+  const res = await fetch(url, { cache: "no-store" });
   const body = await parse<{ workflows: WorkflowDefinition[] }>(res, "Unable to list workflows.");
   return body.workflows;
+}
+
+export async function runWorkflow(
+  id: string,
+  input: string,
+  channelId: string,
+  threadId: string,
+): Promise<{ workflow_run_id: string }> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input, channelId, threadId }),
+  });
+  return parse<{ workflow_run_id: string }>(res, "Unable to start workflow.");
 }
 
 export async function getWorkflow(id: string): Promise<WorkflowDefinition> {

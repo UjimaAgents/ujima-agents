@@ -4,9 +4,11 @@ import { daemonFetch, getSessionTokenFromCookie } from "@/server/ujima-daemon";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const response = await daemonFetch("/api/workflows", {}, await getSessionTokenFromCookie());
+    const channelId = new URL(request.url).searchParams.get("channelId");
+    const path = channelId ? `/api/workflows?channelId=${encodeURIComponent(channelId)}` : "/api/workflows";
+    const response = await daemonFetch(path, {}, await getSessionTokenFromCookie());
     const body = await response.json().catch(() => null);
     if (!response.ok) {
       return NextResponse.json(parseApiError(body, "Unable to list workflows."), { status: response.status });

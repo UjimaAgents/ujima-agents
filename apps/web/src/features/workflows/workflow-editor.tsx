@@ -2,7 +2,7 @@
 
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   addEdge,
   Background,
@@ -52,7 +52,11 @@ function newTriggerGraph() {
 
 function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const isNew = workflowId === "new";
+  const [channelId, setChannelId] = useState<string | null>(
+    isNew ? searchParams.get("channelId") : null,
+  );
 
   const initialFlow = useMemo(
     () => (isNew ? newTriggerGraph() : { flowNodes: [] as FlowNode[], flowEdges: [] as Edge[] }),
@@ -79,6 +83,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         setEdges(flowEdges);
         setName(def.name);
         setDescription(def.description ?? "");
+        setChannelId(def.channelId ?? null);
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load."))
       .finally(() => !cancelled && setLoading(false));
@@ -150,6 +155,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     const input: WorkflowInput = {
       name: name.trim(),
       description: description.trim() || undefined,
+      channelId,
       nodes: graph.nodes,
       edges: graph.edges,
     };
@@ -168,7 +174,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     } finally {
       setSaving(false);
     }
-  }, [name, description, nodes, edges, isNew, workflowId, router]);
+  }, [name, description, channelId, nodes, edges, isNew, workflowId, router]);
 
   if (loading) {
     return (
@@ -195,6 +201,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
           placeholder="Untitled workflow"
           className="min-w-0 flex-1 bg-transparent text-base font-semibold text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
         />
+        <span className="shrink-0 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          {channelId ? "Scoped to this channel" : "All channels"}
+        </span>
         <button
           type="button"
           onClick={onSave}

@@ -28,6 +28,7 @@ export type WorkspaceTab =
   | "files"
   | "activity"
   | "tasks"
+  | "workflows"
   | "members"
   | "culture";
 export type WorkspaceDetailsTab = "Thinking trace" | "Changes" | "Metadata";
