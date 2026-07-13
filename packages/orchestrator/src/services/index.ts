@@ -1966,16 +1966,20 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
     // If this run backs a workflow node, capture its envelope + advance the
-    // graph. Idempotent + no-op for non-workflow runs.
-    const wfNodeRun = context.repo.getWorkflowNodeRunByChildRun(run.id);
-    if (wfNodeRun) {
-      await workflowEngine.onNodeComplete({
-        organizationId: run.organizationId,
-        workflowRunId: wfNodeRun.workflowRunId,
-        nodeRunId: wfNodeRun.id,
-        failed: run.status !== 'completed',
-        failureReason: run.status !== 'completed' ? `agent_run_${run.status}` : undefined,
-      });
+    // graph. Only act on truly terminal runs — a run that pauses for tool
+    // approval / input is not done and will re-fire this hook when it resumes.
+    const wfTerminal = ['completed', 'failed', 'cancelled'];
+    if (wfTerminal.includes(run.status)) {
+      const wfNodeRun = context.repo.getWorkflowNodeRunByChildRun(run.id);
+      if (wfNodeRun) {
+        await workflowEngine.onNodeComplete({
+          organizationId: run.organizationId,
+          workflowRunId: wfNodeRun.workflowRunId,
+          nodeRunId: wfNodeRun.id,
+          failed: run.status !== 'completed',
+          failureReason: run.status !== 'completed' ? `agent_run_${run.status}` : undefined,
+        });
+      }
     }
 
     const sourceMessageId = run.sourceMessageId;

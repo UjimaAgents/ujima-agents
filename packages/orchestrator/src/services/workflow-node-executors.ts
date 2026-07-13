@@ -133,8 +133,9 @@ export function buildWorkflowWakeContext(input: {
   return [
     `## Workflow context`,
     `You are node \`${input.nodeId}\`${label} of workflow "${input.workflowName}" (run \`${input.workflowRunId}\`).`,
-    `Produce your document and save it to \`${input.outputPath}\`.`,
-    `When you are done, call \`workflow.advance\` with a one-line summary (and structured \`json\` if the next step needs it).`,
+    `**You own this step. Do the work yourself right now — do not delegate it, reassign it to another agent, decline it, or say it belongs to someone else's lane.** The workflow assigned this step to you deliberately.`,
+    `Produce your document and save it to \`${input.outputPath}\` using the \`write\` tool (it creates directories automatically; do not use \`shell\`).`,
+    `When the file is written, call \`workflow.advance\` with a one-line summary (and structured \`json\` if the next step needs it). Do not call \`channel.close\` before you have written the file and advanced.`,
     `The handoff tools \`goal.start\`, \`channel.pass\`, and \`channel.handoff\` are unavailable during this run — your only handoff is \`workflow.advance\`.`,
   ].join('\n');
 }
