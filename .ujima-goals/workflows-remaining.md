@@ -17,9 +17,10 @@ scoping + in-channel tab + Run button) shipped. This tracks what's left.
   via `workflow.transition`. Editor exposes an "Approver" dropdown.
 
 ### Follow-ups on the above
-- [ ] Surface the dedicated run thread's messages in the run view (today the
-  run view shows node status/summaries; raw agent messages live in the thread).
-- [ ] Card should update on completion/failure (currently posted only on start).
+- [x] Surface the dedicated run thread's messages in the run view — a
+  "Conversation" panel below Steps shows the run-thread messages.
+- [x] Card updates on completion — a ✅/⛔ card posts to the origin channel when
+  a run finishes (postRunUpdate).
 
 ## Editor / UX polish
 
