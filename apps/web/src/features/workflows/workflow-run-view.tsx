@@ -35,7 +35,7 @@ function latestByNode(nodeRuns: WorkflowNodeRun[]): Map<string, WorkflowNodeRun>
 
 export function WorkflowRunView({ runId }: { runId: string }) {
   const router = useRouter();
-  const { detail, loading, error, busy, act } = useWorkflowRun(runId);
+  const { detail, loading, error, busy, act, reload } = useWorkflowRun(runId);
 
   const statusByNode = useMemo(
     () => (detail ? latestByNode(detail.nodeRuns) : new Map<string, WorkflowNodeRun>()),
@@ -118,7 +118,7 @@ export function WorkflowRunView({ runId }: { runId: string }) {
         </div>
 
         <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
-          <WorkflowRunSidePanel runId={runId} detail={detail} />
+          <WorkflowRunSidePanel runId={runId} detail={detail} onReload={reload} />
         </aside>
       </div>
     </div>

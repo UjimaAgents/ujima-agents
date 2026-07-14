@@ -245,11 +245,41 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     const memberName = (id: string | null | undefined) =>
       id ? (deps.repo.getMember(orgId, id)?.name ?? id) : undefined;
     // Node runs carry the execution timeline; resolve the agent behind each one
-    // so the run view can show who did what, when.
+    // plus the tool calls it made, so the run view can show who did what, when —
+    // the agent's actual activity, not just its final text.
     const nodeRuns = deps.repo.listWorkflowNodeRuns(run.id).map((nr) => ({
       ...nr,
       agentName: memberName(nr.agentId),
+      toolSteps: nr.childRunId
+        ? (deps.repo.listRunSteps?.(orgId, nr.childRunId) ?? [])
+            .slice(-40)
+            .map((s) => ({
+              tool: s.toolId,
+              action: s.action,
+              status: s.status,
+              resourcePath: s.resourcePath || undefined,
+              at: s.createdAt,
+            }))
+        : [],
     }));
+    // A child agent run can stall on its own tool approval (a filesystem write,
+    // an MCP call). That approval lives in the isolated run thread and otherwise
+    // never reaches the operator — so the run looks "stuck". Surface it here so
+    // the run view can show + resolve it.
+    const childNodeByRun = new Map(
+      nodeRuns.filter((n) => n.childRunId).map((n) => [n.childRunId as string, n.nodeId]),
+    );
+    const blockingApprovals = deps.repo
+      .listPendingApprovals(orgId)
+      .filter((a) => a.runId && childNodeByRun.has(a.runId))
+      .map((a) => ({
+        id: a.id,
+        nodeId: childNodeByRun.get(a.runId as string),
+        agentName: memberName(a.requestedBy),
+        resourceType: a.resourceType,
+        action: a.action,
+        resourcePath: a.resourcePath,
+      }));
     // The run executes in a dedicated thread — surface its conversation, but drop
     // the workflow's own status cards/reminders (▶ started / ✅ completed / ⚠️
     // needs attention). Those are channel meta, not agent interaction.
@@ -271,6 +301,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
       run,
       nodeRuns,
       messages,
+      blockingApprovals,
     });
   });
 

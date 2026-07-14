@@ -138,12 +138,50 @@ export interface WorkflowRunMessage {
   content: string;
   createdAt: string;
 }
-export type WorkflowNodeRunView = WorkflowNodeRun & { agentName?: string };
+export interface WorkflowToolStep {
+  tool: string;
+  action: string;
+  status: string;
+  resourcePath?: string;
+  at: string;
+}
+export type WorkflowNodeRunView = WorkflowNodeRun & {
+  agentName?: string;
+  toolSteps?: WorkflowToolStep[];
+};
+
+export interface WorkflowBlockingApproval {
+  id: string;
+  nodeId?: string;
+  agentName?: string;
+  resourceType: string;
+  action: string;
+  resourcePath: string;
+}
 
 export interface WorkflowRunDetail {
   run: WorkflowRun;
   nodeRuns: WorkflowNodeRunView[];
   messages: WorkflowRunMessage[];
+  blockingApprovals: WorkflowBlockingApproval[];
+}
+
+/** Resolve a tool approval that is blocking a workflow's agent step. */
+export async function resolveBlockingApproval(
+  approvalId: string,
+  organizationId: string,
+  resolution: "allow_once" | "reject",
+): Promise<void> {
+  const res = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      organizationId,
+      resolution,
+      reason: `Resolved from workflow run view (${resolution}).`,
+    }),
+  });
+  await parse<unknown>(res, "Unable to resolve approval.");
 }
 
 export async function getWorkflowRun(id: string): Promise<WorkflowRunDetail> {

@@ -25,7 +25,7 @@ export function WorkflowRunDrawer({ runId, onClose }: { runId: string | null; on
 }
 
 function DrawerBody({ runId, onClose }: { runId: string; onClose: () => void }) {
-  const { detail, loading, error, busy, act } = useWorkflowRun(runId);
+  const { detail, loading, error, busy, act, reload } = useWorkflowRun(runId);
   const run = detail?.run;
 
   return (
@@ -91,7 +91,7 @@ function DrawerBody({ runId, onClose }: { runId: string; onClose: () => void }) 
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col">
-              <WorkflowRunSidePanel runId={runId} detail={detail} />
+              <WorkflowRunSidePanel runId={runId} detail={detail} onReload={reload} />
             </div>
           )}
         </div>
