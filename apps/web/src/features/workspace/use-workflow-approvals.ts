@@ -48,28 +48,48 @@ export async function resolveWorkflowGate(
   );
 }
 
+const WORKFLOW_APPROVALS_POLL_MS = 15000;
+
 /**
  * Polls pending workflow gates and feeds them into the approval store, so they
  * surface in the same "Approval N of M" queue + floating pending pill as MCP
  * approvals. Mounted once at the workspace shell.
+ *
+ * Kept deliberately light: it pauses while the tab is hidden and only writes to
+ * the store when the pending set actually changed (a signature compare), so a
+ * steady state costs one cheap request per interval and zero re-renders.
  */
 export function useWorkflowApprovalsPoll(): void {
   const setWorkflowApprovals = useWorkspaceStore((state) => state.setWorkflowApprovals);
   useEffect(() => {
     let cancelled = false;
+    let lastSignature = "";
     const tick = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const list = await listWorkflowApprovals();
-        if (!cancelled) setWorkflowApprovals(list.map(workflowApprovalToCard));
+        if (cancelled) return;
+        const signature = list
+          .map((a) => `${a.id}:${a.workflowRunId}:${a.nodeId}`)
+          .sort()
+          .join("|");
+        if (signature === lastSignature) return; // unchanged — skip the store write
+        lastSignature = signature;
+        setWorkflowApprovals(list.map(workflowApprovalToCard));
       } catch {
         // Transient — keep the last known set until the next tick.
       }
     };
     void tick();
-    const timer = setInterval(() => void tick(), 5000);
+    const timer = setInterval(() => void tick(), WORKFLOW_APPROVALS_POLL_MS);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) void tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [setWorkflowApprovals]);
 }
