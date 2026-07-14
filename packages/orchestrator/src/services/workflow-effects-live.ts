@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { RunState } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
@@ -73,6 +73,15 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     });
     this.deps.conversations.publishMessage(message, [], undefined, { wakePolicy: 'never' });
 
+    // Preload the attached `ai_skill` sub-nodes into the run's system prompt so
+    // the agent follows the skill's instructions for this step (mirrors what
+    // `skill.read` injects, but automatically — the skill is chosen by the graph).
+    const skillBlocks = this.loadSkillBlocks(input.organizationId, input.skills);
+    const systemPromptSuffix =
+      skillBlocks.length > 0
+        ? `The following skills are pre-loaded for this workflow step — follow their instructions:\n\n${skillBlocks.join('\n\n')}`
+        : undefined;
+
     // Fire the run; completion is handled by the run-completed hook.
     void this.deps.spirits
       .createRun({
@@ -83,6 +92,7 @@ export class LiveWorkflowEffects implements WorkflowEffects {
         sourceMessageId: message.id,
         byMemberId: input.initiatedBy,
         summary: `Workflow ${input.workflowName} · step ${input.nodeId}`,
+        ...(systemPromptSuffix ? { systemPromptSuffix } : {}),
       })
       .catch((err) => {
         void this.engine?.onNodeComplete({
@@ -95,6 +105,48 @@ export class LiveWorkflowEffects implements WorkflowEffects {
       });
 
     return { childRunId: runId };
+  }
+
+  /**
+   * Load each attached skill's SKILL.md and render a `<loaded_skill>` block (the
+   * same shape `skill.read` produces), so the workflow can pre-attach a skill to
+   * an agent step and have the agent actually follow it.
+   */
+  private loadSkillBlocks(
+    organizationId: string,
+    skills: { skillName: string; arguments?: Record<string, unknown> }[],
+  ): string[] {
+    if (!skills || skills.length === 0) return [];
+    const installed = this.deps.repo.listOrganizationSkillInstalls?.(organizationId) ?? [];
+    const blocks: string[] = [];
+    for (const ref of skills) {
+      const skill = installed.find((s) => s.commandName === ref.skillName);
+      if (!skill) continue;
+      const plugin = this.deps.repo.getPluginInstall?.(organizationId, skill.pluginInstallId);
+      if (!plugin) continue;
+      let markdown: string | null = null;
+      try {
+        markdown = readFileSync(resolve(plugin.localPath, skill.skillPath), 'utf8');
+      } catch {
+        markdown = null;
+      }
+      if (!markdown) continue;
+      const argsText =
+        ref.arguments && Object.keys(ref.arguments).length > 0 ? JSON.stringify(ref.arguments) : '';
+      blocks.push(
+        [
+          '<loaded_skill>',
+          `  <name>${skill.commandName}</name>`,
+          `  <description>${skill.description}</description>`,
+          `  <arguments>${argsText}</arguments>`,
+          '  <instructions>',
+          markdown.trim(),
+          '  </instructions>',
+          '</loaded_skill>',
+        ].join('\n'),
+      );
+    }
+    return blocks;
   }
 
   async raiseApproval(input: RaiseApprovalInput): Promise<{ approvalRequestId: string }> {
