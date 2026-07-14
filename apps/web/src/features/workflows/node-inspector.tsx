@@ -23,6 +23,8 @@ const NODE_HELP: Record<WorkflowNodeKind, string> = {
     "A skill capability attached to an agent (dashed link) — the agent may use it while running its step. It is not a step on its own.",
   tool:
     "A tool capability attached to an agent (dashed link) — the agent may call it while running its step. It is not a step on its own.",
+  output:
+    "Declares the output format for the step feeding into it. The upstream agent is told to write its document in this format (and at this path), then it's passed to the next step.",
 };
 
 interface Props {
@@ -281,6 +283,54 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 />
               </FieldShell>
             )}
+          </>
+        )}
+
+        {node.kind === "output" && (
+          <>
+            <FieldShell
+              label="Format"
+              htmlFor="output-format"
+              hint="The agent feeding this node is told to produce its output in this format."
+            >
+              <select
+                id="output-format"
+                className={SELECT_CLASS}
+                value={node.config.format}
+                onChange={(e) => onChange(patch(node, { format: e.target.value }))}
+              >
+                <option value="markdown">Markdown</option>
+                <option value="text">Plain text</option>
+                <option value="table">Table (Markdown)</option>
+                <option value="json">JSON</option>
+                <option value="csv">CSV</option>
+              </select>
+            </FieldShell>
+            <FieldShell
+              label="Format details"
+              htmlFor="output-instructions"
+              hint="Optional. Describe the exact shape, e.g. a table with columns Name | URL | Status."
+            >
+              <TextArea
+                id="output-instructions"
+                rows={4}
+                value={node.config.instructions ?? ""}
+                placeholder="A table with columns: Topic | Note"
+                onChange={(e) => onChange(patch(node, { instructions: e.target.value || undefined }))}
+              />
+            </FieldShell>
+            <FieldShell
+              label="Output path"
+              htmlFor="output-path"
+              hint="Where the formatted file is written. Defaults to the upstream agent's path."
+            >
+              <TextInput
+                id="output-path"
+                value={node.config.outputPath ?? ""}
+                placeholder="workflows/{{workflow_run_id}}/report.md"
+                onChange={(e) => onChange(patch(node, { outputPath: e.target.value || undefined }))}
+              />
+            </FieldShell>
           </>
         )}
       </div>

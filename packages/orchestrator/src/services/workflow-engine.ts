@@ -17,6 +17,8 @@ import {
   buildNodeOutputs,
   buildWorkflowWakeContext,
   defaultAgentOutputPath,
+  findDownstreamOutputSpec,
+  renderOutputFormatContract,
   resolveAttachedSubnodes,
   resolveGoalHandoff,
   resolveTokens,
@@ -609,6 +611,7 @@ export class WorkflowEngineService {
     if (node.kind === 'agent') return this.dispatchAgent(run, graph, node, outputs, attempt);
     if (node.kind === 'approval') return this.dispatchApproval(run, graph, node, outputs, attempt);
     if (node.kind === 'goal_handoff') return this.dispatchGoalHandoff(run, node, outputs, attempt);
+    if (node.kind === 'output') return this.dispatchOutput(run, graph, node, outputs, attempt);
   }
 
   private async dispatchAgent(
@@ -642,18 +645,25 @@ export class WorkflowEngineService {
     this.store.transaction(() => this.store.saveWorkflowNodeRun(base));
 
     const tokenCtx: TokenContext = {input: run.input ?? '', workflowRunId: run.id, outputs};
+    // A downstream `output` node declares the required format + owns the path.
+    const outputSpec = findDownstreamOutputSpec(graph, node.id);
     const outputPath = resolveTokens(
-      node.config.outputPath ?? defaultAgentOutputPath(run.id, node.id),
+      outputSpec?.config.outputPath ??
+        node.config.outputPath ??
+        defaultAgentOutputPath(run.id, node.id),
       tokenCtx,
     );
     const prompt = resolveTokens(node.config.prompt, {...tokenCtx, selfOutput: outputPath});
-    const systemPromptSuffix = buildWorkflowWakeContext({
+    let systemPromptSuffix = buildWorkflowWakeContext({
       workflowName: run.name,
       workflowRunId: run.id,
       nodeId: node.id,
       nodeLabel: node.label,
       outputPath,
     });
+    if (outputSpec) {
+      systemPromptSuffix += `\n\n${renderOutputFormatContract(outputSpec.config, outputPath)}`;
+    }
     const {skills, toolIds} = resolveAttachedSubnodes(graph, node.id);
 
     try {
@@ -817,6 +827,45 @@ export class WorkflowEngineService {
       });
       await this.notify(run.organizationId, run.id, `Goal handoff "${node.id}" failed`, node.id);
     }
+  }
+
+  /**
+   * An `output` node is a synchronous passthrough: the format it declares already
+   * shaped its upstream agent (see dispatchAgent), so here it just carries that
+   * agent's envelope forward and re-steps so the downstream node dispatches.
+   */
+  private async dispatchOutput(
+    run: WorkflowRun,
+    graph: WorkflowGraph,
+    node: Extract<WorkflowNode, {kind: 'output'}>,
+    outputs: Map<string, NodeOutput>,
+    attempt: number,
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const upstream = this.nearestUpstreamOutput(graph, node.id, outputs);
+    this.store.transaction(() =>
+      this.store.saveWorkflowNodeRun({
+        id: randomUUID(),
+        workflowRunId: run.id,
+        nodeId: node.id,
+        attempt,
+        kind: 'output',
+        agentId: null,
+        childRunId: null,
+        outputPath: upstream?.output_file ?? null,
+        outputSha256: null,
+        outputSizeBytes: null,
+        outputJson: upstream?.json,
+        summary: `Output · ${node.config.format}`,
+        approvalRequestId: null,
+        status: 'completed',
+        failureReason: null,
+        startedAt: nowIso,
+        completedAt: nowIso,
+      }),
+    );
+    // The output node completes synchronously; re-step to dispatch what's now ready.
+    await this.stepRun(run.organizationId, run.id);
   }
 
   // --- Internals ----------------------------------------------------------

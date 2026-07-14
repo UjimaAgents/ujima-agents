@@ -68,6 +68,43 @@ describe("WorkflowNodeSchema", () => {
       WorkflowNodeSchema.parse({id: "a", kind: "agent", position: {x: 0, y: 0}, config: {}}),
     ).toThrow();
   });
+
+  it("parses an output node and defaults the format to markdown", () => {
+    const node = WorkflowNodeSchema.parse({
+      id: "o",
+      kind: "output",
+      position: {x: 0, y: 0},
+      config: {},
+    });
+    expect(node.kind).toBe("output");
+    if (node.kind === "output") expect(node.config.format).toBe("markdown");
+  });
+});
+
+describe("validateWorkflowGraph — output node", () => {
+  function sopWithOutput(outputPath?: string): WorkflowGraph {
+    return graph({
+      nodes: [
+        {id: "t", kind: "trigger", position: {x: 0, y: 0}, config: {source: "mention"}},
+        {id: "a", kind: "agent", position: {x: 1, y: 0}, config: {agentId: "pm", prompt: "x"}},
+        {id: "out", kind: "output", position: {x: 2, y: 0}, config: {format: "table", outputPath}},
+      ],
+      edges: [
+        {id: "e1", source: "t", sourcePort: "main", target: "a", targetPort: "main"},
+        {id: "e2", source: "a", sourcePort: "main", target: "out", targetPort: "main"},
+      ],
+    });
+  }
+
+  it("accepts an output node on the main flow", () => {
+    expect(validateWorkflowGraph(sopWithOutput("workflows/{{workflow_run_id}}/out.md")).ok).toBe(true);
+  });
+
+  it("rejects an output node whose path escapes the workspace", () => {
+    const result = validateWorkflowGraph(sopWithOutput("/etc/passwd"));
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((i) => i.code === "output_path_escape")).toBe(true);
+  });
 });
 
 describe("parseWorkflowToken", () => {

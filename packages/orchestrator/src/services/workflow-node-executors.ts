@@ -140,6 +140,49 @@ export function buildWorkflowWakeContext(input: {
   ].join('\n');
 }
 
+export type OutputNodeConfig = Extract<WorkflowNode, {kind: 'output'}>['config'];
+
+/**
+ * When an agent node's single `main` successor is an `output` node, return that
+ * output node's spec. The engine uses it to direct the agent to produce the
+ * declared format at the output node's path.
+ */
+export function findDownstreamOutputSpec(
+  graph: WorkflowGraph,
+  agentNodeId: string,
+): {config: OutputNodeConfig; nodeId: string} | null {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n] as const));
+  for (const edge of graph.edges) {
+    if (edge.source !== agentNodeId || edge.targetPort !== 'main') continue;
+    const dst = byId.get(edge.target);
+    if (dst?.kind === 'output') return {config: dst.config, nodeId: dst.id};
+  }
+  return null;
+}
+
+const OUTPUT_FORMAT_LABEL: Record<OutputNodeConfig['format'], string> = {
+  markdown: 'a Markdown (.md) file',
+  text: 'a plain-text file',
+  table: 'a Markdown file whose body is a table',
+  json: 'a JSON file (valid, parseable JSON)',
+  csv: 'a CSV file (comma-separated, with a header row)',
+};
+
+/**
+ * The format directive appended to an agent's system prompt when a downstream
+ * output node declares the required format for this step.
+ */
+export function renderOutputFormatContract(cfg: OutputNodeConfig, outputPath: string): string {
+  const details = cfg.instructions?.trim()
+    ? ` Format details: ${cfg.instructions.trim()}.`
+    : '';
+  return [
+    `## Required output format`,
+    `Your output MUST be ${OUTPUT_FORMAT_LABEL[cfg.format]}.${details}`,
+    `Write it to \`${outputPath}\` using the \`write\` tool. Do not wrap the whole document in a code fence; write the ${cfg.format} content directly.`,
+  ].join('\n');
+}
+
 export interface GoalHandoffResult {
   title: string;
   tasks: unknown[];

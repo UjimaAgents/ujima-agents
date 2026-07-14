@@ -3,6 +3,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import {
   Bot,
+  FileOutput,
   Flag,
   Play,
   ShieldCheck,
@@ -69,6 +70,12 @@ export const NODE_KIND_STYLES: Record<WorkflowNodeKind, KindStyle> = {
     accent: "border-slate-300 dark:border-slate-500/50",
     iconWrap: "bg-slate-100 text-slate-600 dark:bg-slate-700/40 dark:text-slate-300",
   },
+  output: {
+    icon: FileOutput,
+    label: "Output",
+    accent: "border-indigo-300 dark:border-indigo-500/50",
+    iconWrap: "bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300",
+  },
 };
 
 /** Short one-line subtitle describing the node's config. */
@@ -86,6 +93,8 @@ export function nodeSubtitle(node: WorkflowNode): string {
       return "human approval gate";
     case "trigger":
       return node.config.source;
+    case "output":
+      return node.config.format;
   }
 }
 

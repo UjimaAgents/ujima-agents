@@ -23,6 +23,7 @@ export const WorkflowNodeKindSchema = z.enum([
   "goal_handoff",
   "skill",
   "tool",
+  "output",
 ]);
 export type WorkflowNodeKind = z.infer<typeof WorkflowNodeKindSchema>;
 
@@ -32,6 +33,7 @@ export const MAIN_FLOW_KINDS: readonly WorkflowNodeKind[] = [
   "agent",
   "approval",
   "goal_handoff",
+  "output",
 ];
 /** Kinds that attach to an agent as a capability sub-node. */
 export const SUBNODE_KINDS: readonly WorkflowNodeKind[] = ["skill", "tool"];
@@ -89,6 +91,23 @@ export const GoalHandoffNodeConfigSchema = z.object({
   tasksTemplate: z.string().optional(),
 });
 
+export const OutputFormatSchema = z.enum(["markdown", "text", "table", "json", "csv"]);
+export type OutputFormat = z.infer<typeof OutputFormatSchema>;
+
+/**
+ * A main-flow node that declares the required output format for the step feeding
+ * into it. The engine directs that upstream agent to write its document in this
+ * format at `outputPath`, then passes the file through to downstream nodes.
+ */
+export const OutputNodeConfigSchema = z.object({
+  format: OutputFormatSchema.default("markdown"),
+  // Free-text format details, e.g. "a table with columns Name | URL | Status".
+  instructions: z.string().optional(),
+  // Where the formatted file goes. May contain templating tokens; falls back to
+  // the upstream agent's path.
+  outputPath: z.string().optional(),
+});
+
 const baseNodeShape = {
   id: IdSchema,
   label: z.string().optional(),
@@ -128,6 +147,11 @@ export const WorkflowNodeSchema = z.discriminatedUnion("kind", [
     ...baseNodeShape,
     kind: z.literal("tool"),
     config: ToolNodeConfigSchema,
+  }),
+  z.object({
+    ...baseNodeShape,
+    kind: z.literal("output"),
+    config: OutputNodeConfigSchema.default({format: "markdown"}),
   }),
 ]);
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;
@@ -491,6 +515,17 @@ export function validateWorkflowGraph(
       checkTokens(node.config.titleTemplate, node, ancestors, byId, issues);
       if (node.config.tasksTemplate) {
         checkTokens(node.config.tasksTemplate, node, ancestors, byId, issues);
+      }
+    } else if (node.kind === "output") {
+      if (node.config.outputPath && isUnsafeWorkspacePath(node.config.outputPath)) {
+        issues.push({
+          code: "output_path_escape",
+          message: `Output node "${node.id}" output path escapes the workspace.`,
+          nodeId: node.id,
+        });
+      }
+      if (node.config.outputPath) {
+        checkTokens(node.config.outputPath, node, ancestors, byId, issues);
       }
     }
   }

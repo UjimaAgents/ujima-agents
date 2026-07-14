@@ -9,6 +9,7 @@ const ID_PREFIX: Record<WorkflowNodeKind, string> = {
   goal_handoff: "goal",
   skill: "skill",
   tool: "tool",
+  output: "output",
 };
 
 /** Compute a short, readable, unique id like `agent-2` for token references. */
@@ -41,5 +42,7 @@ export function createNode(
       return { ...base, kind, config: { skillName: "" } };
     case "tool":
       return { ...base, kind, config: { toolId: "" } };
+    case "output":
+      return { ...base, kind, config: { format: "markdown" } };
   }
 }

@@ -42,6 +42,7 @@ const PALETTE_KINDS: WorkflowNodeKind[] = [
   "agent",
   "skill",
   "tool",
+  "output",
   "approval",
   "goal_handoff",
   "trigger",
