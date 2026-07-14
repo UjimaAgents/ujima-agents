@@ -2,17 +2,44 @@
 
 import { useState } from "react";
 import { FileText, Loader2 } from "lucide-react";
-import type { WorkflowNodeRun } from "@ujima/shared";
 import { NODE_STATUS_STYLES } from "./nodes";
-import { getWorkflowRunArtifact, type WorkflowRunArtifact, type WorkflowRunDetail } from "./use-workflows";
+import {
+  getWorkflowRunArtifact,
+  type WorkflowNodeRunView,
+  type WorkflowRunArtifact,
+  type WorkflowRunDetail,
+} from "./use-workflows";
 
-function latestByNode(nodeRuns: WorkflowNodeRun[]): WorkflowNodeRun[] {
-  const map = new Map<string, WorkflowNodeRun>();
+function latestByNode(nodeRuns: WorkflowNodeRunView[]): WorkflowNodeRunView[] {
+  const map = new Map<string, WorkflowNodeRunView>();
   for (const nr of nodeRuns) {
     const prev = map.get(nr.nodeId);
     if (!prev || nr.attempt >= prev.attempt) map.set(nr.nodeId, nr);
   }
   return [...map.values()].sort((a, b) => (a.startedAt ?? "").localeCompare(b.startedAt ?? ""));
+}
+
+const KIND_LABEL: Record<string, string> = {
+  trigger: "Trigger",
+  agent: "Agent",
+  approval: "Approval",
+  goal_handoff: "Goal",
+  skill: "Skill",
+  tool: "Tool",
+};
+
+function fmtTime(iso?: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function fmtDuration(a?: string | null, b?: string | null): string {
+  if (!a || !b) return "";
+  const ms = new Date(b).getTime() - new Date(a).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 /**
@@ -56,19 +83,31 @@ export function WorkflowRunSidePanel({
   return (
     <>
       <div className="shrink-0 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "55%" }}>
-        <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Steps</p>
+        <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Timeline</p>
         {steps.length === 0 ? (
           <p className="px-1 text-xs text-zinc-400">No steps yet.</p>
         ) : (
           steps.map((nr) => {
             const s = NODE_STATUS_STYLES[nr.status];
             const isOpen = openPath === nr.outputPath;
+            const timing = [fmtTime(nr.startedAt), fmtDuration(nr.startedAt, nr.completedAt)]
+              .filter(Boolean)
+              .join(" · ");
             return (
               <div key={nr.id} className="rounded-lg border border-zinc-200 p-2.5 text-xs dark:border-zinc-800">
                 <div className="flex items-center gap-1.5">
-                  <span className={`h-2 w-2 rounded-full ${s.dot}`} />
-                  <span className="font-semibold text-zinc-800 dark:text-zinc-200">{nr.nodeId}</span>
-                  <span className="ml-auto text-[10px] uppercase text-zinc-400">{s.label}</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${s.dot}`} />
+                  <span className="truncate font-semibold text-zinc-800 dark:text-zinc-200">
+                    {nr.agentName ?? nr.nodeId}
+                  </span>
+                  <span className="shrink-0 rounded bg-zinc-100 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    {KIND_LABEL[nr.kind] ?? nr.kind}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[10px] uppercase text-zinc-400">{s.label}</span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-zinc-400">
+                  {nr.agentName && nr.nodeId !== nr.agentName && <span className="truncate">{nr.nodeId}</span>}
+                  {timing && <span className="ml-auto shrink-0">{timing}</span>}
                 </div>
                 {nr.summary && <p className="mt-1 text-zinc-600 dark:text-zinc-400">{nr.summary}</p>}
                 {nr.outputPath && (
@@ -113,15 +152,24 @@ export function WorkflowRunSidePanel({
 
       <div className="flex min-h-0 flex-1 flex-col border-t border-zinc-200 dark:border-zinc-800">
         <p className="shrink-0 px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-          Conversation
+          Agent activity
         </p>
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3">
           {detail.messages.length === 0 ? (
-            <p className="px-1 text-xs text-zinc-400">No messages yet.</p>
+            <p className="px-1 text-xs text-zinc-400">
+              {steps.some((nr) => nr.kind === "agent")
+                ? "No agent messages yet."
+                : "This workflow has no agent steps — nothing to show here."}
+            </p>
           ) : (
             detail.messages.map((m) => (
               <div key={m.id} className="rounded-lg bg-zinc-50 p-2 text-xs dark:bg-zinc-900/60">
-                <p className="font-semibold text-zinc-700 dark:text-zinc-300">{m.senderName}</p>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">{m.senderName}</span>
+                  {m.createdAt && (
+                    <span className="font-mono text-[10px] text-zinc-400">{fmtTime(m.createdAt)}</span>
+                  )}
+                </div>
                 <p className="mt-0.5 whitespace-pre-wrap break-words text-zinc-600 dark:text-zinc-400">
                   {m.content.length > 600 ? `${m.content.slice(0, 600)}…` : m.content}
                 </p>

@@ -241,21 +241,35 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     if (!auth) return;
     const run = deps.repo.getWorkflowRun(auth.user.organizationId, req.params.id);
     if (!run) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Workflow run not found' });
-    // The run executes in a dedicated thread — surface its conversation.
+    const orgId = auth.user.organizationId;
+    const memberName = (id: string | null | undefined) =>
+      id ? (deps.repo.getMember(orgId, id)?.name ?? id) : undefined;
+    // Node runs carry the execution timeline; resolve the agent behind each one
+    // so the run view can show who did what, when.
+    const nodeRuns = deps.repo.listWorkflowNodeRuns(run.id).map((nr) => ({
+      ...nr,
+      agentName: memberName(nr.agentId),
+    }));
+    // The run executes in a dedicated thread — surface its conversation, but drop
+    // the workflow's own status cards/reminders (▶ started / ✅ completed / ⚠️
+    // needs attention). Those are channel meta, not agent interaction.
+    const isStatusNoise = (content: string) =>
+      /^\s*(▶|✅|⛔|⚠️)\s*Workflow\b/.test(content);
     const messages = deps.repo
-      .listMessages(auth.user.organizationId, run.threadId, undefined, 100)
+      .listMessages(orgId, run.threadId, undefined, 100)
       .data.slice()
       .reverse()
+      .filter((m) => !isStatusNoise(m.content ?? ''))
       .map((m) => ({
         id: m.id,
-        senderName: deps.repo.getMember(auth.user.organizationId, m.senderId)?.name ?? m.senderId,
+        senderName: memberName(m.senderId) ?? m.senderId,
         senderKind: m.senderKind,
         content: m.content,
         createdAt: m.createdAt,
       }));
     return reply.status(200).send({
       run,
-      nodeRuns: deps.repo.listWorkflowNodeRuns(run.id),
+      nodeRuns,
       messages,
     });
   });

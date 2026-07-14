@@ -138,9 +138,11 @@ export interface WorkflowRunMessage {
   content: string;
   createdAt: string;
 }
+export type WorkflowNodeRunView = WorkflowNodeRun & { agentName?: string };
+
 export interface WorkflowRunDetail {
   run: WorkflowRun;
-  nodeRuns: WorkflowNodeRun[];
+  nodeRuns: WorkflowNodeRunView[];
   messages: WorkflowRunMessage[];
 }
 
