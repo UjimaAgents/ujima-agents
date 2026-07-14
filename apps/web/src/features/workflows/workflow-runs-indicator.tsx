@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Loader2, Workflow, X } from "lucide-react";
 import type { WorkflowRun } from "@ujima/shared";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { listWorkflowRuns } from "./use-workflows";
 
 const POLL_MS = 8000;
@@ -17,6 +17,7 @@ const POLL_MS = 8000;
 export function WorkflowRunsIndicator(): React.ReactElement | null {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [open, setOpen] = useState(false);
+  const openWorkflowRunDrawer = useWorkspaceStore((s) => s.openWorkflowRunDrawer);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,15 +68,19 @@ export function WorkflowRunsIndicator(): React.ReactElement | null {
           </div>
           <div className="max-h-72 space-y-1 overflow-y-auto p-2">
             {runs.map((run) => (
-              <Link
+              <button
                 key={run.id}
-                href={`/workflows/runs/${run.id}`}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                type="button"
+                onClick={() => {
+                  openWorkflowRunDrawer(run.id);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition hover:bg-zinc-50 dark:hover:bg-zinc-900"
               >
                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />
                 <span className="min-w-0 flex-1 truncate font-medium text-zinc-800 dark:text-zinc-200">{run.name}</span>
                 <span className="shrink-0 text-[11px] font-medium text-violet-600 dark:text-violet-300">open →</span>
-              </Link>
+              </button>
             ))}
           </div>
         </div>

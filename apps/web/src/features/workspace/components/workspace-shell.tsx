@@ -17,6 +17,7 @@ import { ChannelView } from "./channel-view";
 import { ChannelGoalsBoard } from "./channel-goals-board";
 import { GlobalApprovalIndicator } from "./global-approval-indicator";
 import { WorkflowRunsIndicator } from "@/features/workflows/workflow-runs-indicator";
+import { WorkflowRunDrawer } from "@/features/workflows/workflow-run-drawer";
 import { useWorkflowApprovalsPoll } from "../use-workflow-approvals";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
@@ -75,6 +76,8 @@ export function WorkspaceShell(props: {
   const organizationId = bootstrap.organization?.id;
   // Feed pending workflow gates into the shared approval queue + pending pill.
   useWorkflowApprovalsPoll();
+  const workflowRunDrawerId = useWorkspaceStore((s) => s.workflowRunDrawerId);
+  const closeWorkflowRunDrawer = useWorkspaceStore((s) => s.closeWorkflowRunDrawer);
   const router = useRouter();
   const searchParams = useSearchParams();
   const [teamSettings, setTeamSettings] = useState(props.teamSettings);
@@ -592,6 +595,10 @@ export function WorkspaceShell(props: {
       />
       {organizationId ? <GlobalApprovalIndicator organizationId={organizationId} /> : null}
       {organizationId ? <WorkflowRunsIndicator /> : null}
+      <WorkflowRunDrawer
+        runId={workflowRunDrawerId}
+        onClose={closeWorkflowRunDrawer}
+      />
     </div>
   );
 }
