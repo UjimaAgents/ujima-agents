@@ -23,7 +23,7 @@ import {
   type WorkflowNodeKind,
   type WorkflowValidationIssue,
 } from "@ujima/shared";
-import { ArrowLeft, Loader2, Lock, Pencil, Plus } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Loader2, Lock, Pencil, Plus } from "lucide-react";
 import { NODE_KIND_STYLES, workflowNodeTypes, type FlowNode } from "./nodes";
 import { NodeInspector } from "./node-inspector";
 import { flowToGraph, graphToFlow, inferPort } from "./graph-flow";
@@ -74,6 +74,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<WorkflowValidationIssue[]>([]);
   const [catalog, setCatalog] = useState<WorkflowCatalog>({ agents: [], tools: [], skills: [] });
@@ -89,6 +90,13 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       cancelled = true;
     };
   }, []);
+
+  // Auto-hide the "saved" confirmation after a few seconds.
+  useEffect(() => {
+    if (!saved) return;
+    const t = setTimeout(() => setSaved(false), 3000);
+    return () => clearTimeout(t);
+  }, [saved]);
 
   // Load an existing definition (the "new" case is seeded as initial state).
   useEffect(() => {
@@ -191,6 +199,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const onSave = useCallback(async () => {
     setError(null);
     setIssues([]);
+    setSaved(false);
     if (!name.trim()) {
       setError("Give the workflow a name.");
       return;
@@ -210,8 +219,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     };
     setSaving(true);
     try {
-      const saved = isNew ? await createWorkflow(input) : await updateWorkflow(workflowId, input);
-      router.push(`/workflows/${saved.id}`);
+      const savedDef = isNew ? await createWorkflow(input) : await updateWorkflow(workflowId, input);
+      setSaved(true);
+      if (isNew) router.push(`/workflows/${savedDef.id}`);
       router.refresh();
     } catch (err) {
       if (err instanceof WorkflowApiError) {
@@ -283,11 +293,29 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         </div>
       )}
 
+      {saved && (
+        <div className="flex items-center gap-2 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+          <Check className="h-3.5 w-3.5 shrink-0" />
+          Workflow saved.
+        </div>
+      )}
+
       {(error || issues.length > 0) && (
-        <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-          {error && <p className="font-medium">{error}</p>}
+        <div className="border-b border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+          <p className="mb-1 flex items-center gap-1.5 font-semibold">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {error ?? `Can't save — fix ${issues.length === 1 ? "this issue" : `these ${issues.length} issues`}:`}
+          </p>
           {issues.map((issue, i) => (
-            <p key={i}>• {issue.message}</p>
+            <p key={i} className="pl-5">
+              •{" "}
+              {issue.nodeId && (
+                <span className="mr-1 rounded bg-red-100 px-1 font-mono text-[10px] font-semibold text-red-700 dark:bg-red-500/20 dark:text-red-200">
+                  {issue.nodeId}
+                </span>
+              )}
+              {issue.message}
+            </p>
           ))}
         </div>
       )}
