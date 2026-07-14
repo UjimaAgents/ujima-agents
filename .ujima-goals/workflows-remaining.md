@@ -22,6 +22,38 @@ scoping + in-channel tab + Run button) shipped. This tracks what's left.
 - [x] Card updates on completion — a ✅/⛔ card posts to the origin channel when
   a run finishes (postRunUpdate).
 
+### Experience polish (live testing round 2)
+- [x] **"Open run" opens an in-channel drawer**, not a full-page nav. Clicking a
+  run card slides over a `WorkflowRunDrawer` (steps + artifacts + conversation +
+  gate controls) with an "open full view ↗" escape hatch to the canvas page.
+  (`workflow-run-drawer.tsx`, `use-workflow-run.ts`, `workflow-run-side-panel.tsx`;
+  wired via `onOpenWorkflowRun` prop on `ChatMessage` + drawer mounted in
+  `channel-view`.)
+- [x] **View a step's artifact from the run.** Each step with an output file has a
+  View toggle that fetches + shows the file content inline (truncated at 256 KB).
+  Backed by `GET /api/workflow-runs/:id/artifact?path=` — scoped hard to the run's
+  own node output paths (traversal / foreign paths → 403).
+- [x] **Approvals come to the chat like MCP approvals.** Approval gates post an
+  interactive `workflow.approval` card into the origin channel with Approve/Reject
+  wired to the transition endpoint — resolve inline without opening the run view.
+  (shared `WorkflowApprovalCardSchema`; `raiseApproval` posts a card; rendered by
+  `workflow-approval-card.tsx`.) Known minor follow-up: the card's stored status
+  stays `pending` after resolve, so a hard page reload shows live buttons again
+  (clicking then no-ops via the engine's status guard) — could fetch run status on
+  mount to render a resolved state.
+
+### Fixed from live testing
+- [x] **Run card is now a real clickable card.** The card link used to render as
+  raw markdown (`[open run →](/workflows/runs/…)`) — system messages render their
+  body as a bold *label*, and `sanitizeUrl` strips relative URLs, so the link was
+  dead. Now the card rides on `metadata.workflowRunMarker` (shared schema →
+  `postRunCard`/`postRunUpdate`), mapped in `use-conversation-sync` and rendered
+  as a compact, phase-colored, clickable row in `chat-message.tsx` that navigates
+  to the run view (mirrors the `delegateMarker` pattern).
+- [x] **Sweeper no longer floods the channel.** Reminder interval 15m → 30m, and
+  a run goes quiet after `maxReminders` (3) — the run view still shows it. Stuck
+  test runs are marked terminal instead of reminding forever.
+
 ## Editor / UX polish
 
 - [x] Agent field is a dropdown of the org's agents (name + role).

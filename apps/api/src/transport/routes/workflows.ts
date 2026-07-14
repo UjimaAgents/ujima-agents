@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, AuthState, WorkflowEngineService } from '@ujima/orchestrator';
@@ -255,6 +257,54 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
       nodeRuns: deps.repo.listWorkflowNodeRuns(run.id),
       messages,
     });
+  });
+
+  // Read a run's produced artifact (an agent node's output file). Scoped hard to
+  // the paths this run actually wrote — no arbitrary workspace reads.
+  const ARTIFACT_MAX_BYTES = 256 * 1024;
+  api.get('/workflow-runs/:id/artifact', async (
+    req: FastifyRequest<{ Params: { id: string }; Querystring: { path?: string } }>,
+    reply,
+  ) => {
+    const auth = requireMember(deps, req, reply);
+    if (!auth) return;
+    const run = deps.repo.getWorkflowRun(auth.user.organizationId, req.params.id);
+    if (!run) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Workflow run not found' });
+    const relPath = (req.query.path ?? '').trim();
+    if (!relPath) return reply.status(400).send({ code: 'ERR_BAD_REQUEST', message: 'path is required' });
+
+    const allowed = new Set(
+      deps.repo
+        .listWorkflowNodeRuns(run.id)
+        .map((nr) => nr.outputPath)
+        .filter((p): p is string => Boolean(p)),
+    );
+    if (!allowed.has(relPath)) {
+      return reply.status(403).send({ code: 'ERR_FORBIDDEN', message: 'path is not an artifact of this run' });
+    }
+
+    const root = deps.repo.getOrganization(auth.user.organizationId)?.workspace?.root?.trim();
+    if (!root) return reply.status(400).send({ code: 'ERR_NO_WORKSPACE_ROOT', message: 'No workspace root' });
+
+    const rootResolved = resolve(root);
+    const absResolved = resolve(join(root, relPath));
+    if (absResolved !== rootResolved && !absResolved.startsWith(rootResolved + sep)) {
+      return reply.status(403).send({ code: 'ERR_FORBIDDEN', message: 'path escapes workspace' });
+    }
+    try {
+      const stat = statSync(absResolved);
+      if (!stat.isFile()) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Artifact not found' });
+      const buf = readFileSync(absResolved);
+      const truncated = buf.length > ARTIFACT_MAX_BYTES;
+      return reply.status(200).send({
+        path: relPath,
+        content: buf.subarray(0, ARTIFACT_MAX_BYTES).toString('utf8'),
+        sizeBytes: stat.size,
+        truncated,
+      });
+    } catch {
+      return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Artifact not found' });
+    }
   });
 
   // Start a run. Requires a channel + thread to run the agent steps in.

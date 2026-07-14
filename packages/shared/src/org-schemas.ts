@@ -365,6 +365,19 @@ export const MessageMetadataSchema = z
       })
       .optional(),
     /**
+     * Clickable pointer posted into a channel when a workflow run starts or
+     * finishes. Rendered as a compact card that opens the run view — the run
+     * link can't be a plain markdown link (system messages render their body
+     * as a bold label, and relative URLs are stripped), so it rides on metadata.
+     */
+    workflowRunMarker: z
+      .object({
+        workflowRunId: IdSchema,
+        workflowName: z.string().min(1),
+        phase: z.enum(["started", "completed", "failed"]),
+      })
+      .optional(),
+    /**
      * Set by the `channel.handoff` tool. `complete: true` signals
      * the chain terminated (replaces the old `'Acknowledged.'`
      * literal termination protocol).
@@ -740,6 +753,23 @@ export const GoalBoardCreatedCardSchema = z.object({
   tasks: z.array(GoalBoardTaskPreviewSchema).default([]),
 });
 
+/**
+ * Interactive approval gate for a workflow run, posted into the origin channel
+ * so the operator can approve/reject inline (like an MCP action approval) rather
+ * than only from the run view. Resolves via the workflow-run transition endpoint.
+ */
+export const WorkflowApprovalCardSchema = z.object({
+  ...MessageCardCommon,
+  kind: z.literal("workflow.approval"),
+  workflowRunId: IdSchema,
+  workflowName: z.string().min(1),
+  nodeId: z.string().min(1),
+  prompt: z.string().default(""),
+  priorSummary: z.string().optional(),
+  priorOutputPath: z.string().optional(),
+  status: z.enum(["pending", "approved", "rejected"]).default("pending"),
+});
+
 export const GoalTaskUpdatedCardSchema = z.object({
   ...MessageCardCommon,
   kind: z.literal("goal.task.updated"),
@@ -1008,6 +1038,7 @@ export const MessageCardSchema = z.discriminatedUnion("kind", [
   ToolCallCardSchema,
   GoalBoardCreatedCardSchema,
   GoalTaskUpdatedCardSchema,
+  WorkflowApprovalCardSchema,
   ScheduleCardSchema,
 ]);
 export type MessageCard = z.infer<typeof MessageCardSchema>;

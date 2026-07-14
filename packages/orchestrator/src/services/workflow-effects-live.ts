@@ -6,7 +6,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { GoalSystemService, ParsedPlanTask } from './goal-system.js';
 import type { CreateRunInput } from './spirit-types.js';
-import { buildSystemMessage } from './message-factory.js';
+import { buildSystemCardMessage, buildSystemMessage } from './message-factory.js';
 import type {
   NotifyInitiatorInput,
   PostRunCardInput,
@@ -98,20 +98,34 @@ export class LiveWorkflowEffects implements WorkflowEffects {
   }
 
   async raiseApproval(input: RaiseApprovalInput): Promise<{ approvalRequestId: string }> {
-    const prior = input.summaryOfPriorStep ? `\n\nPrevious step: ${input.summaryOfPriorStep}` : '';
-    const content = `⏸️ **Approval needed** — ${input.prompt ?? 'Approve to continue this workflow.'}${prior}\n\nApprove or reject in the workflow run view.`;
+    const approvalRequestId = randomUUID();
+    // Post an interactive approval card into the origin channel (like an MCP
+    // action approval) so the operator can approve/reject inline — not only in
+    // the run view. Resolves via the workflow-run transition endpoint.
+    const content = `⏸️ Approval needed — ${input.prompt ?? `Approve to continue workflow "${input.workflowName}".`}`;
     this.deps.conversations.publishMessage(
-      buildSystemMessage({
+      buildSystemCardMessage({
         organizationId: input.organizationId,
-        threadId: input.threadId,
+        threadId: input.channelId,
         channelId: input.channelId,
         content,
+        card: {
+          cardId: approvalRequestId,
+          kind: 'workflow.approval',
+          workflowRunId: input.workflowRunId,
+          workflowName: input.workflowName,
+          nodeId: input.nodeId,
+          prompt: input.prompt ?? '',
+          ...(input.summaryOfPriorStep ? { priorSummary: input.summaryOfPriorStep } : {}),
+          ...(input.priorOutputPath ? { priorOutputPath: input.priorOutputPath } : {}),
+          status: 'pending',
+        },
       }),
       [],
       undefined,
       { wakePolicy: 'never' },
     );
-    return { approvalRequestId: randomUUID() };
+    return { approvalRequestId };
   }
 
   async startGoal(input: StartGoalInput): Promise<{ goalId: string }> {
@@ -183,13 +197,20 @@ export class LiveWorkflowEffects implements WorkflowEffects {
   }
 
   async postRunCard(input: PostRunCardInput): Promise<void> {
-    const content = `▶ Workflow "${input.workflowName}" started in this channel — [open run →](/workflows/runs/${input.workflowRunId})`;
+    const content = `▶ Workflow "${input.workflowName}" started in this channel`;
     this.deps.conversations.publishMessage(
       buildSystemMessage({
         organizationId: input.organizationId,
         threadId: input.originThreadId,
         channelId: input.channelId,
         content,
+        metadata: {
+          workflowRunMarker: {
+            workflowRunId: input.workflowRunId,
+            workflowName: input.workflowName,
+            phase: 'started',
+          },
+        },
       }),
       [],
       undefined,
@@ -199,13 +220,20 @@ export class LiveWorkflowEffects implements WorkflowEffects {
 
   async postRunUpdate(input: PostRunUpdateInput): Promise<void> {
     const done = input.status === 'completed';
-    const content = `${done ? '✅' : '⛔'} Workflow "${input.workflowName}" ${done ? 'completed' : 'failed'} — [open run →](/workflows/runs/${input.workflowRunId})`;
+    const content = `${done ? '✅' : '⛔'} Workflow "${input.workflowName}" ${done ? 'completed' : 'failed'}`;
     this.deps.conversations.publishMessage(
       buildSystemMessage({
         organizationId: input.organizationId,
         threadId: input.channelId,
         channelId: input.channelId,
         content,
+        metadata: {
+          workflowRunMarker: {
+            workflowRunId: input.workflowRunId,
+            workflowName: input.workflowName,
+            phase: done ? 'completed' : 'failed',
+          },
+        },
       }),
       [],
       undefined,

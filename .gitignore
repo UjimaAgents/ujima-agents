@@ -103,3 +103,6 @@ screenshots/test.png
 # Debug agent loop logs
 .agent-loop/
 **/.agent-loop/
+.claude/
+ujima_selfhost_runbook.pdf
+workflows_plan.md

@@ -79,11 +79,14 @@ export interface SpawnAgentNodeInput {
 export interface RaiseApprovalInput {
   organizationId: string;
   workflowRunId: string;
+  workflowName: string;
+  nodeId: string;
   nodeRunId: string;
   channelId: string;
   threadId: string;
   prompt?: string;
   summaryOfPriorStep?: string;
+  priorOutputPath?: string;
 }
 
 export interface StartGoalInput {
@@ -218,7 +221,11 @@ const TERMINAL_DONE_STATUSES = new Set(['completed', 'skipped']);
 export class WorkflowEngineService {
   /** Throttle for stuck-run reminders (in-memory; reset on restart is fine). */
   private readonly lastReminderAt = new Map<string, number>();
-  private readonly reminderIntervalMs = 15 * 60 * 1000;
+  /** How many reminders each stuck run has had, so we go quiet instead of flooding. */
+  private readonly reminderCount = new Map<string, number>();
+  private readonly reminderIntervalMs = 30 * 60 * 1000;
+  /** After this many reminders the sweeper stays silent — the run view still shows it. */
+  private readonly maxReminders = 3;
 
   constructor(
     private readonly store: WorkflowEngineStore,
@@ -540,6 +547,7 @@ export class WorkflowEngineService {
         await this.recoverRun(run);
       } else if (this.shouldRemind(run.id)) {
         this.lastReminderAt.set(run.id, Date.now());
+        this.reminderCount.set(run.id, (this.reminderCount.get(run.id) ?? 0) + 1);
         const reason =
           run.status === 'awaiting_approval'
             ? 'still awaiting approval'
@@ -555,7 +563,10 @@ export class WorkflowEngineService {
     // Drop throttle entries for runs that have since gone terminal.
     const activeIds = new Set(runs.map((r) => r.id));
     for (const id of [...this.lastReminderAt.keys()]) {
-      if (!activeIds.has(id)) this.lastReminderAt.delete(id);
+      if (!activeIds.has(id)) {
+        this.lastReminderAt.delete(id);
+        this.reminderCount.delete(id);
+      }
     }
   }
 
@@ -584,6 +595,7 @@ export class WorkflowEngineService {
   }
 
   private shouldRemind(runId: string): boolean {
+    if ((this.reminderCount.get(runId) ?? 0) >= this.maxReminders) return false;
     const last = this.lastReminderAt.get(runId) ?? 0;
     return Date.now() - last >= this.reminderIntervalMs;
   }
@@ -712,14 +724,18 @@ export class WorkflowEngineService {
     this.store.transaction(() => this.store.saveWorkflowNodeRun(base));
 
     const priorSummary = this.nearestUpstreamSummary(graph, node.id, outputs);
+    const priorApprovalOutput = this.nearestUpstreamOutput(graph, node.id, outputs);
     const {approvalRequestId} = await this.effects.raiseApproval({
       organizationId: run.organizationId,
       workflowRunId: run.id,
+      workflowName: run.name,
+      nodeId: node.id,
       nodeRunId,
       channelId: run.channelId,
       threadId: run.threadId,
       prompt: node.config.prompt,
       summaryOfPriorStep: priorSummary,
+      priorOutputPath: priorApprovalOutput?.output_file ?? undefined,
     });
     this.store.transaction(() => {
       this.store.saveWorkflowNodeRun({...base, approvalRequestId});

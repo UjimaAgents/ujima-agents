@@ -149,6 +149,24 @@ export async function getWorkflowRun(id: string): Promise<WorkflowRunDetail> {
   return parse<WorkflowRunDetail>(res, "Unable to load workflow run.");
 }
 
+export interface WorkflowRunArtifact {
+  path: string;
+  content: string;
+  sizeBytes: number;
+  truncated: boolean;
+}
+
+export async function getWorkflowRunArtifact(
+  runId: string,
+  path: string,
+): Promise<WorkflowRunArtifact> {
+  const res = await fetch(
+    `/api/workflow-runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(path)}`,
+    { cache: "no-store" },
+  );
+  return parse<WorkflowRunArtifact>(res, "Unable to load artifact.");
+}
+
 export async function transitionWorkflowRun(
   id: string,
   action: WorkflowTransitionAction,

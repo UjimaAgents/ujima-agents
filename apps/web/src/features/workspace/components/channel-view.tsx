@@ -11,6 +11,7 @@ import { useConversationSync } from "../use-conversation-sync";
 import type { ConversationMessageMetadata } from "../conversation-transport";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
 import { TerminalDrawer } from "./chat/terminal-drawer";
+import { WorkflowRunDrawer } from "@/features/workflows/workflow-run-drawer";
 import {
   ChatHeader,
   ChatTabs,
@@ -477,6 +478,7 @@ export function ChannelView({
     ) ?? "medium";
   const setComposerReasoningEffort = useWorkspaceStore((state) => state.setComposerReasoningEffort);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
+  const [workflowRunDrawerId, setWorkflowRunDrawerId] = useState<string | null>(null);
   const [stopError, setStopError] = useState<string | undefined>(undefined);
 
   useTerminalPolling(globalActiveRuns, bootstrap.organization?.id, setActiveTerminals);
@@ -1136,6 +1138,7 @@ export function ChannelView({
                             members={members}
                             onOpenTasksTab={handleOpenTasksTab}
                             onNavigateChannel={handleNavigateChannel}
+                            onOpenWorkflowRun={setWorkflowRunDrawerId}
                             colorIndex={Math.max(memberIndexById.get(message.senderId ?? "") ?? 0, 0)}
                             onReply={setReplyTo}
                           />
@@ -1395,6 +1398,7 @@ export function ChannelView({
         jobs={activeTerminals}
         organizationId={organizationId ?? ""}
       />
+      <WorkflowRunDrawer runId={workflowRunDrawerId} onClose={() => setWorkflowRunDrawerId(null)} />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
-import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Download, ListTodo, Loader2, Maximize2, Sparkles, X } from "lucide-react";
+import Link from "next/link";
+import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Download, ListTodo, Loader2, Maximize2, Play, Sparkles, X, XCircle } from "lucide-react";
 import { type AttachmentCategory } from "@ujima/shared/browser";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
@@ -12,6 +13,7 @@ import { TokenCount } from "./chat-token-count";
 import { Modal } from "@/components/ui/modal";
 import { UnifiedDiffView } from "./unified-diff-view";
 import { MessageCardsView, TaskNudgeCardView, type TaskNudgeData } from "./goal-task-cards";
+import { WorkflowApprovalCardView } from "@/features/workflows/workflow-approval-card";
 import {
   getArtifactFileCard,
   getMessageCards,
@@ -69,6 +71,15 @@ export interface ChatMessageData {
     kind: "start" | "done";
     agentName?: string;
   };
+  /**
+   * Present on the in-channel card posted when a workflow run starts or
+   * finishes. Rendered as a compact, clickable row that opens the run view.
+   */
+  workflowRunMarker?: {
+    workflowRunId: string;
+    workflowName: string;
+    phase: "started" | "completed" | "failed";
+  };
   tag?: { label: string; variant: TagVariant };
   status?: "success" | "warning";
   pending?: boolean;
@@ -95,6 +106,7 @@ export const ChatMessage = memo(function ChatMessage({
   members = [],
   onOpenTasksTab,
   onNavigateChannel,
+  onOpenWorkflowRun,
 }: {
   message: ChatMessageData;
   active?: boolean;
@@ -105,6 +117,7 @@ export const ChatMessage = memo(function ChatMessage({
   members?: BootstrapResponse["members"];
   onOpenTasksTab?: () => void;
   onNavigateChannel?: (channelId: string, fallbackName?: string) => void;
+  onOpenWorkflowRun?: (runId: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
@@ -161,10 +174,14 @@ export const ChatMessage = memo(function ChatMessage({
       ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
       : null;
   const artifactFile = getArtifactFileCard(message.toolCalls);
+  const workflowApprovalCard = getMessageCards(message.toolCalls).find(
+    (card) => card.kind === "workflow.approval",
+  );
   const inlineCards = getMessageCards(message.toolCalls).filter(
     (card) =>
       card.kind !== "artifact.file" &&
       card.kind !== "approval" &&
+      card.kind !== "workflow.approval" &&
       card.kind !== "tool.call" &&
       card.kind !== "task.promotion-confirm",
   );
@@ -193,6 +210,53 @@ export const ChatMessage = memo(function ChatMessage({
         </span>
       </button>
     );
+  }
+
+  if (message.workflowRunMarker) {
+    const marker = message.workflowRunMarker;
+    const tone =
+      marker.phase === "completed"
+        ? {
+            wrap: "border-emerald-300/60 bg-emerald-50/50 text-emerald-700 hover:border-emerald-400 hover:bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/5 dark:text-emerald-300 dark:hover:bg-emerald-500/10",
+            Icon: CheckCircle2,
+            verb: "completed",
+          }
+        : marker.phase === "failed"
+          ? {
+              wrap: "border-red-300/60 bg-red-50/50 text-red-700 hover:border-red-400 hover:bg-red-50 dark:border-red-500/30 dark:bg-red-500/5 dark:text-red-300 dark:hover:bg-red-500/10",
+              Icon: XCircle,
+              verb: "failed",
+            }
+          : {
+              wrap: "border-violet-300/60 bg-violet-50/40 text-violet-700 hover:border-violet-400 hover:bg-violet-50 dark:border-violet-500/30 dark:bg-violet-500/5 dark:text-violet-300 dark:hover:bg-violet-500/10",
+              Icon: Play,
+              verb: "started",
+            };
+    const { Icon } = tone;
+    const inner = (
+      <>
+        <Icon className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          Workflow <span className="font-semibold">{marker.workflowName}</span> {tone.verb}
+        </span>
+        <span className="shrink-0 font-medium underline-offset-2 group-hover:underline">Open run →</span>
+      </>
+    );
+    const cls = `group flex w-full items-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-left text-xs transition ${tone.wrap}`;
+    // Prefer the in-channel drawer; fall back to the full-page route.
+    return onOpenWorkflowRun ? (
+      <button type="button" onClick={() => onOpenWorkflowRun(marker.workflowRunId)} className={cls}>
+        {inner}
+      </button>
+    ) : (
+      <Link href={`/workflows/runs/${marker.workflowRunId}`} className={cls}>
+        {inner}
+      </Link>
+    );
+  }
+
+  if (workflowApprovalCard) {
+    return <WorkflowApprovalCardView card={workflowApprovalCard} onOpenRun={onOpenWorkflowRun} />;
   }
 
   return (
