@@ -323,6 +323,8 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     const auth = requireMember(deps, req, reply);
     if (!auth) return;
     const orgId = auth.user.organizationId;
+    const memberName = (id: string | null | undefined) =>
+      id ? (deps.repo.getMember(orgId, id)?.name ?? id) : undefined;
     const runs = deps.repo.listWorkflowRuns(orgId, 'awaiting_approval');
     const approvals: unknown[] = [];
     for (const run of runs) {
@@ -357,7 +359,38 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
         });
       }
     }
-    return reply.status(200).send({ approvals });
+    // Tool approvals blocking a RUNNING run's agent step (a write/MCP the child
+    // agent needs approved). These are real ApprovalService approvals; surface
+    // them so the global pending pill shows them without opening the run.
+    const toolApprovals: unknown[] = [];
+    const pending = deps.repo.listPendingApprovals(orgId);
+    if (pending.length > 0) {
+      for (const run of deps.repo.listWorkflowRuns(orgId, 'running')) {
+        const childNodeByRun = new Map(
+          deps.repo
+            .listWorkflowNodeRuns(run.id)
+            .filter((n) => n.childRunId)
+            .map((n) => [n.childRunId as string, { nodeId: n.nodeId, agentName: memberName(n.agentId) }]),
+        );
+        for (const a of pending) {
+          const link = a.runId ? childNodeByRun.get(a.runId) : undefined;
+          if (!link) continue;
+          toolApprovals.push({
+            id: a.id,
+            workflowRunId: run.id,
+            workflowName: run.name,
+            nodeId: link.nodeId,
+            agentName: link.agentName ?? memberName(a.requestedBy),
+            resourceType: a.resourceType,
+            action: a.action,
+            resourcePath: a.resourcePath,
+            channelId: run.channelId,
+            createdAt: a.createdAt,
+          });
+        }
+      }
+    }
+    return reply.status(200).send({ approvals, toolApprovals });
   });
 
   // Read a run's produced artifact (an agent node's output file). Scoped hard to

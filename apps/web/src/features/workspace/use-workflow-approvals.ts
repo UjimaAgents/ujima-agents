@@ -5,6 +5,7 @@ import {
   listWorkflowApprovals,
   transitionWorkflowRun,
   type WorkflowApproval,
+  type WorkflowToolApproval,
 } from "@/features/workflows/use-workflows";
 import type { ApprovalCardData } from "./components/chat";
 import { useWorkspaceStore } from "./workspace-store";
@@ -22,6 +23,7 @@ export function workflowApprovalToCard(wf: WorkflowApproval): ApprovalCardData {
     requestedBy: wf.workflowName,
     createdAt: wf.createdAt,
     approvalsNeeded: 1,
+    workflowRunId: wf.workflowRunId,
     workflowScope: {
       workflowRunId: wf.workflowRunId,
       nodeId: wf.nodeId,
@@ -29,6 +31,34 @@ export function workflowApprovalToCard(wf: WorkflowApproval): ApprovalCardData {
       ...(wf.priorSummary ? { priorSummary: wf.priorSummary } : {}),
       ...(wf.priorOutputPath ? { priorOutputPath: wf.priorOutputPath } : {}),
     },
+  };
+}
+
+/**
+ * Map a blocking tool approval (write/MCP) into a card. No workflowScope — it's a
+ * real ApprovalService approval that resolves through the normal path; the
+ * workflowRunId marker just keeps it in the workflow-sourced store bucket.
+ */
+export function toolApprovalToCard(t: WorkflowToolApproval): ApprovalCardData {
+  const base = t.resourcePath.split("/").filter(Boolean).pop() ?? t.resourcePath;
+  const label =
+    t.resourceType === "mcp"
+      ? `run ${t.resourcePath.split(":").pop() ?? "an MCP tool"}`
+      : t.resourceType === "file"
+        ? `${t.action} ${base}`
+        : `${t.action} ${base}`;
+  return {
+    id: t.id,
+    runId: t.workflowRunId,
+    threadId: t.channelId,
+    requestedByMemberId: t.agentName,
+    title: `Approve: ${label}`,
+    description: `${t.agentName} in "${t.workflowName}" wants to ${label}.`,
+    status: "pending",
+    requestedBy: t.agentName,
+    createdAt: t.createdAt,
+    approvalsNeeded: 1,
+    workflowRunId: t.workflowRunId,
   };
 }
 
@@ -67,15 +97,19 @@ export function useWorkflowApprovalsPoll(): void {
     const tick = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
       try {
-        const list = await listWorkflowApprovals();
+        const { approvals, toolApprovals } = await listWorkflowApprovals();
         if (cancelled) return;
-        const signature = list
-          .map((a) => `${a.id}:${a.workflowRunId}:${a.nodeId}`)
+        const cards = [
+          ...approvals.map(workflowApprovalToCard),
+          ...toolApprovals.map(toolApprovalToCard),
+        ];
+        const signature = cards
+          .map((c) => c.id)
           .sort()
           .join("|");
         if (signature === lastSignature) return; // unchanged — skip the store write
         lastSignature = signature;
-        setWorkflowApprovals(list.map(workflowApprovalToCard));
+        setWorkflowApprovals(cards);
       } catch {
         // Transient — keep the last known set until the next tick.
       }

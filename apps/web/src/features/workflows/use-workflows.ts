@@ -221,10 +221,30 @@ export interface WorkflowApproval {
   createdAt: string;
 }
 
-export async function listWorkflowApprovals(): Promise<WorkflowApproval[]> {
+/** A tool approval (write/MCP) blocking a running workflow's agent step. */
+export interface WorkflowToolApproval {
+  id: string;
+  workflowRunId: string;
+  workflowName: string;
+  nodeId: string;
+  agentName: string;
+  resourceType: string;
+  action: string;
+  resourcePath: string;
+  channelId: string;
+  createdAt: string;
+}
+
+export async function listWorkflowApprovals(): Promise<{
+  approvals: WorkflowApproval[];
+  toolApprovals: WorkflowToolApproval[];
+}> {
   const res = await fetch("/api/workflow-approvals", { cache: "no-store" });
-  const body = await parse<{ approvals: WorkflowApproval[] }>(res, "Unable to load workflow approvals.");
-  return body.approvals;
+  const body = await parse<{ approvals: WorkflowApproval[]; toolApprovals?: WorkflowToolApproval[] }>(
+    res,
+    "Unable to load workflow approvals.",
+  );
+  return { approvals: body.approvals ?? [], toolApprovals: body.toolApprovals ?? [] };
 }
 
 export async function transitionWorkflowRun(

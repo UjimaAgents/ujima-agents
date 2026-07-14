@@ -781,13 +781,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       // The MCP approval sync owns non-workflow rows; workflow gates live in the
       // same list (so every queue/pill consumer sees them) but are sourced
       // separately via setWorkflowApprovals — preserve them across MCP resyncs.
-      const workflowRows = state.approvals.filter((a) => a.workflowScope);
+      const workflowRows = state.approvals.filter((a) => a.workflowRunId);
       const next = workflowRows.length ? [...approvals, ...workflowRows] : approvals;
       return sameItems(state.approvals, next) ? state : { approvals: next };
     }),
   setWorkflowApprovals: (cards) =>
     set((state) => {
-      const next = [...state.approvals.filter((a) => !a.workflowScope), ...cards];
+      const next = [...state.approvals.filter((a) => !a.workflowRunId), ...cards];
       return sameItems(state.approvals, next) ? state : { approvals: next };
     }),
   removeApproval: (approvalId) =>

@@ -77,6 +77,13 @@ export interface ApprovalCardData {
     priorSummary?: string;
     priorOutputPath?: string;
   };
+  /**
+   * Marks a card as sourced from the workflow-approvals poll (a gate OR a
+   * blocking tool approval) so the store buckets it separately from MCP
+   * approvals. Present on both; only `workflowScope` (a gate) resolves via the
+   * workflow transition — tool approvals resolve through the normal path.
+   */
+  workflowRunId?: string;
   status: "pending" | "approved" | "rejected";
   /** Display name for the requesting agent */
   requestedBy: string;
