@@ -6,6 +6,7 @@ import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, AuthState, WorkflowEngineService } from '@ujima/orchestrator';
 import {
   WorkflowEdgeSchema,
+  WorkflowGraphSchema,
   WorkflowNodeSchema,
   WorkflowTransitionActionSchema,
   validateWorkflowGraph,
@@ -257,6 +258,50 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
       nodeRuns: deps.repo.listWorkflowNodeRuns(run.id),
       messages,
     });
+  });
+
+  // Pending workflow approval gates for the org, shaped for the shared approval
+  // queue (the "Approval N of M" card + floating pending pill). Derived live from
+  // run/node-run state so it always reflects reality (resolved gates drop off).
+  api.get('/workflow-approvals', async (req: FastifyRequest, reply) => {
+    const auth = requireMember(deps, req, reply);
+    if (!auth) return;
+    const orgId = auth.user.organizationId;
+    const runs = deps.repo.listWorkflowRuns(orgId, 'awaiting_approval');
+    const approvals: unknown[] = [];
+    for (const run of runs) {
+      const nodeRuns = deps.repo.listWorkflowNodeRuns(run.id);
+      const gates = nodeRuns.filter((nr) => nr.status === 'awaiting_approval');
+      if (gates.length === 0) continue;
+      let promptByNode = new Map<string, string | undefined>();
+      try {
+        const graph = WorkflowGraphSchema.parse(JSON.parse(run.graphSnapshot));
+        for (const node of graph.nodes) {
+          if (node.kind === 'approval') promptByNode.set(node.id, node.config.prompt);
+        }
+      } catch {
+        promptByNode = new Map();
+      }
+      // Nearest prior output: the most recently completed step in this run.
+      const lastCompleted = nodeRuns
+        .filter((nr) => nr.status === 'completed')
+        .sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''))[0];
+      for (const gate of gates) {
+        approvals.push({
+          id: gate.approvalRequestId ?? gate.id,
+          workflowRunId: run.id,
+          workflowName: run.name,
+          nodeId: gate.nodeId,
+          prompt: promptByNode.get(gate.nodeId) ?? '',
+          priorSummary: lastCompleted?.summary ?? undefined,
+          priorOutputPath: lastCompleted?.outputPath ?? undefined,
+          channelId: run.channelId,
+          requestedBy: run.initiatedBy,
+          createdAt: gate.startedAt ?? run.createdAt,
+        });
+      }
+    }
+    return reply.status(200).send({ approvals });
   });
 
   // Read a run's produced artifact (an agent node's output file). Scoped hard to

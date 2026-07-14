@@ -6,7 +6,7 @@ import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { GoalSystemService, ParsedPlanTask } from './goal-system.js';
 import type { CreateRunInput } from './spirit-types.js';
-import { buildSystemCardMessage, buildSystemMessage } from './message-factory.js';
+import { buildSystemMessage } from './message-factory.js';
 import type {
   NotifyInitiatorInput,
   PostRunCardInput,
@@ -98,34 +98,11 @@ export class LiveWorkflowEffects implements WorkflowEffects {
   }
 
   async raiseApproval(input: RaiseApprovalInput): Promise<{ approvalRequestId: string }> {
-    const approvalRequestId = randomUUID();
-    // Post an interactive approval card into the origin channel (like an MCP
-    // action approval) so the operator can approve/reject inline — not only in
-    // the run view. Resolves via the workflow-run transition endpoint.
-    const content = `⏸️ Approval needed — ${input.prompt ?? `Approve to continue workflow "${input.workflowName}".`}`;
-    this.deps.conversations.publishMessage(
-      buildSystemCardMessage({
-        organizationId: input.organizationId,
-        threadId: input.channelId,
-        channelId: input.channelId,
-        content,
-        card: {
-          cardId: approvalRequestId,
-          kind: 'workflow.approval',
-          workflowRunId: input.workflowRunId,
-          workflowName: input.workflowName,
-          nodeId: input.nodeId,
-          prompt: input.prompt ?? '',
-          ...(input.summaryOfPriorStep ? { priorSummary: input.summaryOfPriorStep } : {}),
-          ...(input.priorOutputPath ? { priorOutputPath: input.priorOutputPath } : {}),
-          status: 'pending',
-        },
-      }),
-      [],
-      undefined,
-      { wakePolicy: 'never' },
-    );
-    return { approvalRequestId };
+    // The gate is surfaced through the shared approval queue (the "Approval N of
+    // M" card + floating pending pill), sourced live from run/node-run state via
+    // GET /api/workflow-approvals — no inline channel card. The node run's
+    // approvalRequestId is what the queue keys on.
+    return { approvalRequestId: randomUUID() };
   }
 
   async startGoal(input: StartGoalInput): Promise<{ goalId: string }> {

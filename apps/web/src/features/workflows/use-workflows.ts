@@ -167,6 +167,25 @@ export async function getWorkflowRunArtifact(
   return parse<WorkflowRunArtifact>(res, "Unable to load artifact.");
 }
 
+export interface WorkflowApproval {
+  id: string;
+  workflowRunId: string;
+  workflowName: string;
+  nodeId: string;
+  prompt: string;
+  priorSummary?: string;
+  priorOutputPath?: string;
+  channelId: string;
+  requestedBy: string;
+  createdAt: string;
+}
+
+export async function listWorkflowApprovals(): Promise<WorkflowApproval[]> {
+  const res = await fetch("/api/workflow-approvals", { cache: "no-store" });
+  const body = await parse<{ approvals: WorkflowApproval[] }>(res, "Unable to load workflow approvals.");
+  return body.approvals;
+}
+
 export async function transitionWorkflowRun(
   id: string,
   action: WorkflowTransitionAction,

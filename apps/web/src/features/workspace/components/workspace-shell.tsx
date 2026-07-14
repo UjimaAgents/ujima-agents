@@ -16,6 +16,7 @@ import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/sh
 import { ChannelView } from "./channel-view";
 import { ChannelGoalsBoard } from "./channel-goals-board";
 import { GlobalApprovalIndicator } from "./global-approval-indicator";
+import { useWorkflowApprovalsPoll } from "../use-workflow-approvals";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
@@ -71,6 +72,8 @@ export function WorkspaceShell(props: {
 }) {
   const { bootstrap, initialConversation } = props;
   const organizationId = bootstrap.organization?.id;
+  // Feed pending workflow gates into the shared approval queue + pending pill.
+  useWorkflowApprovalsPoll();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [teamSettings, setTeamSettings] = useState(props.teamSettings);

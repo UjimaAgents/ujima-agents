@@ -3,6 +3,7 @@ import { ShieldAlert, X } from "lucide-react";
 import { ApprovalQueue } from "./chat";
 import { useWorkspaceStore } from "../workspace-store";
 import { resolveWorkspaceApproval } from "../approval-resolution";
+import { resolveWorkflowGate } from "../use-workflow-approvals";
 import { queueApprovals } from "../approval-thread-filter";
 import { approvalToActivity } from "../activity-events";
 import { approvalToCard } from "../approval-card-data";
@@ -29,6 +30,8 @@ export function GlobalApprovalIndicator({ organizationId }: { organizationId: st
     [approvals],
   );
 
+  const removeApproval = useWorkspaceStore((state) => state.removeApproval);
+
   const onResolve = useCallback(
     async (approvalId: string, resolution: Resolution) => {
       setResolving((state) => ({ ...state, [approvalId]: true }));
@@ -37,6 +40,27 @@ export function GlobalApprovalIndicator({ organizationId }: { organizationId: st
         delete next[approvalId];
         return next;
       });
+      // Workflow gates resolve through the workflow transition endpoint, not the
+      // MCP approval service.
+      const workflowCard = approvals.find((a) => a.id === approvalId && a.workflowScope);
+      if (workflowCard) {
+        try {
+          await resolveWorkflowGate(workflowCard, resolution);
+          removeApproval(approvalId);
+        } catch (err) {
+          setErrors((state) => ({
+            ...state,
+            [approvalId]: err instanceof Error ? err.message : "Unable to resolve gate.",
+          }));
+        } finally {
+          setResolving((state) => {
+            const next = { ...state };
+            delete next[approvalId];
+            return next;
+          });
+        }
+        return;
+      }
       try {
         const response = await resolveWorkspaceApproval({ organizationId, approvalId, resolution });
         if (!response.ok) {
@@ -65,7 +89,7 @@ export function GlobalApprovalIndicator({ organizationId }: { organizationId: st
         });
       }
     },
-    [organizationId, upsertApproval],
+    [organizationId, upsertApproval, approvals, removeApproval],
   );
 
   if (pending.length === 0) return null;

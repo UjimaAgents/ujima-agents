@@ -79,14 +79,11 @@ export interface SpawnAgentNodeInput {
 export interface RaiseApprovalInput {
   organizationId: string;
   workflowRunId: string;
-  workflowName: string;
-  nodeId: string;
   nodeRunId: string;
   channelId: string;
   threadId: string;
   prompt?: string;
   summaryOfPriorStep?: string;
-  priorOutputPath?: string;
 }
 
 export interface StartGoalInput {
@@ -724,18 +721,14 @@ export class WorkflowEngineService {
     this.store.transaction(() => this.store.saveWorkflowNodeRun(base));
 
     const priorSummary = this.nearestUpstreamSummary(graph, node.id, outputs);
-    const priorApprovalOutput = this.nearestUpstreamOutput(graph, node.id, outputs);
     const {approvalRequestId} = await this.effects.raiseApproval({
       organizationId: run.organizationId,
       workflowRunId: run.id,
-      workflowName: run.name,
-      nodeId: node.id,
       nodeRunId,
       channelId: run.channelId,
       threadId: run.threadId,
       prompt: node.config.prompt,
       summaryOfPriorStep: priorSummary,
-      priorOutputPath: priorApprovalOutput?.output_file ?? undefined,
     });
     this.store.transaction(() => {
       this.store.saveWorkflowNodeRun({...base, approvalRequestId});

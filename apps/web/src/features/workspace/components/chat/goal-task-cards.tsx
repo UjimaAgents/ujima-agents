@@ -381,7 +381,6 @@ export const MessageCardsView = memo(function MessageCardsView({
             return <ScheduleCardView key={card.cardId} card={card} {...actions} />;
           case "artifact.file":
           case "approval":
-          case "workflow.approval":
           case "task.promotion-confirm":
           case "tool.call":
             // Rendered by dedicated components upstream (chat-message), not here.

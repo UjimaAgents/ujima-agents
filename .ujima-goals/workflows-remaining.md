@@ -33,14 +33,16 @@ scoping + in-channel tab + Run button) shipped. This tracks what's left.
   View toggle that fetches + shows the file content inline (truncated at 256 KB).
   Backed by `GET /api/workflow-runs/:id/artifact?path=` — scoped hard to the run's
   own node output paths (traversal / foreign paths → 403).
-- [x] **Approvals come to the chat like MCP approvals.** Approval gates post an
-  interactive `workflow.approval` card into the origin channel with Approve/Reject
-  wired to the transition endpoint — resolve inline without opening the run view.
-  (shared `WorkflowApprovalCardSchema`; `raiseApproval` posts a card; rendered by
-  `workflow-approval-card.tsx`.) Known minor follow-up: the card's stored status
-  stays `pending` after resolve, so a hard page reload shows live buttons again
-  (clicking then no-ops via the engine's status guard) — could fetch run status on
-  mount to render a resolved state.
+- [x] **Approvals flow through the real MCP approval queue.** Workflow gates
+  surface in the same "Approval N of M" card + floating "N pending" pill as MCP
+  approvals — not a separate inline chat card. Sourced live from run/node-run
+  state via `GET /api/workflow-approvals` (a poll hook, `useWorkflowApprovalsPoll`,
+  feeds them into the shared approval store; guarded mutators keep the MCP sync
+  from clobbering them). The `ApprovalCard` renders a binary Approve/Reject variant
+  (`workflowScope`); resolving routes to the workflow transition endpoint instead
+  of `/api/approvals`. Because the list is derived from real state, resolved gates
+  drop off on the next poll (no stale-on-reload problem) — and the MCP
+  `ApprovalService` is untouched (zero regression risk to connector approvals).
 
 ### Fixed from live testing
 - [x] **Run card is now a real clickable card.** The card link used to render as

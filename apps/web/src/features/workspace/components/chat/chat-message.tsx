@@ -13,7 +13,6 @@ import { TokenCount } from "./chat-token-count";
 import { Modal } from "@/components/ui/modal";
 import { UnifiedDiffView } from "./unified-diff-view";
 import { MessageCardsView, TaskNudgeCardView, type TaskNudgeData } from "./goal-task-cards";
-import { WorkflowApprovalCardView } from "@/features/workflows/workflow-approval-card";
 import {
   getArtifactFileCard,
   getMessageCards,
@@ -174,14 +173,10 @@ export const ChatMessage = memo(function ChatMessage({
       ? parseRelayFilesystemBody(systemBodyMarkdown, systemLabel)
       : null;
   const artifactFile = getArtifactFileCard(message.toolCalls);
-  const workflowApprovalCard = getMessageCards(message.toolCalls).find(
-    (card) => card.kind === "workflow.approval",
-  );
   const inlineCards = getMessageCards(message.toolCalls).filter(
     (card) =>
       card.kind !== "artifact.file" &&
       card.kind !== "approval" &&
-      card.kind !== "workflow.approval" &&
       card.kind !== "tool.call" &&
       card.kind !== "task.promotion-confirm",
   );
@@ -253,10 +248,6 @@ export const ChatMessage = memo(function ChatMessage({
         {inner}
       </Link>
     );
-  }
-
-  if (workflowApprovalCard) {
-    return <WorkflowApprovalCardView card={workflowApprovalCard} onOpenRun={onOpenWorkflowRun} />;
   }
 
   return (

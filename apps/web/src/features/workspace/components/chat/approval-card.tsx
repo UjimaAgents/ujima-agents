@@ -64,6 +64,19 @@ export interface ApprovalCardData {
     /** The agent's own reasoning text, shown verbatim to the operator. */
     agentReason: string;
   };
+  /**
+   * A workflow run's approval gate. Renders a binary Approve/Reject variant
+   * (workflow gates aren't permission grants — no allow-once/always/family) and
+   * resolves via the workflow transition endpoint rather than /api/approvals.
+   * Mutually exclusive with the other scopes.
+   */
+  workflowScope?: {
+    workflowRunId: string;
+    nodeId: string;
+    workflowName: string;
+    priorSummary?: string;
+    priorOutputPath?: string;
+  };
   status: "pending" | "approved" | "rejected";
   /** Display name for the requesting agent */
   requestedBy: string;
@@ -206,6 +219,45 @@ function AttachmentRequestPane({
   );
 }
 
+/**
+ * Workflow gate pane — the run + step being gated and the prior step's output,
+ * so the operator has context before approving. Sibling of ConnectorActionPane.
+ */
+function WorkflowGatePane({
+  className,
+  scope,
+}: {
+  className?: string;
+  scope: NonNullable<ApprovalCardData["workflowScope"]>;
+}) {
+  return (
+    <div
+      className={`rounded-md border border-violet-500/[0.06] bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-white/5 ${className ?? ""}`}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] leading-relaxed text-foreground/85">
+        <span>
+          <span className="text-foreground/55">Workflow:</span>{" "}
+          <span className="text-foreground">{scope.workflowName}</span>
+        </span>
+        <span className="text-foreground/35">·</span>
+        <span>
+          <span className="text-foreground/55">Gate:</span>{" "}
+          <span className="text-foreground">{scope.nodeId}</span>
+        </span>
+      </div>
+      {scope.priorSummary ? (
+        <div className="mt-2 rounded-md bg-white/40 p-2 dark:bg-white/5">
+          <p className="text-[10px] uppercase tracking-wide text-foreground/55">Previous step</p>
+          <p className="mt-1 text-[12px] leading-snug text-foreground/90">{scope.priorSummary}</p>
+        </div>
+      ) : null}
+      {scope.priorOutputPath ? (
+        <p className="mt-2 truncate font-mono text-[10px] text-foreground/55">{scope.priorOutputPath}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export const ApprovalCard = memo(function ApprovalCard({
   data,
   resolving,
@@ -270,7 +322,9 @@ export const ApprovalCard = memo(function ApprovalCard({
           </div>
         </div>
 
-        {data.shellScope ? (
+        {data.workflowScope ? (
+          <WorkflowGatePane className="mt-1" scope={data.workflowScope} />
+        ) : data.shellScope ? (
           <TerminalPane
             className="mt-1"
             cwd={data.shellScope.cwd}
@@ -304,7 +358,28 @@ export const ApprovalCard = memo(function ApprovalCard({
           </div>
         ) : null}
 
-        {isPending ? (
+        {isPending && data.workflowScope ? (
+          // Workflow gate: binary approve/reject. "allow_once" is the approve
+          // signal the resolver maps to a workflow transition.
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              disabled={resolving}
+              onClick={() => resolveApproval("reject")}
+              className="group flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-red-300 px-2.5 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/40 dark:hover:bg-red-500/10"
+            >
+              <X className="h-3.5 w-3.5" /> Reject
+            </button>
+            <button
+              type="button"
+              disabled={resolving}
+              onClick={() => resolveApproval("allow_once")}
+              className="group flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-emerald-600 px-2.5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Check className="h-3.5 w-3.5" /> Approve
+            </button>
+          </div>
+        ) : isPending ? (
           <div className="grid gap-2 sm:grid-cols-2">
             {(["reject", "allow_once", "allow_always", "allow_family"] as const).map((resolution) => {
               const option = (data.connectorScope ? APPROVAL_OPTIONS_CONNECTOR : APPROVAL_OPTIONS)[resolution];

@@ -1,0 +1,75 @@
+"use client";
+
+import { useEffect } from "react";
+import {
+  listWorkflowApprovals,
+  transitionWorkflowRun,
+  type WorkflowApproval,
+} from "@/features/workflows/use-workflows";
+import type { ApprovalCardData } from "./components/chat";
+import { useWorkspaceStore } from "./workspace-store";
+
+/** Map a pending workflow gate into the shared approval-queue card shape. */
+export function workflowApprovalToCard(wf: WorkflowApproval): ApprovalCardData {
+  return {
+    id: wf.id,
+    runId: wf.workflowRunId,
+    threadId: wf.channelId,
+    requestedByMemberId: wf.requestedBy,
+    title: "Approve workflow gate",
+    description: wf.prompt || `Approve to continue "${wf.workflowName}".`,
+    status: "pending",
+    requestedBy: wf.workflowName,
+    createdAt: wf.createdAt,
+    approvalsNeeded: 1,
+    workflowScope: {
+      workflowRunId: wf.workflowRunId,
+      nodeId: wf.nodeId,
+      workflowName: wf.workflowName,
+      ...(wf.priorSummary ? { priorSummary: wf.priorSummary } : {}),
+      ...(wf.priorOutputPath ? { priorOutputPath: wf.priorOutputPath } : {}),
+    },
+  };
+}
+
+/**
+ * Resolve a workflow-gate approval via the workflow transition endpoint. The
+ * queue emits a permission-style resolution; for a binary gate every "allow_*"
+ * is Approve and only "reject" is Reject.
+ */
+export async function resolveWorkflowGate(
+  card: ApprovalCardData,
+  resolution: "allow_once" | "allow_always" | "allow_family" | "reject",
+): Promise<void> {
+  if (!card.workflowScope) return;
+  await transitionWorkflowRun(
+    card.workflowScope.workflowRunId,
+    resolution === "reject" ? "reject" : "approve",
+  );
+}
+
+/**
+ * Polls pending workflow gates and feeds them into the approval store, so they
+ * surface in the same "Approval N of M" queue + floating pending pill as MCP
+ * approvals. Mounted once at the workspace shell.
+ */
+export function useWorkflowApprovalsPoll(): void {
+  const setWorkflowApprovals = useWorkspaceStore((state) => state.setWorkflowApprovals);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const list = await listWorkflowApprovals();
+        if (!cancelled) setWorkflowApprovals(list.map(workflowApprovalToCard));
+      } catch {
+        // Transient — keep the last known set until the next tick.
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [setWorkflowApprovals]);
+}

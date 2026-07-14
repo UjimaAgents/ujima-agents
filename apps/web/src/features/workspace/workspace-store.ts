@@ -107,6 +107,10 @@ export interface WorkspaceState {
   appendRunChunkBatch(items: { message?: ChatMessageData; activity?: ActivityEvent }[]): void;
   removeMessage(id: string): void;
   replaceApprovals(approvals: ApprovalCardData[]): void;
+  /** Replace only workflow-gate approvals (sourced from the workflow-approvals poll). */
+  setWorkflowApprovals(cards: ApprovalCardData[]): void;
+  /** Remove a single approval by id (optimistic drop after resolving a workflow gate). */
+  removeApproval(approvalId: string): void;
   replaceRuns(runs: RunState[]): void;
   upsertApproval(approval: ApprovalRequest, toCard: (approval: ApprovalRequest, state: Pick<WorkspaceState, "members">) => ApprovalCardData, toActivity: (approval: ApprovalRequest) => ActivityEvent): void;
   upsertRun(run: RunState, toActivity: (run: RunState) => ActivityEvent): void;
@@ -767,7 +771,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   removeMessage: (id) =>
     set((state) => ({ messages: state.messages.filter((message) => message.id !== id) })),
   replaceApprovals: (approvals) =>
-    set((state) => (sameItems(state.approvals, approvals) ? state : { approvals })),
+    set((state) => {
+      // The MCP approval sync owns non-workflow rows; workflow gates live in the
+      // same list (so every queue/pill consumer sees them) but are sourced
+      // separately via setWorkflowApprovals — preserve them across MCP resyncs.
+      const workflowRows = state.approvals.filter((a) => a.workflowScope);
+      const next = workflowRows.length ? [...approvals, ...workflowRows] : approvals;
+      return sameItems(state.approvals, next) ? state : { approvals: next };
+    }),
+  setWorkflowApprovals: (cards) =>
+    set((state) => {
+      const next = [...state.approvals.filter((a) => !a.workflowScope), ...cards];
+      return sameItems(state.approvals, next) ? state : { approvals: next };
+    }),
+  removeApproval: (approvalId) =>
+    set((state) => {
+      const next = state.approvals.filter((a) => a.id !== approvalId);
+      return next.length === state.approvals.length ? state : { approvals: next };
+    }),
   replaceRuns: (runs) =>
     set((state) => (sameItems(state.runs, runs) ? state : { runs })),
   upsertApproval: (approval, toCard, toActivity) =>
