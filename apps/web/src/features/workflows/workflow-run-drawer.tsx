@@ -4,7 +4,8 @@ import Link from "next/link";
 import { ExternalLink, Loader2, Workflow, X } from "lucide-react";
 import type { WorkflowRun } from "@ujima/shared";
 import { useWorkflowRun } from "./use-workflow-run";
-import { WorkflowRunControls, WorkflowRunSidePanel } from "./workflow-run-side-panel";
+import { WorkflowRunControls } from "./workflow-run-side-panel";
+import { WorkflowRunTabs } from "./workflow-run-tabs";
 
 const RUN_STATUS_BADGE: Record<WorkflowRun["status"], string> = {
   running: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300",
@@ -90,9 +91,7 @@ function DrawerBody({ runId, onClose }: { runId: string; onClose: () => void }) 
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <WorkflowRunSidePanel runId={runId} detail={detail} onReload={reload} />
-            </div>
+            <WorkflowRunTabs runId={runId} detail={detail} onReload={reload} />
           )}
         </div>
       </div>

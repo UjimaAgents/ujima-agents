@@ -1,12 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Check, FileText, Loader2, ShieldAlert, X } from "lucide-react";
+import { FileText, Loader2 } from "lucide-react";
 import { NODE_STATUS_STYLES } from "./nodes";
 import {
   getWorkflowRunArtifact,
-  resolveBlockingApproval,
-  type WorkflowBlockingApproval,
   type WorkflowNodeRunView,
   type WorkflowRunArtifact,
   type WorkflowRunDetail,
@@ -85,14 +83,6 @@ function groupToolSteps(steps: WorkflowToolStep[]): ToolGroup[] {
   return [...map.values()];
 }
 
-function approvalLabel(a: WorkflowBlockingApproval): string {
-  const base = a.resourcePath.split("/").filter(Boolean).pop() ?? a.resourcePath;
-  if (a.resourceType === "file") return `${a.action} the file ${base}`;
-  if (a.resourceType === "mcp") return `run the MCP tool ${a.resourcePath}`;
-  if (a.resourceType === "shell") return `run a shell command`;
-  return `${a.action} ${base}`;
-}
-
 function latestByNode(nodeRuns: WorkflowNodeRunView[]): WorkflowNodeRunView[] {
   const map = new Map<string, WorkflowNodeRunView>();
   for (const nr of nodeRuns) {
@@ -133,30 +123,15 @@ function fmtDuration(a?: string | null, b?: string | null): string {
 export function WorkflowRunSidePanel({
   runId,
   detail,
-  onReload,
 }: {
   runId: string;
   detail: WorkflowRunDetail;
-  onReload?: () => void;
 }) {
   const steps = latestByNode(detail.nodeRuns);
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [artifact, setArtifact] = useState<WorkflowRunArtifact | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resolvingId, setResolvingId] = useState<string | null>(null);
-
-  async function resolveApproval(id: string, resolution: "allow_once" | "reject") {
-    setResolvingId(id);
-    try {
-      await resolveBlockingApproval(id, detail.run.organizationId, resolution);
-      onReload?.();
-    } catch {
-      // leave it; the poll will refresh
-    } finally {
-      setResolvingId(null);
-    }
-  }
 
   async function toggleArtifact(path: string) {
     if (openPath === path) {
@@ -180,43 +155,6 @@ export function WorkflowRunSidePanel({
 
   return (
     <>
-      {detail.blockingApprovals.length > 0 && (
-        <div className="shrink-0 space-y-2 border-b border-amber-200 bg-amber-50/70 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
-          <div className="flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-            <ShieldAlert className="h-3.5 w-3.5" /> Waiting for approval
-          </div>
-          {detail.blockingApprovals.map((a) => (
-            <div
-              key={a.id}
-              className="rounded-lg border border-amber-200 bg-white p-2.5 text-xs dark:border-amber-500/20 dark:bg-zinc-900"
-            >
-              <p className="text-zinc-700 dark:text-zinc-300">
-                <span className="font-semibold">{a.agentName ?? a.nodeId}</span> wants to {approvalLabel(a)}
-              </p>
-              <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-400">{a.resourcePath}</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={resolvingId === a.id}
-                  onClick={() => void resolveApproval(a.id, "reject")}
-                  className="flex items-center justify-center gap-1.5 rounded-md border border-red-300 px-2 py-1.5 font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60 dark:border-red-500/40 dark:hover:bg-red-500/10"
-                >
-                  <X className="h-3.5 w-3.5" /> Reject
-                </button>
-                <button
-                  type="button"
-                  disabled={resolvingId === a.id}
-                  onClick={() => void resolveApproval(a.id, "allow_once")}
-                  className="flex items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 py-1.5 font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-60"
-                >
-                  {resolvingId === a.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                  Approve
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
       <div className="shrink-0 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "55%" }}>
         <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Timeline</p>
         {steps.length === 0 ? (

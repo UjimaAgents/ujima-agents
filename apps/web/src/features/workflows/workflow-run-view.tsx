@@ -15,6 +15,7 @@ import { workflowNodeTypes, type FlowNode } from "./nodes";
 import { graphToFlow } from "./graph-flow";
 import { useWorkflowRun } from "./use-workflow-run";
 import { WorkflowRunControls, WorkflowRunSidePanel } from "./workflow-run-side-panel";
+import { WorkflowRunApprovalBanner } from "./workflow-run-approval-banner";
 
 const RUN_STATUS_BADGE: Record<WorkflowRun["status"], string> = {
   running: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300",
@@ -118,7 +119,8 @@ export function WorkflowRunView({ runId }: { runId: string }) {
         </div>
 
         <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
-          <WorkflowRunSidePanel runId={runId} detail={detail} onReload={reload} />
+          <WorkflowRunApprovalBanner detail={detail} onReload={reload} />
+          <WorkflowRunSidePanel runId={runId} detail={detail} />
         </aside>
       </div>
     </div>
