@@ -518,6 +518,26 @@ function ArtifactViewToggle({
   );
 }
 
+// The artifact card + modal are always dark surfaces, but <Markdown> colors are
+// theme-aware (text-foreground → dark in a light app), so tables/pre/links
+// rendered dark-on-dark. Force a complete light-on-dark scheme for every element.
+const ARTIFACT_MD_CLASS = [
+  "text-zinc-100",
+  "[&_a]:text-violet-300 [&_a]:underline [&_a]:underline-offset-2",
+  "[&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400",
+  "[&_code]:text-zinc-200",
+  "[&_pre]:bg-white/5 [&_pre]:text-zinc-200 [&_pre]:rounded-lg [&_pre]:p-3",
+  "[&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white",
+  "[&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white",
+  "[&_h3]:text-white [&_h4]:text-zinc-100 [&_h5]:text-zinc-200 [&_h6]:text-zinc-400",
+  "[&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300",
+  "[&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300",
+  "[&_strong]:text-white",
+  "[&_table]:text-zinc-300 [&_th]:text-white [&_th]:border-white/15 [&_td]:text-zinc-300 [&_td]:border-white/10",
+  "[&_hr]:border-white/10",
+  "[&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6",
+].join(" ");
+
 function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -642,7 +662,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
             />
           ) : (
             <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
-              <div className="text-zinc-100 [&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400 [&_code]:text-zinc-200 [&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white [&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300 [&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300 [&_strong]:text-white [&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6">
+              <div className={ARTIFACT_MD_CLASS}>
                 <Markdown content={artifact.content} />
               </div>
             </div>
@@ -667,7 +687,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        contentClassName="max-w-6xl p-0 border-0 shadow-none bg-[#232323] dark:bg-[#232323]"
+        contentClassName="max-w-6xl p-0 border-0 shadow-none !bg-[#232323]"
       >
         <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] bg-white/[0.04] px-5 py-3 text-zinc-400">
           <div className="flex min-w-0 items-center gap-2">
@@ -725,7 +745,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
               />
             </div>
           ) : (
-            <div className="max-h-[calc(100vh-12rem)] overflow-auto text-zinc-100 [&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400 [&_code]:text-zinc-200 [&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white [&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300 [&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300 [&_strong]:text-white [&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6">
+            <div className={`max-h-[calc(100vh-12rem)] overflow-auto ${ARTIFACT_MD_CLASS}`}>
               <Markdown content={artifact.content} />
             </div>
           )}
