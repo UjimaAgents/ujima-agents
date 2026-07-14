@@ -16,6 +16,7 @@ import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/sh
 import { ChannelView } from "./channel-view";
 import { ChannelGoalsBoard } from "./channel-goals-board";
 import { GlobalApprovalIndicator } from "./global-approval-indicator";
+import { WorkflowRunsIndicator } from "@/features/workflows/workflow-runs-indicator";
 import { useWorkflowApprovalsPoll } from "../use-workflow-approvals";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
@@ -590,6 +591,7 @@ export function WorkspaceShell(props: {
         onOpenChange={setSearchPaletteOpen}
       />
       {organizationId ? <GlobalApprovalIndicator organizationId={organizationId} /> : null}
+      {organizationId ? <WorkflowRunsIndicator /> : null}
     </div>
   );
 }
