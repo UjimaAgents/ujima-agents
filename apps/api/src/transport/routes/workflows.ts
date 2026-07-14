@@ -247,21 +247,31 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     // Node runs carry the execution timeline; resolve the agent behind each one
     // plus the tool calls it made, so the run view can show who did what, when —
     // the agent's actual activity, not just its final text.
-    const nodeRuns = deps.repo.listWorkflowNodeRuns(run.id).map((nr) => ({
-      ...nr,
-      agentName: memberName(nr.agentId),
-      toolSteps: nr.childRunId
-        ? (deps.repo.listRunSteps?.(orgId, nr.childRunId) ?? [])
-            .slice(-40)
-            .map((s) => ({
-              tool: s.toolId,
-              action: s.action,
-              status: s.status,
-              resourcePath: s.resourcePath || undefined,
-              at: s.createdAt,
-            }))
-        : [],
-    }));
+    const nodeRuns = deps.repo.listWorkflowNodeRuns(run.id).map((nr) => {
+      // The node's failureReason is generic ('agent_run_failed'); the real error
+      // lives on the child agent run's summary. Surface it so the timeline shows
+      // what actually went wrong (e.g. a context-length overflow).
+      const childSummary = nr.childRunId ? deps.repo.getRun(orgId, nr.childRunId)?.summary : undefined;
+      return {
+        ...nr,
+        agentName: memberName(nr.agentId),
+        failureDetail:
+          nr.status === 'failed' && childSummary && childSummary !== nr.failureReason
+            ? childSummary
+            : undefined,
+        toolSteps: nr.childRunId
+          ? (deps.repo.listRunSteps?.(orgId, nr.childRunId) ?? [])
+              .slice(-60)
+              .map((s) => ({
+                tool: s.toolId,
+                action: s.action,
+                status: s.status,
+                resourcePath: s.resourcePath || undefined,
+                at: s.createdAt,
+              }))
+          : [],
+      };
+    });
     // A child agent run can stall on its own tool approval (a filesystem write,
     // an MCP call). That approval lives in the isolated run thread and otherwise
     // never reaches the operator — so the run looks "stuck". Surface it here so
@@ -284,7 +294,8 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     // the workflow's own status cards/reminders (▶ started / ✅ completed / ⚠️
     // needs attention). Those are channel meta, not agent interaction.
     const isStatusNoise = (content: string) =>
-      /^\s*(▶|✅|⛔|⚠️)\s*Workflow\b/.test(content);
+      /^\s*(▶|✅|⛔|⚠️)\s*Workflow\b/.test(content) ||
+      /^\s*\[\[CONVERSATION_SUMMARY/.test(content);
     const messages = deps.repo
       .listMessages(orgId, run.threadId, undefined, 100)
       .data.slice()

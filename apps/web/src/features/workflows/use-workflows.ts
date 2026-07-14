@@ -147,6 +147,7 @@ export interface WorkflowToolStep {
 }
 export type WorkflowNodeRunView = WorkflowNodeRun & {
   agentName?: string;
+  failureDetail?: string;
   toolSteps?: WorkflowToolStep[];
 };
 

@@ -10,7 +10,80 @@ import {
   type WorkflowNodeRunView,
   type WorkflowRunArtifact,
   type WorkflowRunDetail,
+  type WorkflowRunMessage,
+  type WorkflowToolStep,
 } from "./use-workflows";
+
+/** A single agent-activity entry — agent narration shown; long system prompts collapse. */
+function ActivityMessage({ m }: { m: WorkflowRunMessage }) {
+  const [expanded, setExpanded] = useState(false);
+  const isSystem = m.senderKind !== "agent";
+  const long = m.content.length > 220;
+  const shown = expanded || !long ? m.content : `${m.content.slice(0, 220)}…`;
+  return (
+    <div
+      className={`rounded-lg p-2 text-xs ${
+        isSystem ? "bg-zinc-50/60 dark:bg-zinc-900/40" : "bg-zinc-50 dark:bg-zinc-900/60"
+      }`}
+    >
+      <div className="flex items-baseline gap-1.5">
+        <span
+          className={`font-semibold ${
+            isSystem ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-700 dark:text-zinc-300"
+          }`}
+        >
+          {isSystem ? "Instructions" : m.senderName}
+        </span>
+        {m.createdAt && <span className="font-mono text-[10px] text-zinc-400">{fmtTime(m.createdAt)}</span>}
+      </div>
+      <p
+        className={`mt-0.5 whitespace-pre-wrap break-words ${
+          isSystem ? "text-zinc-500 dark:text-zinc-400" : "text-zinc-600 dark:text-zinc-300"
+        }`}
+      >
+        {shown}
+      </p>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-0.5 text-[10px] font-medium text-violet-600 hover:underline dark:text-violet-300"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Friendly tool name — MCP steps carry "serverId:toolName" in resourcePath. */
+function toolLabel(step: WorkflowToolStep): string {
+  if (step.tool === "mcp" && step.resourcePath) return step.resourcePath.split(":").pop() ?? step.tool;
+  return step.tool;
+}
+
+interface ToolGroup {
+  label: string;
+  count: number;
+  error: boolean;
+  sample?: string;
+}
+
+/** Collapse a long tool-call list into compact per-tool groups with counts. */
+function groupToolSteps(steps: WorkflowToolStep[]): ToolGroup[] {
+  const map = new Map<string, ToolGroup>();
+  for (const s of steps) {
+    const label = toolLabel(s);
+    const g = map.get(label) ?? { label, count: 0, error: false };
+    g.count += 1;
+    if (s.status === "error") g.error = true;
+    if (!g.sample && s.resourcePath && /write|view|read|edit/.test(s.action)) {
+      g.sample = s.resourcePath.split("/").filter(Boolean).pop();
+    }
+    map.set(label, g);
+  }
+  return [...map.values()];
+}
 
 function approvalLabel(a: WorkflowBlockingApproval): string {
   const base = a.resourcePath.split("/").filter(Boolean).pop() ?? a.resourcePath;
@@ -173,23 +246,21 @@ export function WorkflowRunSidePanel({
                 </div>
                 {nr.summary && <p className="mt-1 text-zinc-600 dark:text-zinc-400">{nr.summary}</p>}
                 {nr.toolSteps && nr.toolSteps.length > 0 && (
-                  <div className="mt-1.5 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
-                    {nr.toolSteps.map((s, i) => (
-                      <div key={i} className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-                        <span
-                          className={
-                            s.status === "error"
-                              ? "text-red-500"
-                              : s.status === "pending"
-                                ? "text-amber-500"
-                                : "text-emerald-500"
-                          }
-                        >
-                          ●
-                        </span>
-                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">{s.tool}</span>
-                        {s.resourcePath && <span className="min-w-0 truncate">{s.resourcePath}</span>}
-                      </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {groupToolSteps(nr.toolSteps).map((g) => (
+                      <span
+                        key={g.label}
+                        title={g.sample}
+                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[10px] ${
+                          g.error
+                            ? "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-300"
+                            : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                        }`}
+                      >
+                        {g.label}
+                        {g.sample ? <span className="text-zinc-400">{g.sample}</span> : null}
+                        {g.count > 1 ? <span className="font-sans font-semibold text-zinc-400">×{g.count}</span> : null}
+                      </span>
                     ))}
                   </div>
                 )}
@@ -226,7 +297,11 @@ export function WorkflowRunSidePanel({
                     ) : null}
                   </div>
                 )}
-                {nr.failureReason && <p className="mt-1 text-red-500">{nr.failureReason}</p>}
+                {(nr.failureDetail || nr.failureReason) && (
+                  <p className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] leading-snug text-red-600 dark:bg-red-500/10 dark:text-red-300">
+                    {nr.failureDetail ?? nr.failureReason}
+                  </p>
+                )}
               </div>
             );
           })
@@ -245,19 +320,7 @@ export function WorkflowRunSidePanel({
                 : "This workflow has no agent steps — nothing to show here."}
             </p>
           ) : (
-            detail.messages.map((m) => (
-              <div key={m.id} className="rounded-lg bg-zinc-50 p-2 text-xs dark:bg-zinc-900/60">
-                <div className="flex items-baseline gap-1.5">
-                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">{m.senderName}</span>
-                  {m.createdAt && (
-                    <span className="font-mono text-[10px] text-zinc-400">{fmtTime(m.createdAt)}</span>
-                  )}
-                </div>
-                <p className="mt-0.5 whitespace-pre-wrap break-words text-zinc-600 dark:text-zinc-400">
-                  {m.content.length > 600 ? `${m.content.slice(0, 600)}…` : m.content}
-                </p>
-              </div>
-            ))
+            detail.messages.map((m) => <ActivityMessage key={m.id} m={m} />)
           )}
         </div>
       </div>
