@@ -233,6 +233,15 @@ export class SpiritService extends SpiritServiceSupervisor {
         const question = this.repo.getInteractiveQuestion(run.organizationId, inputError.questionId);
         return this.waitForInput(run, question?.questionText ?? 'Waiting for user input');
       }
+      // Log the full stack — direct runs (workflow agent nodes, programmatic
+      // spawns) otherwise fail with only the message, which hides the throw site
+      // for opaque errors like "Right hand side of instanceof is not an object".
+      console.error('[spirit-direct-run] run failed', {
+        organizationId: run.organizationId,
+        runId: run.id,
+        agentId: run.agentId,
+        error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      });
       return this.failRun(run, (error as Error).message);
     }
   }
@@ -804,6 +813,12 @@ export class SpiritService extends SpiritServiceSupervisor {
         run: running,
         trace: streamedTrace,
         outcome: 'failed',
+      });
+      console.error('[spirit-direct-run] advanceRun failed', {
+        organizationId: run.organizationId,
+        runId: run.id,
+        agentId: run.agentId,
+        error: error instanceof Error ? (error.stack ?? error.message) : String(error),
       });
       return this.failRun(running, (error as Error).message);
     } finally {
