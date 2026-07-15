@@ -894,6 +894,15 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
           },
         }
       : {}),
+    ...(message.metadata?.workflowRunMarker
+      ? {
+          workflowRunMarker: {
+            workflowRunId: message.metadata.workflowRunMarker.workflowRunId,
+            workflowName: message.metadata.workflowRunMarker.workflowName,
+            phase: message.metadata.workflowRunMarker.phase,
+          },
+        }
+      : {}),
   };
 }
 

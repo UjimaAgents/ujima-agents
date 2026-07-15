@@ -25,6 +25,7 @@ import {
   type ChatMessageData,
 } from "./chat";
 import { ChannelMembersTab } from "./channel-members-tab";
+import { ChannelWorkflowsTab } from "@/features/workflows/channel-workflows-tab";
 import { CultureTab } from "@/features/settings/shared/culture-tab";
 import {
   getDirectMessageThreadId,
@@ -53,6 +54,7 @@ import { FileListSkeleton } from "./file-list-skeleton";
 import { MemberListSkeleton } from "./member-list-skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { resolveWorkspaceApproval } from "../approval-resolution";
+import { resolveWorkflowGate } from "../use-workflow-approvals";
 import { approvalToActivity, runToActivity } from "../activity-events";
 import { approvalToCard } from "../approval-card-data";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
@@ -75,6 +77,7 @@ const CHANNEL_TABS: ChatTab[] = [
   { id: "members", label: "Members" },
   { id: "approvals", label: "Approvals" },
   { id: "tasks", label: "Tasks" },
+  { id: "workflows", label: "Workflows" },
   { id: "culture", label: "Culture" },
   { id: "files", label: "Files" },
   { id: "activity", label: "Activity" },
@@ -475,6 +478,7 @@ export function ChannelView({
     ) ?? "medium";
   const setComposerReasoningEffort = useWorkspaceStore((state) => state.setComposerReasoningEffort);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
+  const openWorkflowRunDrawer = useWorkspaceStore((s) => s.openWorkflowRunDrawer);
   const [stopError, setStopError] = useState<string | undefined>(undefined);
 
   useTerminalPolling(globalActiveRuns, bootstrap.organization?.id, setActiveTerminals);
@@ -760,6 +764,28 @@ export function ChannelView({
         delete next[approvalId];
         return next;
       });
+      // Workflow gates resolve through the workflow transition endpoint.
+      const workflowCard = useWorkspaceStore
+        .getState()
+        .approvals.find((a) => a.id === approvalId && a.workflowScope);
+      if (workflowCard) {
+        try {
+          await resolveWorkflowGate(workflowCard, resolution);
+          useWorkspaceStore.getState().removeApproval(approvalId);
+        } catch (err) {
+          setApprovalErrors((state) => ({
+            ...state,
+            [approvalId]: err instanceof Error ? err.message : "Unable to resolve gate.",
+          }));
+        } finally {
+          setResolvingApprovals((state) => {
+            const next = { ...state };
+            delete next[approvalId];
+            return next;
+          });
+        }
+        return;
+      }
       try {
         const response = await resolveWorkspaceApproval({
           organizationId,
@@ -1134,6 +1160,7 @@ export function ChannelView({
                             members={members}
                             onOpenTasksTab={handleOpenTasksTab}
                             onNavigateChannel={handleNavigateChannel}
+                            onOpenWorkflowRun={openWorkflowRunDrawer}
                             colorIndex={Math.max(memberIndexById.get(message.senderId ?? "") ?? 0, 0)}
                             onReply={setReplyTo}
                           />
@@ -1199,6 +1226,15 @@ export function ChannelView({
             />
           ) : (
             <TabEmpty context="tasks" label="No organization context available." />
+          )
+        ) : activeTab === "workflows" ? (
+          conversation.type === "channel" && organizationId ? (
+            <ChannelWorkflowsTab
+              channelId={conversation.id}
+              threadId={currentThreadId ?? conversation.id}
+            />
+          ) : (
+            <TabEmpty context="generic" label="Workflows are available in channels." />
           )
         ) : activeTab === "culture" ? (
           (conversation.type === "channel" || conversation.type === "agent") && organizationId ? (

@@ -24,6 +24,7 @@ import type {
   TaskSessionService,
   TeamStore,
   WorkspaceService,
+  WorkflowEngineService,
 } from "@ujima/orchestrator";
 import { isTelegramPollingEnabled } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
@@ -71,6 +72,7 @@ import {
   registerTelegramWebhookRoute,
 } from "./routes/notifications.js";
 import {registerGoalRoutes} from "./routes/goals.js";
+import {registerWorkflowRoutes} from "./routes/workflows.js";
 
 const WS_QUEUE_CAP = 256;
 const STARTED_AT = Date.now();
@@ -113,6 +115,7 @@ export interface TransportOptions {
       tierCuration: TierCurationService;
       governance: GovernanceService;
       pluginRegistry: PluginRegistryService;
+      workflowEngine: WorkflowEngineService;
     };
   };
 }
@@ -397,6 +400,11 @@ export function createTransport(opts: TransportOptions): Transport {
         registerChannelMemberModeRoutes(api, {
           repo: opts.apiServices.repo,
           auth: services.auth,
+        });
+        registerWorkflowRoutes(api, {
+          repo: opts.apiServices.repo,
+          auth: services.auth,
+          workflowEngine: services.workflowEngine,
         });
       }
     },

@@ -5,6 +5,7 @@ import type { ConversationService } from './conversation.js';
 import type { ApiServiceContext } from './context.js';
 import type { SpiritService } from './spirit.js';
 import type { GoalSystemService } from './goal-system.js';
+import type { WorkflowEngineService } from './workflow-engine.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
 import type { AiService } from '../ai-service.js';
@@ -20,6 +21,7 @@ export interface SchedulerDomainInput {
   tools: ToolService;
   ai: AiService;
   goals: GoalSystemService;
+  workflowEngine: WorkflowEngineService;
   attachmentStoreRoot: string;
   getOrganizationIdsForSweep: () => string[];
 }
@@ -60,6 +62,14 @@ export function createSchedulerDomain(input: SchedulerDomainInput): SchedulerDom
     },
     onTick: async () => {
       await input.goals.sweepAllPendingTasks();
+      // Workflow safety sweep: recover stalled runs + remind on stuck gates.
+      for (const orgId of input.getOrganizationIdsForSweep()) {
+        try {
+          await input.workflowEngine.sweep(orgId);
+        } catch (err) {
+          console.warn('[workflow-sweep] failed for org', orgId, err);
+        }
+      }
       cleanupExpiredAgentAttachments({
         repo: input.repo,
         attachmentStoreRoot: input.attachmentStoreRoot,

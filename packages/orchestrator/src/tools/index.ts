@@ -24,6 +24,13 @@ import { scheduleTool } from './schedule.js';
 import { webSearchTool } from './web-search.js';
 import { memoryForgetTool, memoryRecallTool, memoryWriteTool } from './memory.js';
 import {
+  workflowAdvanceTool,
+  workflowListTool,
+  workflowRunTool,
+  workflowTransitionTool,
+  workflowViewTool,
+} from './workflow.js';
+import {
   selfProcedureAddTool,
   selfProcedureListTool,
   selfProcedureRemoveTool,
@@ -80,6 +87,11 @@ export const ORCHESTRATOR_TOOLS = {
   'agent.delegate': agentDelegateTool,
   'agent.manage': agentManageTool,
   'skill.read': skillReadTool,
+  'workflow.run': workflowRunTool,
+  'workflow.list': workflowListTool,
+  'workflow.view': workflowViewTool,
+  'workflow.advance': workflowAdvanceTool,
+  'workflow.transition': workflowTransitionTool,
 } as unknown as Record<string, OrchestratorTool>;
 
 // Re-export from shared registry — single source of truth.

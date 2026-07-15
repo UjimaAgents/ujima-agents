@@ -367,7 +367,18 @@ export class ConversationService {
       : typedMentions ?? this.mentionResolver.resolveMessageMentions(message.organizationId, message, channel);
 
     if (!options?.silent) {
-      const suppressWake = options?.wakePolicy === 'never' || this.wakeDispatcher.shouldSuppressDmWake(emittedMessage, channel);
+      // A human `@workflow <name>` / `@workflow:<name>` command is a system
+      // trigger handled once by the engine (via onMessagePublished below) — no
+      // agent should wake for it. Without this every agent in the channel wakes,
+      // reads the mention, and independently launches the workflow, so one
+      // trigger spawns a flood of duplicate runs.
+      const isWorkflowCommand =
+        emittedMessage.senderKind === 'human' &&
+        /^@workflow[:\s]+[^\s:]+/i.test((emittedMessage.content ?? '').trim());
+      const suppressWake =
+        options?.wakePolicy === 'never' ||
+        isWorkflowCommand ||
+        this.wakeDispatcher.shouldSuppressDmWake(emittedMessage, channel);
       if (!suppressWake) {
         this.wakeDispatcher.fanout('alertMentionedMembers', this.wakeDispatcher.alertMentionedMembers(emittedMessage, resolvedMentions, channel));
       }

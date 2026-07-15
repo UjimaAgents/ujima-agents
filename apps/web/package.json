@@ -12,6 +12,7 @@
   "dependencies": {
     "@ai-sdk/react": "^3.0.170",
     "@tanstack/react-virtual": "^3.13.24",
+    "@xyflow/react": "^12.8.2",
     "@ujima/api-schema": "workspace:*",
     "@ujima/shared": "workspace:*",
     "ai": "^6.0.168",

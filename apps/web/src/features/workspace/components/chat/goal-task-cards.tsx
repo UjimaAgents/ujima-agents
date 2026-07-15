@@ -383,6 +383,7 @@ export const MessageCardsView = memo(function MessageCardsView({
           case "approval":
           case "task.promotion-confirm":
           case "tool.call":
+            // Rendered by dedicated components upstream (chat-message), not here.
             return null;
           default: {
             const _exhaustive: never = card;
