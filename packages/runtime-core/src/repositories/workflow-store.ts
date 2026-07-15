@@ -192,6 +192,7 @@ function rowToRun(row: Row): WorkflowRun {
     initiatedBy: rowString(row, 'initiated_by'),
     channelId: rowString(row, 'channel_id'),
     threadId: rowString(row, 'thread_id'),
+    originThreadId: optionalRowString(row, 'origin_thread_id') ?? null,
     lastTransitionToken: optionalRowString(row, 'last_transition_token') ?? null,
     createdAt: rowString(row, 'created_at'),
     updatedAt: rowString(row, 'updated_at'),
@@ -203,9 +204,9 @@ export function saveWorkflowRun(db: DbHandle, run: WorkflowRun): WorkflowRun {
   db.prepare(
     `INSERT INTO workflow_runs (
        id, organization_id, workflow_definition_id, name, graph_snapshot, graph_sha256,
-       input_text, status, initiated_by, channel_id, thread_id, last_transition_token,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       input_text, status, initiated_by, channel_id, thread_id, origin_thread_id,
+       last_transition_token, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        status = excluded.status,
        last_transition_token = excluded.last_transition_token,
@@ -222,6 +223,7 @@ export function saveWorkflowRun(db: DbHandle, run: WorkflowRun): WorkflowRun {
     payload.initiatedBy,
     payload.channelId,
     payload.threadId,
+    payload.originThreadId ?? null,
     payload.lastTransitionToken ?? null,
     payload.createdAt,
     payload.updatedAt,

@@ -64,6 +64,12 @@ export interface SpawnAgentNodeInput {
   nodeRunId: string;
   nodeId: string;
   agentId: string;
+  /**
+   * The child run's id, generated + persisted on the node run by the engine
+   * *before* the run is fired, so a fast completion can't race the node run
+   * into a stale `running` state. spawnAgentNode must use this as the run id.
+   */
+  childRunId: string;
   channelId: string;
   threadId: string;
   /** Fully token-resolved prompt. */
@@ -126,6 +132,8 @@ export interface PostRunCardInput {
 export interface PostRunUpdateInput {
   organizationId: string;
   channelId: string;
+  /** The origin thread the start card went to; the update posts to the same thread. */
+  originThreadId?: string;
   workflowName: string;
   workflowRunId: string;
   status: 'completed' | 'failed';
@@ -275,6 +283,7 @@ export class WorkflowEngineService {
       initiatedBy: input.initiatedBy,
       channelId: input.channelId,
       threadId: runThreadId,
+      originThreadId: input.threadId,
       lastTransitionToken: null,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -373,6 +382,7 @@ export class WorkflowEngineService {
         this.setRunStatus(input.organizationId, input.workflowRunId, 'paused');
       });
       await this.notify(input.organizationId, input.workflowRunId, `Step "${nodeRun.nodeId}" failed`, nodeRun.nodeId);
+      await this.postFailedCard(input.organizationId, input.workflowRunId);
       return;
     }
 
@@ -404,6 +414,7 @@ export class WorkflowEngineService {
         `Step "${nodeRun.nodeId}" produced no output`,
         nodeRun.nodeId,
       );
+      await this.postFailedCard(input.organizationId, input.workflowRunId);
       return;
     }
 
@@ -474,12 +485,14 @@ export class WorkflowEngineService {
           input.workflowRunId,
           `Approval rejected: ${input.rejectionReason ?? ''}`,
         );
+        await this.postFailedCard(input.organizationId, input.workflowRunId);
         return {ok: true};
       }
       case 'abort': {
         this.store.transaction(() => {
           this.setRunStatus(input.organizationId, input.workflowRunId, 'failed', input.idempotencyKey);
         });
+        await this.postFailedCard(input.organizationId, input.workflowRunId);
         return {ok: true};
       }
       case 'retry': {
@@ -642,8 +655,6 @@ export class WorkflowEngineService {
       startedAt: nowIso,
       completedAt: null,
     };
-    this.store.transaction(() => this.store.saveWorkflowNodeRun(base));
-
     const tokenCtx: TokenContext = {input: run.input ?? '', workflowRunId: run.id, outputs};
     // A downstream `output` node declares the required format + owns the path.
     const outputSpec = findDownstreamOutputSpec(graph, node.id);
@@ -666,8 +677,18 @@ export class WorkflowEngineService {
     }
     const {skills, toolIds} = resolveAttachedSubnodes(graph, node.id);
 
+    // Persist `running` + child_run_id + output_path BEFORE firing the async
+    // child run. The child run's id is generated here (not inside the effect)
+    // so that if it completes fast, onNodeComplete writes the terminal status
+    // onto a fully-stamped row — and there is no later `running` write to
+    // clobber it back (the race that could strand a run).
+    const childRunId = randomUUID();
+    this.store.transaction(() =>
+      this.store.saveWorkflowNodeRun({...base, status: 'running', childRunId, outputPath}),
+    );
+
     try {
-      const {childRunId} = await this.effects.spawnAgentNode({
+      await this.effects.spawnAgentNode({
         organizationId: run.organizationId,
         workflowRunId: run.id,
         workflowName: run.name,
@@ -675,6 +696,7 @@ export class WorkflowEngineService {
         nodeRunId,
         nodeId: node.id,
         agentId: node.config.agentId,
+        childRunId,
         channelId: run.channelId,
         threadId: run.threadId,
         prompt,
@@ -683,13 +705,14 @@ export class WorkflowEngineService {
         skills,
         outputPath,
       });
-      this.store.transaction(() =>
-        this.store.saveWorkflowNodeRun({...base, status: 'running', childRunId, outputPath}),
-      );
     } catch (err) {
+      // The child run never started, so no completion can race this write.
+      // Guard anyway: don't overwrite a status that already went terminal.
       this.store.transaction(() => {
+        const current = this.store.getWorkflowNodeRun(run.id, nodeRunId) ?? base;
+        if (TERMINAL_DONE_STATUSES.has(current.status) || current.status === 'failed') return;
         this.store.saveWorkflowNodeRun({
-          ...base,
+          ...current,
           status: 'failed',
           failureReason: `spawn_failed: ${errorMessage(err)}`,
           completedAt: new Date().toISOString(),
@@ -697,6 +720,7 @@ export class WorkflowEngineService {
         this.setRunStatus(run.organizationId, run.id, 'paused');
       });
       await this.notify(run.organizationId, run.id, `Step "${node.id}" failed to start`, node.id);
+      await this.postFailedCard(run.organizationId, run.id);
     }
   }
 
@@ -961,11 +985,30 @@ export class WorkflowEngineService {
       await this.effects.postRunUpdate({
         organizationId,
         channelId: run.channelId,
+        originThreadId: run.originThreadId ?? undefined,
         workflowName: run.name,
         workflowRunId,
         status: 'completed',
       });
     }
+  }
+
+  /**
+   * Post the "⛔ failed" card into the origin thread (same place the start card
+   * went), so the origin channel reflects the failure instead of showing a
+   * stale "started" card. Safe to call from any failure path.
+   */
+  private async postFailedCard(organizationId: string, workflowRunId: string): Promise<void> {
+    const run = this.store.getWorkflowRun(organizationId, workflowRunId);
+    if (!run) return;
+    await this.effects.postRunUpdate({
+      organizationId,
+      channelId: run.channelId,
+      originThreadId: run.originThreadId ?? undefined,
+      workflowName: run.name,
+      workflowRunId,
+      status: 'failed',
+    });
   }
 
   private setRunStatus(

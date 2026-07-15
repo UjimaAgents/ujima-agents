@@ -66,6 +66,8 @@ class FakeStore implements WorkflowEngineStore {
 function makeEffects(opts?: {
   statOutput?: (i: StatOutputInput) => {sha256: string; sizeBytes: number} | null;
   runStatus?: (runId: string) => string | null;
+  /** Fires inside spawnAgentNode — used to simulate a child run that completes fast. */
+  onSpawn?: (input: SpawnAgentNodeInput) => Promise<void> | void;
 }) {
   const spawns: SpawnAgentNodeInput[] = [];
   const goals: StartGoalInput[] = [];
@@ -77,7 +79,8 @@ function makeEffects(opts?: {
   const effects: WorkflowEffects = {
     async spawnAgentNode(input) {
       spawns.push(input);
-      return {childRunId: `child-${input.nodeRunId}`};
+      if (opts?.onSpawn) await opts.onSpawn(input);
+      return {childRunId: input.childRunId};
     },
     async raiseApproval(input) {
       approvals.push(input);
@@ -173,8 +176,81 @@ describe('WorkflowEngineService', () => {
     expect(goals[0]!.title).toBe('Add user auth');
     expect(goals[0]!.tasks).toEqual([{title: 'Build auth'}]);
     expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('completed');
-    // a completion card was posted to the origin channel
-    expect(updates.some((u) => u.status === 'completed')).toBe(true);
+    // a completion card was posted to the origin channel, in the origin thread
+    const completed = updates.find((u) => u.status === 'completed');
+    expect(completed).toBeTruthy();
+    expect(completed!.originThreadId).toBe('th1');
+  });
+
+  it('does not clobber a fast child completion back to running (race)', async () => {
+    // The child run finishes *during* spawnAgentNode (before dispatch returns).
+    // The node must end 'completed', not be reset to 'running' by a late write.
+    let engine!: WorkflowEngineService;
+    const {effects, spawns} = makeEffects({
+      onSpawn: async (input) => {
+        await engine.onNodeComplete({
+          organizationId: 'org1',
+          workflowRunId: input.workflowRunId,
+          nodeRunId: input.nodeRunId,
+          summary: 'fast',
+          json: {tasks: []},
+        });
+      },
+    });
+    engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [
+        trigger,
+        agent('pm', 'Write a BRD for {{input}}'),
+        {id: 'goal', kind: 'goal_handoff', position: {x: 0, y: 0}, config: {titleTemplate: '{{input}}', tasksFrom: 'json'}},
+      ],
+      [edge('t', 'pm'), edge('pm', 'goal')],
+    );
+
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'build'});
+
+    void spawns;
+    const pm = store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!;
+    expect(pm.status).toBe('completed');
+    expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('completed');
+  });
+
+  it('posts a failed card to the origin thread when a step fails', async () => {
+    const {effects, spawns, updates} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [trigger, agent('pm'), {id: 'goal', kind: 'goal_handoff', position: {x: 0, y: 0}, config: {titleTemplate: '{{input}}', tasksFrom: 'json'}}],
+      [edge('t', 'pm'), edge('pm', 'goal')],
+    );
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'build'});
+
+    await engine.onNodeComplete({
+      organizationId: 'org1',
+      workflowRunId,
+      nodeRunId: spawns[0]!.nodeRunId,
+      failed: true,
+      failureReason: 'boom',
+    });
+
+    expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('paused');
+    const failed = updates.find((u) => u.status === 'failed');
+    expect(failed).toBeTruthy();
+    expect(failed!.originThreadId).toBe('th1');
+  });
+
+  it('posts a failed card on abort', async () => {
+    const {effects, updates} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [trigger, agent('pm'), {id: 'goal', kind: 'goal_handoff', position: {x: 0, y: 0}, config: {titleTemplate: '{{input}}', tasksFrom: 'json'}}],
+      [edge('t', 'pm'), edge('pm', 'goal')],
+    );
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'build'});
+
+    await engine.transition({organizationId: 'org1', workflowRunId, action: 'abort', idempotencyKey: 'k1'});
+
+    expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('failed');
+    expect(updates.some((u) => u.status === 'failed')).toBe(true);
   });
 
   it('passes the envelope downstream via tokens', async () => {

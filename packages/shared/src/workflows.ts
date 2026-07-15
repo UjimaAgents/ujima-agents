@@ -236,6 +236,8 @@ export const WorkflowRunSchema = z.object({
   initiatedBy: IdSchema,
   channelId: IdSchema,
   threadId: IdSchema,
+  /** The origin thread the run was triggered from (where start/completion cards go). */
+  originThreadId: IdSchema.nullable().optional(),
   lastTransitionToken: z.string().nullable().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

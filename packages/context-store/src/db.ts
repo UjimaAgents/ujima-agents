@@ -1766,6 +1766,12 @@ const MIGRATIONS: Migration[] = [
         ON workflow_definitions(organization_id, channel_id);
     `,
   },
+  {
+    id: "062_workflow_run_origin_thread",
+    up: `
+      ALTER TABLE workflow_runs ADD COLUMN origin_thread_id TEXT;
+    `,
+  },
 ];
 
 export interface DbOptions {

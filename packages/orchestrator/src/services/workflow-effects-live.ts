@@ -53,14 +53,11 @@ export class LiveWorkflowEffects implements WorkflowEffects {
   }
 
   async spawnAgentNode(input: SpawnAgentNodeInput): Promise<{ childRunId: string }> {
-    const runId = randomUUID();
-
-    // Stamp child_run_id BEFORE the async run starts so workflow.advance and
-    // the completion hook can find this node run by the child run id.
-    const nodeRun = this.deps.repo.getWorkflowNodeRun(input.workflowRunId, input.nodeRunId);
-    if (nodeRun) {
-      this.deps.repo.saveWorkflowNodeRun({ ...nodeRun, childRunId: runId });
-    }
+    // The engine generates the child run id and persists it (with the 'running'
+    // state) on the node run *before* calling this, so a fast completion can't
+    // be clobbered. We must use that same id as the run id so workflow.advance
+    // and the completion hook can correlate this run back to the node run.
+    const runId = input.childRunId;
 
     // Give the agent its task: prompt + wake-context, posted without waking
     // anyone (we drive the run explicitly below).
@@ -253,7 +250,9 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     this.deps.conversations.publishMessage(
       buildSystemMessage({
         organizationId: input.organizationId,
-        threadId: input.channelId,
+        // Post to the same thread the start card went to, not the channel root,
+        // so the run's conversation trail stays together.
+        threadId: input.originThreadId ?? input.channelId,
         channelId: input.channelId,
         content,
         metadata: {
