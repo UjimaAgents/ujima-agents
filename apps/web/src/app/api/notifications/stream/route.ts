@@ -60,6 +60,7 @@ const WORKSPACE_EVENTS = [
   SocketEventNames.dmMessage,
   SocketEventNames.approvalRequested,
   SocketEventNames.approvalResolved,
+  SocketEventNames.memberUpdated,
   SocketEventNames.runStarted,
   SocketEventNames.runUpdated,
   SocketEventNames.runCompleted,

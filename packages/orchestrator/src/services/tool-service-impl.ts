@@ -20,6 +20,7 @@ import {
 import type { RealtimeService } from "./context.js";
 import type { ConversationService } from "./conversation.js";
 import type { GoalSystemService } from "./goal-system.js";
+import type { SettingsService } from "./settings.js";
 import { requireTeam } from "../utils/require-team.js";
 import { isAgentOnlyDmThread } from "../utils/wake-reply-policy.js";
 import { checkToolPolicy } from "./policy.js";
@@ -89,6 +90,7 @@ export class ToolServiceImpl implements ToolService {
     private readonly approvals: ApprovalRequester,
     private readonly conversations: ConversationService,
     private readonly goals: GoalSystemService,
+    private readonly settings: SettingsService,
     private readonly realtime: RealtimeService,
     private readonly delegates: DelegateHandlers,
     private readonly mcpPool?: McpRuntimePool,
@@ -451,6 +453,7 @@ export class ToolServiceImpl implements ToolService {
         repo: this.repo,
         conversations: this.conversations,
         goals: this.goals,
+        settings: this.settings,
         ...this.delegates,
         reportProgress: (output) => this.emitToolProgress(invocation, output),
         agentAttachmentRoot: this.agentAttachmentRoot,

@@ -10,6 +10,7 @@ import {
   AuthService,
   GoalSystemService,
   OnboardingService,
+  SettingsService,
   ToolServiceImpl,
   createApiServices,
   createTeamStore,
@@ -611,12 +612,14 @@ describe('workspace path hardening', () => {
     const realtime = createNoopRealtime();
     const conversations = new ConversationService(repo, realtime);
     const goals = new GoalSystemService(repo);
+    const settings = new SettingsService(repo, teamStore);
     const tools = new ToolServiceImpl(
       teamStore,
       repo,
       { requestApproval: () => ({ id: 'approval-1' }) },
       conversations,
       goals,
+      settings,
       realtime,
       {
         delegateAgentTurn: async () => ({ status: 'timed_out', agent: '', agent_id: '', thread_id: '', message_id: '' }),

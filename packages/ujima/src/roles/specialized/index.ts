@@ -12,6 +12,7 @@ import { governmentDigitalPresalesConsultant } from './government-digital-presal
 import { healthcareCustomerService } from './healthcare-customer-service.js';
 import { healthcareMarketingCompliance } from './healthcare-marketing-compliance.js';
 import { hospitalityGuestServices } from './hospitality-guest-services.js';
+import { hr } from './hr.js';
 import { hrOnboarding } from './hr-onboarding.js';
 import { identityGraphOperator } from './identity-graph-operator.js';
 import { languageTranslator } from './language-translator.js';
@@ -54,6 +55,7 @@ export { governmentDigitalPresalesConsultant } from './government-digital-presal
 export { healthcareCustomerService } from './healthcare-customer-service.js';
 export { healthcareMarketingCompliance } from './healthcare-marketing-compliance.js';
 export { hospitalityGuestServices } from './hospitality-guest-services.js';
+export { hr } from './hr.js';
 export { hrOnboarding } from './hr-onboarding.js';
 export { identityGraphOperator } from './identity-graph-operator.js';
 export { languageTranslator } from './language-translator.js';
@@ -97,6 +99,7 @@ export const Specialized_ROLE_PRESETS = {
   healthcareCustomerService,
   healthcareMarketingCompliance,
   hospitalityGuestServices,
+  hr,
   hrOnboarding,
   identityGraphOperator,
   languageTranslator,

@@ -5,6 +5,7 @@ import {
   createAgent,
   createOrganizationChart,
   createPersonalityFromPreset,
+  getPersonalityPreset,
   ROLE_PRESETS,
   createRoleFromPreset,
   createEmptyWorkspaceTeamConfig,
@@ -49,6 +50,9 @@ test('framework helpers normalize roles, tools, and providers', () => {
   expect(tool.id).toBe('write');
   expect(role.name).toBe('frontend-engineer');
   expect(createPersonalityFromPreset('direct').name).toBe('direct');
+  expect(getPersonalityPreset('Direct')?.name).toBe('direct');
+  expect(getPersonalityPreset(' direct ')?.name).toBe('direct');
+  expect(createAgent('casey', 'frontend-engineer', 'Direct').personalityName).toBe('direct');
 });
 
 test('createOrganizationChart validates agent references', () => {

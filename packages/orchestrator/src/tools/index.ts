@@ -31,6 +31,16 @@ import {
 } from './self-procedure.js';
 import { procedureListTool, procedureViewTool } from './procedure-read.js';
 import {
+  goalChannelViewTool,
+  orgMembersAddTool,
+  orgMembersListTool,
+  orgMembersRemoveTool,
+  orgMembersUpdateTool,
+  orgOrganizationGetTool,
+  orgOrganizationUpdateTool,
+  orgPoliciesUpdateTool,
+} from './org-management.js';
+import {
   editTool,
   multieditTool,
   viewTool,
@@ -69,10 +79,18 @@ export const ORCHESTRATOR_TOOLS = {
   'channel.recall': channelRecallTool,
   'goal.start': goalStartTool,
   'goal.task.update': goalTaskUpdateTool,
+  'goal.channel.view': goalChannelViewTool,
   'question.ask': questionAskTool,
   'memory.write': memoryWriteTool,
   'memory.recall': memoryRecallTool,
   'memory.forget': memoryForgetTool,
+  'org.members.list': orgMembersListTool,
+  'org.members.add': orgMembersAddTool,
+  'org.members.update': orgMembersUpdateTool,
+  'org.members.remove': orgMembersRemoveTool,
+  'org.organization.get': orgOrganizationGetTool,
+  'org.organization.update': orgOrganizationUpdateTool,
+  'org.policies.update': orgPoliciesUpdateTool,
   message: messageTool,
   schedule: scheduleTool,
   'agent.delegate': agentDelegateTool,
@@ -160,18 +178,31 @@ export const ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
   'memory.recall',
   'memory.forget',
   'agent.delegate',
-  // Workspace write tools — agents need these out of the gate
+  'fetch',
+  'web_search',
+] as const);
+
+export const WORKER_FILESYSTEM_TOOLS = Object.freeze([
   'filesystem',
   'write',
   'edit',
   'multiedit',
   'shell',
   'download',
-  'fetch',
-  'web_search',
-  // Background job management — needed when shell is baseline
   'job_output',
   'job_kill',
+] as const);
+
+export const HR_ALWAYS_AVAILABLE_AGENT_TOOLS = Object.freeze([
+  ...ALWAYS_AVAILABLE_AGENT_TOOLS,
+  'goal.channel.view',
+  'org.members.list',
+  'org.members.add',
+  'org.members.update',
+  'org.members.remove',
+  'org.organization.get',
+  'org.organization.update',
+  'org.policies.update',
 ] as const);
 
 // Supervisor's strict tool allowlist — read-only / annotation-only tools

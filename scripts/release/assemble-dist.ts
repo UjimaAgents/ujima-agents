@@ -39,9 +39,41 @@ function log(message: string): void {
   console.log(`[release:dist] ${message}`);
 }
 
+function removeTree(path: string): void {
+  const attempts = process.platform === "win32" ? 8 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === attempts) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 150);
+    }
+  }
+}
+
+async function copyTree(source: string, destination: string): Promise<void> {
+  if (process.platform !== "win32") {
+    cpSync(source, destination, { recursive: true, dereference: true });
+    return;
+  }
+  mkdirSync(destination, { recursive: true });
+  const result =
+    await $`robocopy ${source} ${destination} /E /SL /XJ /R:2 /W:1 /NFL /NDL /NJH /NJS /NP`
+      .quiet()
+      .nothrow();
+  // Robocopy uses non-zero exit codes for successful copy states.
+  if ((result.exitCode ?? 16) >= 8) {
+    const stderr = result.stderr.toString();
+    const stdout = result.stdout.toString();
+    console.error(stderr || stdout);
+    throw new Error(`robocopy failed for ${source} -> ${destination}`);
+  }
+}
+
 function ensureCleanDist(): void {
   if (existsSync(DIST_OUT_DIR)) {
-    rmSync(DIST_OUT_DIR, {recursive: true, force: true});
+    removeTree(DIST_OUT_DIR);
   }
   mkdirSync(RUNTIME_DIR, {recursive: true});
 }
@@ -103,7 +135,7 @@ async function copyWebStandalone(): Promise<void> {
   }
 
   log("Copying Next.js standalone web…");
-  cpSync(standaloneRoot, WEB_RUNTIME_DIR, {recursive: true});
+  await copyTree(standaloneRoot, WEB_RUNTIME_DIR);
 
   const staticSrc = join(webRoot, ".next/static");
   const staticCandidates = [
@@ -113,7 +145,7 @@ async function copyWebStandalone(): Promise<void> {
   if (existsSync(staticSrc)) {
     for (const dest of staticCandidates) {
       mkdirSync(dirname(dest), {recursive: true});
-      cpSync(staticSrc, dest, {recursive: true});
+      await copyTree(staticSrc, dest);
     }
   }
 
@@ -125,7 +157,7 @@ async function copyWebStandalone(): Promise<void> {
   if (existsSync(publicSrc)) {
     for (const dest of publicCandidates) {
       mkdirSync(dirname(dest), {recursive: true});
-      cpSync(publicSrc, dest, {recursive: true});
+      await copyTree(publicSrc, dest);
     }
   }
 
@@ -198,7 +230,7 @@ function stripSourceMaps(dir: string): number {
     if (entry.isDirectory()) {
       removed += stripSourceMaps(fullPath);
     } else if (entry.name.endsWith(".map") || entry.name.endsWith(".map.gz")) {
-      rmSync(fullPath);
+      removeTree(fullPath);
       removed += 1;
     }
   }

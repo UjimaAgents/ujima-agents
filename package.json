@@ -21,6 +21,7 @@
     "dev": "turbo run dev --concurrency=24",
     "dev:stack": "turbo run dev --filter=web --filter=@ujima/api --concurrency=8",
     "dev:local": "bash scripts/dev-local.sh",
+    "dev:isolated": "bun scripts/dev-isolated.ts",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "bun run build && vitest run --minWorkers=1 --maxWorkers=4",

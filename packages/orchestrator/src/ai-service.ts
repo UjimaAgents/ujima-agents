@@ -20,6 +20,8 @@ import type { TeamStore } from './services/team-store.js';
 import type { ToolService } from './services/tool-service.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
+  HR_ALWAYS_AVAILABLE_AGENT_TOOLS,
+  WORKER_FILESYSTEM_TOOLS,
   filterDeprecatedToolIds,
 } from './tools/index.js';
 import { isMirrorFragileModel } from './services/mirror-guard.js';
@@ -210,7 +212,6 @@ export class AiService {
       availableSkills,
       Object.keys(toolDefs),
       [],
-      'channel',
     );
 
     const proceduresText = await loadProceduresForSystemPrompt(team.workspace.root, member.id);
@@ -333,10 +334,11 @@ export class AiService {
         (memberId) => this.repo.getMember(input.organizationId, memberId)?.kind === AGENT_KIND,
       ),
     });
-    const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(
-      ALWAYS_AVAILABLE_AGENT_TOOLS,
-      wakeReplyPolicy,
-    );
+    const baseToolSet =
+      role.name === 'hr'
+        ? HR_ALWAYS_AVAILABLE_AGENT_TOOLS
+        : [...ALWAYS_AVAILABLE_AGENT_TOOLS, ...WORKER_FILESYSTEM_TOOLS];
+    const baseAlwaysAvailable = filterToolsForWakeReplyPolicy(baseToolSet, wakeReplyPolicy);
     const roleTools = filterToolsForWakeReplyPolicy(role.tools, wakeReplyPolicy);
     const builtInToolDefs = buildToolDefinitions(
       filterDeprecatedToolIds([...new Set([...roleTools, ...baseAlwaysAvailable])]),
@@ -397,7 +399,6 @@ export class AiService {
       : { toolSet: {} as ToolSet, servers: [] };
     const mcpToolDefs = mcpResolution.toolSet;
     const attachedMcpServers = mcpResolution.servers;
-    const availableConnectors = mcpResolution.catalogText;
     const toolDefs: ToolSet = isDelegateTurn
       ? filterDelegateTurnToolSet({ ...builtInToolDefs, ...mcpToolDefs }, getDelegateKind(sourceMessage))
       : { ...builtInToolDefs, ...mcpToolDefs };
@@ -432,7 +433,6 @@ export class AiService {
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       wakeReplyPolicy.conversationKind,
-      availableConnectors,
     );
 
     // Bet 1 + Bet 7 — cache-stable system prompt assembly.

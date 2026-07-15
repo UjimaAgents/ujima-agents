@@ -1,5 +1,5 @@
 import { type MemberKind } from '@ujima/shared';
-import { getPersonalityPreset } from './personality.js';
+import { getPersonalityPreset, normalizePersonalityName } from './personality.js';
 import { AgentConfigSchema, type AgentConfig, type RoleConfig } from './schemas.js';
 
 export { AgentConfigSchema, type AgentConfig } from './schemas.js';
@@ -61,7 +61,9 @@ export function normalizeAgents(
     return AgentConfigSchema.parse({
       ...record,
       personalityName:
-        typeof record.personalityName === 'string' ? record.personalityName : 'direct',
+        typeof record.personalityName === 'string'
+          ? normalizePersonalityName(record.personalityName)
+          : 'direct',
       kind: typeof record.kind === 'string' ? record.kind : 'agent',
     });
   });
@@ -78,5 +80,10 @@ export function createAgent(
   roleName: string,
   personalityName = 'direct',
 ): AgentConfig {
-  return AgentConfigSchema.parse({ name, roleName, personalityName, kind: 'agent' });
+  return AgentConfigSchema.parse({
+    name,
+    roleName,
+    personalityName: normalizePersonalityName(personalityName),
+    kind: 'agent',
+  });
 }

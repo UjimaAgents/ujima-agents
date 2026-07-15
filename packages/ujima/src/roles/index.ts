@@ -15,6 +15,7 @@ import { Support_ROLE_PRESETS } from './support/index.js';
 import { Testing_ROLE_PRESETS } from './testing/index.js';
 
 export const STARTER_ROLE_PRESET_KEYS = [
+  "hr",
   "frontendEngineer",
   "backendEngineer",
   "pm",

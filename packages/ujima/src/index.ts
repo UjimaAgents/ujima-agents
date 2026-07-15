@@ -48,6 +48,7 @@ export {
 export {
   listPersonalityPresets,
   getPersonalityPreset,
+  normalizePersonalityName,
   createPersonalityFromPreset,
   definePersonality,
 } from './personality.js';

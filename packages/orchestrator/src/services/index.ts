@@ -990,6 +990,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     (orgId, runId, allowRun) => resumeInputRun(orgId, runId, allowRun),
     conversations,
   );
+  const settings = new SettingsService(
+    context.repo,
+    context.teamStore,
+    approvalsImpl,
+    context.realtime,
+  );
 
   // storagePath column is canonical `agent-generated/<org>/<run>/<id>.<ext>`,
   // joined against attachmentStoreRoot by the web API + LRU sweeper.
@@ -1004,6 +1010,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     approvalRequester,
     conversations,
     goals,
+    settings,
     context.realtime,
     delegateHandlers,
     context.mcpPool,
@@ -1210,7 +1217,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       approvalId: input.approvalId,
     });
   });
-  const settings = new SettingsService(context.repo, context.teamStore, approvalsImpl);
   const workspaces = new WorkspaceService(
     context.repo,
     context.teamStore,

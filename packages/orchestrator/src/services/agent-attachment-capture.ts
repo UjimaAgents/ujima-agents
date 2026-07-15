@@ -8,7 +8,7 @@
 //   capturesAttachments: 'never'   → skip even if sniff succeeds
 
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import type { AgentAttachment, AttachmentCategory } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
@@ -359,7 +359,7 @@ export function captureToolResultAttachments(
     // storageRelative must include the `agent-generated/` prefix so
     // the web API (which joins `<home>/attachments/` + storagePath)
     // resolves to the same on-disk file the writer below produces.
-    const storageRelative = join(
+    const storageRelative = posix.join(
       'agent-generated',
       input.organizationId,
       input.runId,

@@ -13,14 +13,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function normalizeLookupValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function resolvePreset(name: string): PersonalityPreset | undefined {
+  const lookup = normalizeLookupValue(name);
+  if (!lookup) return undefined;
+
+  return Object.entries(PERSONALITY_PRESETS).find(([key, preset]) =>
+    [key, preset.name, preset.title].some((candidate) =>
+      normalizeLookupValue(candidate) === lookup,
+    ),
+  )?.[1];
+}
+
 export function listPersonalityPresets(): PersonalityPreset[] {
   return Object.values(PERSONALITY_PRESETS).map((preset) => ({ ...preset }));
 }
 
 export function getPersonalityPreset(name: string): PersonalityPreset | undefined {
-  return Object.entries(PERSONALITY_PRESETS).find(
-    ([key, preset]) => key === name || preset.name === name,
-  )?.[1];
+  return resolvePreset(name);
+}
+
+export function normalizePersonalityName(name: string): string {
+  const preset = resolvePreset(name);
+  return preset?.name ?? name.trim();
 }
 
 export function createPersonalityFromPreset(

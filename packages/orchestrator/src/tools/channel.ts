@@ -45,9 +45,7 @@ function resolveAgentAttachmentAbsolutePath(
     return join(ctx.attachmentStoreRoot, storagePath);
   }
   if (ctx.agentAttachmentRoot) {
-    const stripped = storagePath.startsWith('agent-generated/')
-      ? storagePath.slice('agent-generated/'.length)
-      : storagePath;
+    const stripped = storagePath.replace(/^agent-generated[\\/]/, '');
     return join(ctx.agentAttachmentRoot, stripped);
   }
   return null;

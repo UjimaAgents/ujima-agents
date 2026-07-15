@@ -443,7 +443,23 @@ describe('resolveAttachmentRefs — symlink escape', () => {
       // bytes.
       const outsideFile = join(outsideDir, 'secret.png');
       writeFileSync(outsideFile, SMALL_PNG);
-      symlinkSync(outsideFile, join(workspaceRoot, 'link.png'));
+      let refValue = 'link.png';
+      try {
+        symlinkSync(outsideFile, join(workspaceRoot, 'link.png'));
+      } catch (err) {
+        const errorCode =
+          typeof err === 'object' && err !== null && 'code' in err
+            ? String((err as { code?: unknown }).code)
+            : undefined;
+        if (process.platform !== 'win32' || (errorCode !== 'EPERM' && errorCode !== 'EACCES')) {
+          throw err;
+        }
+        // Windows often forbids file symlinks without elevated privileges.
+        // Fall back to a directory junction, which still exercises the
+        // symlinked-parent escape guard via realpath().
+        symlinkSync(outsideDir, join(workspaceRoot, 'linkdir'), 'junction');
+        refValue = 'linkdir/secret.png';
+      }
 
       const repo = fakeRepo();
       const result = await resolveAttachmentRefs(
@@ -455,7 +471,7 @@ describe('resolveAttachmentRefs — symlink escape', () => {
           runId: 'run_test',
           memberId: 'mem_test',
         },
-        [{ refType: 'workspace_path', value: 'link.png' }],
+        [{ refType: 'workspace_path', value: refValue }],
       );
       expect(result.ok).toBe(false);
       if (result.ok) return;

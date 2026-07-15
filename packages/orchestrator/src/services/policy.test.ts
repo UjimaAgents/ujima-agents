@@ -227,6 +227,77 @@ describe('checkToolPolicy', () => {
 
   });
 
+  describe('hr baseline tools', () => {
+    function buildHrTeam(): AgentTeamHandle {
+      return loadAgentTeam({
+        name: 'HR Org',
+        workspace: { root: workspaceRoot },
+        providers: {
+          openai: { kind: 'openai', defaultModel: 'gpt-5.4', models: ['gpt-5.4'] },
+        },
+        tools: {
+          'org.members.add': {
+            id: 'org.members.add',
+            name: 'Organization Members Add',
+            description: 'Add a member.',
+            actions: ['write'],
+            pathScopes: [],
+            requiresApproval: false,
+          },
+          'org.organization.update': {
+            id: 'org.organization.update',
+            name: 'Organization Update',
+            description: 'Update organization settings.',
+            actions: ['write'],
+            pathScopes: [],
+            requiresApproval: false,
+          },
+          'goal.channel.view': {
+            id: 'goal.channel.view',
+            name: 'Goal Channel View',
+            description: 'View a channel goal.',
+            actions: ['read'],
+            pathScopes: [],
+            requiresApproval: false,
+          },
+        },
+        roles: [
+          {
+            name: 'hr',
+            title: 'HR',
+            instructions: 'Staff the team and manage approvals.',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            workspaceScopes: [],
+            tools: ['org.members.add', 'org.organization.update', 'goal.channel.view'],
+            channels: ['general'],
+          },
+        ],
+        agents: [],
+        channels: [{ name: 'general', kind: 'general', topic: 'General' }],
+      } as Record<string, unknown>);
+    }
+
+    it('allows HR management tools without requiring workspace write authority', () => {
+      const team = buildHrTeam();
+      expect(checkToolPolicy(team, 'hr', 'org.members.add', 'write')).toEqual({
+        allowed: true,
+        requiresApproval: false,
+      });
+      expect(checkToolPolicy(team, 'hr', 'goal.channel.view', 'read')).toEqual({
+        allowed: true,
+        requiresApproval: false,
+      });
+    });
+
+    it('blocks shell for HR unless explicitly granted outside the HR baseline', () => {
+      const team = buildHrTeam();
+      const result = checkToolPolicy(team, 'hr', 'shell', 'execute');
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/cannot use tool "shell"/);
+    });
+  });
+
   describe('resolveShellExecutePolicy', () => {
     it('maps each shell approval mode', () => {
       expect(resolveShellExecutePolicy('allow_all')).toEqual({

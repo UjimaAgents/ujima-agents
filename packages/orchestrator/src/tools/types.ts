@@ -3,6 +3,7 @@ import type { z } from 'zod';
 import type { ConversationService } from '../services/conversation.js';
 import type { GoalSystemService } from '../services/goal-system.js';
 import type { ApiRepository, RepositoryReader } from '../services/repository-reader.js';
+import type { SettingsService } from '../services/settings.js';
 import type { DelegateKind } from '../utils/delegate-turn.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
 
@@ -66,6 +67,7 @@ export interface ToolExecutionContext {
   repo: ApiRepository;
   conversations: ConversationService;
   goals: GoalSystemService;
+  settings: SettingsService;
   delegateAgentTurn: DelegateHandlers['delegateAgentTurn'];
   getDelegateStatus: DelegateHandlers['getDelegateStatus'];
   waitForDelegates: DelegateHandlers['waitForDelegates'];

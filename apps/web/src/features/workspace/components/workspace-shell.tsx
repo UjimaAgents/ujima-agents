@@ -415,9 +415,19 @@ export function WorkspaceShell(props: {
       if (envelope.type === "error") return;
       if (
         envelope.event !== SocketEventNames.approvalRequested &&
+        envelope.event !== SocketEventNames.memberUpdated &&
         !isNotificationMessageEvent(envelope.event) &&
         !isNotificationRunEvent(envelope.event)
       ) {
+        return;
+      }
+
+      if (envelope.event === SocketEventNames.memberUpdated) {
+        const updated = parseMemberUpdatedPayload(envelope.payload);
+        if (updated) {
+          appendMember(updated);
+          void refreshTeamSettings();
+        }
         return;
       }
 
@@ -475,9 +485,11 @@ export function WorkspaceShell(props: {
     bootstrap.channels,
     bootstrap.organization?.id,
     applyBootstrap,
+    appendMember,
     clearConversationUnreadCount,
     incrementConversationUnreadCount,
     organizationId,
+    refreshTeamSettings,
     setMemberActivity,
     upsertGlobalActiveRun,
   ]);
@@ -780,6 +792,11 @@ function resolveNotificationConversationId(
 function parseApprovalId(payload: unknown): string | undefined {
   const body = payload as { approval?: { id?: string } };
   return typeof body.approval?.id === "string" ? body.approval.id : undefined;
+}
+
+function parseMemberUpdatedPayload(payload: unknown): WorkspaceMember | undefined {
+  const body = payload as { member?: WorkspaceMember };
+  return body?.member && typeof body.member.id === "string" ? body.member : undefined;
 }
 
 function resolveDmConversationId(threadId: string, currentMemberId: string): string | undefined {

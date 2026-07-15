@@ -3,6 +3,7 @@ import {
   ActiveSpiritRegistry,
   ConversationService,
   GoalSystemService,
+  SettingsService,
   SpiritService,
   TaskSessionService,
   ToolServiceImpl,
@@ -81,12 +82,14 @@ export async function createSpiritTestFixture(opts: SpiritFixtureOptions = {}): 
     const approvalRequester: ApprovalRequester = {
       requestApproval: () => ({ id: 'fake-approval-id' }),
     };
+    const settings = new SettingsService(base.repo, base.teamStore);
     tools = new ToolServiceImpl(
       base.teamStore,
       base.repo,
       approvalRequester,
       conversations,
       goals,
+      settings,
       noopRealtime(),
       {
         delegateAgentTurn: async () => ({ status: 'timed_out', agent: '', agent_id: '', thread_id: '', message_id: '' }),

@@ -170,11 +170,11 @@ export const INITIAL_DRAFT: OnboardingDraft = {
   ownerPasswordConfirmation: "",
   roles: [
     {
-      id: "role-senior-engineer",
-      name: "senior-engineer",
-      agentName: "Senior Engineer",
-      title: "Senior Engineer",
-      instructions: "Lead architecture, code quality, and complex implementation.",
+      id: "role-hr",
+      name: "hr",
+      agentName: "Ujima",
+      title: "HR",
+      instructions: "Receive the user's goal, recommend the right agents, get approval, then onboard and brief them.",
       llm: "openai",
       model: defaultModelForProvider("openai"),
       channelIds: ["channel-general"],

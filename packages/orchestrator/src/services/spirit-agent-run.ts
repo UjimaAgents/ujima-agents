@@ -36,7 +36,9 @@ import { isDelegateMessage } from './run-reply-guard.js';
 import { buildToolDefinitions } from '../utils/to-model-messages.js';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
+  HR_ALWAYS_AVAILABLE_AGENT_TOOLS,
   SUPERVISOR_TOOL_ALLOWLIST,
+  WORKER_FILESYSTEM_TOOLS,
   filterDeprecatedToolIds,
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
@@ -186,7 +188,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     // (the resolver interface only forwards toolSet + servers).
     let mcpToolDefs: ToolSet;
     let attachedMcpServers: McpServerSummary[];
-    let availableConnectors: string | undefined;
     if (isMcpDispatchEnabled(mcpCtx.organizationId) && this.mcpPool) {
       const v2 = await buildMcpToolDefinitionsV2(
         {
@@ -202,7 +203,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       );
       mcpToolDefs = v2.toolSet;
       attachedMcpServers = v2.servers;
-      availableConnectors = v2.catalogText.length > 0 ? v2.catalogText : undefined;
     } else {
       const legacy = await this.buildMcpToolDefinitions(mcpCtx);
       mcpToolDefs = legacy.toolSet;
@@ -237,7 +237,6 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       availableToolIds,
       attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
       supervisorWakePolicy.conversationKind,
-      availableConnectors,
     );
     const systemPromptSuffix = this.resolveSystemPromptSuffix({
       organizationId: input.organizationId,
@@ -644,8 +643,12 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
     if (role === 'supervisor') {
       return SUPERVISOR_TOOL_ALLOWLIST;
     }
+    const baselineTools =
+      roleTools.includes('org.members.add') || roleTools.includes('org.organization.update')
+        ? HR_ALWAYS_AVAILABLE_AGENT_TOOLS
+        : [...ALWAYS_AVAILABLE_AGENT_TOOLS, ...WORKER_FILESYSTEM_TOOLS];
     return filterDeprecatedToolIds([
-      ...new Set([...roleTools, ...ALWAYS_AVAILABLE_AGENT_TOOLS]),
+      ...new Set([...roleTools, ...baselineTools]),
     ]);
   }
 

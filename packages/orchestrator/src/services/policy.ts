@@ -8,7 +8,11 @@ import {
   isPathWithinScope,
 } from '@ujima/shared/workspace';
 import { isInScopeFileTool } from '../path-scoped-tools.js';
-import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
+import {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
+  HR_ALWAYS_AVAILABLE_AGENT_TOOLS,
+  WORKER_FILESYSTEM_TOOLS,
+} from '../tools/index.js';
 import { buildPassDenialReason, resolveWakeReplyPolicy } from '../utils/wake-reply-policy.js';
 
 export interface PolicyResult {
@@ -177,7 +181,8 @@ export function checkToolPolicy(
     toolId.startsWith('memory.') ||
     toolId.startsWith('self.procedure.') ||
     toolId.startsWith('goal.') ||
-    toolId.startsWith('question.')
+    toolId.startsWith('question.') ||
+    toolId.startsWith('org.')
   ) {
     return { allowed: true, requiresApproval: false };
   }
@@ -187,7 +192,10 @@ export function checkToolPolicy(
   // regardless of `role.tools`. This mirrors the palette assembled by
   // `resolveToolAllowlist` / `ai-service.ts` so the run-time gate
   // doesn't reject a tool the model just received in its schema.
-  const baselineToolIds = ALWAYS_AVAILABLE_AGENT_TOOLS as readonly string[];
+  const baselineToolIds =
+    role.name === 'hr'
+      ? (HR_ALWAYS_AVAILABLE_AGENT_TOOLS as readonly string[])
+      : ([...ALWAYS_AVAILABLE_AGENT_TOOLS, ...WORKER_FILESYSTEM_TOOLS] as readonly string[]);
   if (!baselineToolIds.includes(toolId) && !role.tools.includes(toolId)) {
     return {
       allowed: false,

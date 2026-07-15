@@ -12,7 +12,14 @@
 // message attachment table, sharing one on-disk file.
 
 import { randomUUID } from 'node:crypto';
-import { isAbsolute, join, resolve as resolvePath } from 'node:path';
+import {
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  relative as pathRelative,
+  resolve as resolvePath,
+} from 'node:path';
 import {
   lstatSync,
   mkdirSync,
@@ -600,9 +607,10 @@ function guardWorkspacePath(
   }
   const absolutePath = resolvePath(workspaceRoot, relative);
   const rootResolved = resolvePath(workspaceRoot);
+  const relativeToRoot = pathRelative(rootResolved, absolutePath);
   if (
-    absolutePath !== rootResolved &&
-    !absolutePath.startsWith(rootResolved + '/')
+    relativeToRoot.startsWith('..') ||
+    isAbsolute(relativeToRoot)
   ) {
     return { ok: false, error: `workspace_path "${relative}" escapes workspace_root` };
   }
@@ -626,7 +634,11 @@ function guardWorkspacePath(
   try {
     const realPath = realpathSync(absolutePath);
     const realRoot = realpathSync(rootResolved);
-    if (realPath !== realRoot && !realPath.startsWith(realRoot + '/')) {
+    const relativeRealPath = pathRelative(realRoot, realPath);
+    if (
+      relativeRealPath.startsWith('..') ||
+      isAbsolute(relativeRealPath)
+    ) {
       return {
         ok: false,
         error: `workspace_path "${relative}" resolves outside workspace_root via symlinked parent directory`,
@@ -659,7 +671,7 @@ function commitBytes(
   // agent-attachment-capture.ts for the matching invariant; both
   // sites must agree on the column shape.
   const fileName = `${id}${extensionForMime(mimeType)}`;
-  const storageRelative = join(
+  const storageRelative = posix.join(
     'agent-generated',
     deps.organizationId,
     deps.runId,
@@ -676,7 +688,7 @@ function commitBytes(
   // a throw later in the sequence still cleans up earlier work.
   const { register, runRollback } = createRefCommitUndoStack();
   try {
-    mkdirSync(absolutePath.split('/').slice(0, -1).join('/'), { recursive: true });
+    mkdirSync(dirname(absolutePath), { recursive: true });
     writeFileSync(absolutePath, bytes);
     register(() => {
       try {

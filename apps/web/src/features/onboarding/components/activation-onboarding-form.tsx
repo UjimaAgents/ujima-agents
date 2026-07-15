@@ -106,14 +106,21 @@ export function ActivationOnboardingForm(props: Props) {
     ? roleTemplates
     : [defaultTemplate, ...roleTemplates];
   const industries = Array.from(new Set(templates.map((template) => template.industry))).sort();
-  const visibleTemplates = templates.filter((template) => {
-    if (roleIndustry !== "all" && template.industry !== roleIndustry) return false;
-    const query = roleSearch.trim().toLowerCase();
-    if (!query) return true;
-    return `${template.title} ${template.name} ${template.description} ${template.industry}`
-      .toLowerCase()
-      .includes(query);
-  });
+  const visibleTemplates = templates
+    .filter((template) => {
+      if (roleIndustry !== "all" && template.industry !== roleIndustry) return false;
+      const query = roleSearch.trim().toLowerCase();
+      if (!query) return true;
+      return `${template.title} ${template.name} ${template.description} ${template.industry}`
+        .toLowerCase()
+        .includes(query);
+    })
+    .sort((left, right) => {
+      const leftSelected = left.name === role.name;
+      const rightSelected = right.name === role.name;
+      if (leftSelected === rightSelected) return left.title.localeCompare(right.title);
+      return leftSelected ? -1 : 1;
+    });
 
   return (
     <section className="px-4 py-6 sm:px-8 sm:py-8">
@@ -220,57 +227,59 @@ export function ActivationOnboardingForm(props: Props) {
                       </button>
                     ))}
                   </div>
-                  <div className="mt-3 max-h-80 divide-y divide-zinc-200 overflow-y-auto rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-                    {visibleTemplates.map((template) => {
-                      const selected = template.name === role.name;
-                      return (
-                        <button
-                          key={template.key}
-                          type="button"
-                          onClick={() => {
-                            const agentName = role.agentName || getSuggestedAgentName();
-                            onChange({
-                              ...draft,
-                              roles: [{
-                                ...role,
-                                name: template.name,
-                                title: template.title,
-                                instructions: template.instructions,
-                                agentName,
-                              }],
-                              organizationReports: [{
-                                id: "report-starter",
-                                subjectName: agentName,
-                                managerName: "@owner",
-                              }],
-                            });
-                          }}
-                          className={`flex w-full gap-3 px-4 py-3 text-left transition ${
-                            selected
-                              ? "bg-violet-50 dark:bg-violet-500/10"
-                              : "hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                          }`}
-                        >
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                                {template.title}
+                  <div className="mt-3 max-h-80 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+                    <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                      {visibleTemplates.map((template) => {
+                        const selected = template.name === role.name;
+                        return (
+                          <button
+                            key={template.key}
+                            type="button"
+                            onClick={() => {
+                              const agentName = role.agentName || getSuggestedAgentName();
+                              onChange({
+                                ...draft,
+                                roles: [{
+                                  ...role,
+                                  name: template.name,
+                                  title: template.title,
+                                  instructions: template.instructions,
+                                  agentName,
+                                }],
+                                organizationReports: [{
+                                  id: "report-starter",
+                                  subjectName: agentName,
+                                  managerName: "@owner",
+                                }],
+                              });
+                            }}
+                            className={`flex w-full gap-3 px-4 py-3 text-left transition ${
+                              selected
+                                ? "bg-violet-50 dark:bg-violet-500/10"
+                                : "hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                  {template.title}
+                                </span>
+                                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                  {template.industry}
+                                </span>
                               </span>
-                              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                                {template.industry}
+                              <span className="mt-1 line-clamp-2 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                                {template.description}
                               </span>
                             </span>
-                            <span className="mt-1 line-clamp-2 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-                              {template.description}
-                            </span>
-                          </span>
-                          {selected ? <Check className="mt-1 h-4 w-4 shrink-0 text-violet-600" /> : null}
-                        </button>
-                      );
-                    })}
-                    {visibleTemplates.length === 0 ? (
-                      <p className="px-4 py-6 text-center text-sm text-zinc-500">No roles match that search.</p>
-                    ) : null}
+                            {selected ? <Check className="mt-1 h-4 w-4 shrink-0 text-violet-600" /> : null}
+                          </button>
+                        );
+                      })}
+                      {visibleTemplates.length === 0 ? (
+                        <p className="px-4 py-6 text-center text-sm text-zinc-500">No roles match that search.</p>
+                      ) : null}
+                    </div>
                   </div>
                 </FieldShell>
                 <FieldShell label="Agent name" htmlFor="agentName"><TextInput id="agentName" value={role.agentName} onChange={(e) => {

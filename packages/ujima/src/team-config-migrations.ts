@@ -84,6 +84,22 @@ const LEGACY_DEFAULT_ROLE_TOOL_SET = new Set<string>([
   'memory.write',
 ]);
 
+const LEGACY_TOOL_NAME_ALIASES: Record<string, string> = {
+  channel_post: 'channel.post',
+  channel_reply: 'channel.reply',
+  channel_dm: 'channel.dm',
+  channel_list: 'channel.list',
+  channel_read: 'channel.read',
+  channel_recall: 'channel.recall',
+  goal_start: 'goal.start',
+  goal_task_update: 'goal.task.update',
+  goal_channel_view: 'goal.channel.view',
+  memory_save: 'memory.write',
+  memory_recall: 'memory.recall',
+  memory_write: 'memory.write',
+  memory_forget: 'memory.forget',
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -99,7 +115,7 @@ function isLegacyDefaultRoleToolList(value: unknown): boolean {
 
 export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>(role: T): T {
   if (!Array.isArray(role.tools)) return role;
-  let tools = [...(role.tools as string[])];
+  let tools = (role.tools as string[]).map((tool) => LEGACY_TOOL_NAME_ALIASES[tool] ?? tool);
   if (isLegacyDefaultRoleToolList(tools)) {
     tools = [...DEFAULT_ROLE_TOOLS];
   } else if (tools.includes('filesystem')) {
@@ -107,9 +123,6 @@ export function upgradeLegacyDefaultRoleTools<T extends Record<string, unknown>>
   }
   if (tools.includes('self.note')) {
     tools = tools.filter((tool) => tool !== 'self.note');
-  }
-  if (tools.includes('memory.save')) {
-    tools = tools.map((tool) => (tool === 'memory.save' ? 'memory.write' : tool));
   }
   return { ...role, tools } as T;
 }

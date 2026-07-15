@@ -5,6 +5,9 @@ import {
   MemberSchema,
   MemberShellApprovalModeSchema,
   PROVIDER_KINDS,
+  SocketEventNames,
+  memberRoom,
+  orgRoom,
   shellApprovalModeFromLegacyRequireShell,
   type Organization,
   type Member,
@@ -43,6 +46,7 @@ import type { ApprovalResolveInput } from './approval.js';
 import { resolveAgentMemberId } from './member-id.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
 import { hasCodexAccessToken } from '../utils/codex-auth.js';
+import type { RealtimeService } from './context.js';
 
 function activeMembers(repo: ApiRepository, organizationId: string): Member[] {
   return repo.listMembers(organizationId).filter((member) => !member.retiredAt);
@@ -207,7 +211,16 @@ export class SettingsService {
     private readonly approvals?: {
       resolveApproval(input: ApprovalResolveInput): Promise<unknown> | unknown;
     },
+    private readonly realtime?: Pick<RealtimeService, 'emit'>,
   ) {}
+
+  private emitMemberUpdated(organizationId: string, member: Member): void {
+    this.realtime?.emit(
+      SocketEventNames.memberUpdated,
+      { organizationId, member },
+      [orgRoom(organizationId), memberRoom(member.id)],
+    );
+  }
 
   private loadTeamForOrganization(organizationId: string) {
     new ConfigSyncService(this.repo, this.teamStore).loadFromStoredConfig(organizationId);
@@ -401,12 +414,14 @@ export class SettingsService {
       retiredAt: undefined,
     });
     const saved = this.repo.saveMember(member);
+    this.emitMemberUpdated(input.organizationId, saved);
     if (input.kind === AGENT_KIND) {
       upsertDashboardTeamOverride(this.repo, input.organizationId, this.teamStore, {
         role,
         agent: createAgent(saved.id, saved.roleName, input.personalityName ?? 'direct'),
       });
     }
+    const effectiveTeam = this.teamStore.getTeam(input.organizationId) ?? team;
     upsertWorkspaceMemberScopes(
       this.repo,
       input.organizationId,
@@ -414,7 +429,7 @@ export class SettingsService {
       role?.workspaceScopes ?? [],
     );
     ensureMemberSelfChannel(this.repo, input.organizationId, saved);
-    addMemberToDefaultChannels(this.repo, team, input.organizationId, saved);
+    addMemberToDefaultChannels(this.repo, effectiveTeam, input.organizationId, saved);
     for (const channelId of input.channelIds ?? []) {
       const channel = this.repo.getChannel(input.organizationId, channelId);
       if (!channel) continue;
@@ -457,6 +472,7 @@ export class SettingsService {
         shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, member.shellApprovalMode),
       }),
     );
+    this.emitMemberUpdated(input.organizationId, saved);
 
     upsertDashboardTeamOverride(
       this.repo,
@@ -518,7 +534,7 @@ export class SettingsService {
       throw new Error('At least one preference field is required');
     }
 
-    return this.repo.saveMember(
+    const saved = this.repo.saveMember(
       MemberSchema.parse({
         ...member,
         llm: input.llm !== undefined ? normalizeProviderKey(input.llm) : member.llm,
@@ -526,6 +542,8 @@ export class SettingsService {
         shellApprovalMode: parseShellApprovalMode(input.shellApprovalMode, member.shellApprovalMode),
       }),
     );
+    this.emitMemberUpdated(input.organizationId, saved);
+    return saved;
   }
 
   deleteMember(organizationId: string, memberId: string): void {
@@ -543,6 +561,10 @@ export class SettingsService {
       ...member,
       retiredAt: now,
     });
+    const retiredMember = this.repo.getMember(organizationId, memberId);
+    if (retiredMember) {
+      this.emitMemberUpdated(organizationId, retiredMember);
+    }
 
     const otherAgentsUseRole = this.repo.listMembers(organizationId).some(
       (item) =>

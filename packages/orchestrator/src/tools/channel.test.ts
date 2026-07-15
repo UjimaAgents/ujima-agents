@@ -8,7 +8,11 @@ import {
   channelReadTool,
   channelReplyTool,
 } from './channel.js';
-import { ALWAYS_AVAILABLE_AGENT_TOOLS } from './index.js';
+import {
+  ALWAYS_AVAILABLE_AGENT_TOOLS,
+  HR_ALWAYS_AVAILABLE_AGENT_TOOLS,
+  WORKER_FILESYSTEM_TOOLS,
+} from './index.js';
 
 // These assertions guard the second regression: channel/message ids are NOT
 // filesystem paths. If `toInvocation` ever re-introduces `resourcePath`, the
@@ -276,7 +280,7 @@ describe('channel.* tools — toInvocation()', () => {
 // (must be in role.tools) because it's a workflow primitive, not
 // a baseline conversational one.
 describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
-  it('contains the baseline conversational primitives, read-only workspace tools, and silent terminators', () => {
+  it('contains the shared conversational and read baseline without filesystem authority', () => {
     expect([...ALWAYS_AVAILABLE_AGENT_TOOLS].sort()).toEqual(
       [
         'agent.delegate',
@@ -305,16 +309,8 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'self.procedure.remove',
         'self.procedure.view',
         'view',
-        'download',
-        'edit',
         'fetch',
-        'filesystem',
-        'job_kill',
-        'job_output',
-        'multiedit',
-        'shell',
         'web_search',
-        'write',
       ].sort(),
     );
   });
@@ -326,6 +322,34 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
     },
   );
 
+});
+
+describe('HR_ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
+  it('includes team-management and goal-visibility tools for HR', () => {
+    expect([...HR_ALWAYS_AVAILABLE_AGENT_TOOLS]).toEqual(
+      expect.arrayContaining([
+        'goal.channel.view',
+        'org.members.list',
+        'org.members.add',
+        'org.members.update',
+        'org.members.remove',
+        'org.organization.get',
+        'org.organization.update',
+        'org.policies.update',
+      ]),
+    );
+    expect([...HR_ALWAYS_AVAILABLE_AGENT_TOOLS]).not.toEqual(
+      expect.arrayContaining(['shell', 'write', 'edit', 'multiedit']),
+    );
+  });
+});
+
+describe('WORKER_FILESYSTEM_TOOLS', () => {
+  it('contains the opt-in filesystem and shell authority for coworker agents', () => {
+    expect([...WORKER_FILESYSTEM_TOOLS].sort()).toEqual(
+      ['filesystem', 'write', 'edit', 'multiedit', 'shell', 'download', 'job_output', 'job_kill'].sort(),
+    );
+  });
 });
 
 // L13 — `already_handled` and `duplicate_reply` reasons require a

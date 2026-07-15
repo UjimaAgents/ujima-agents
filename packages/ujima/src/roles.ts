@@ -16,6 +16,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+const LEGACY_TOOL_NAME_ALIASES: Record<string, string> = {
+  channel_post: 'channel.post',
+  channel_reply: 'channel.reply',
+  channel_dm: 'channel.dm',
+  channel_list: 'channel.list',
+  channel_read: 'channel.read',
+  channel_recall: 'channel.recall',
+  goal_start: 'goal.start',
+  goal_task_update: 'goal.task.update',
+  goal_channel_view: 'goal.channel.view',
+  memory_save: 'memory.write',
+  memory_recall: 'memory.recall',
+  memory_write: 'memory.write',
+  memory_forget: 'memory.forget',
+};
+
 export interface RoleIndustryPreset extends RolePreset {
   industry: string;
   key: string;
@@ -80,6 +96,7 @@ export function defineRole(role: unknown): RoleConfig {
 
   return {
     ...parsed,
+    tools: parsed.tools.map((tool) => LEGACY_TOOL_NAME_ALIASES[tool] ?? tool),
     provider: parsed.provider ? normalizeProviderKey(parsed.provider) : undefined,
   };
 }

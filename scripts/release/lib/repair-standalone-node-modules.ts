@@ -141,8 +141,9 @@ export function hydrateTracedBunStorePackages(
 function ensureDirSymlink(linkPath: string, target: string): void {
   if (existsSync(linkPath)) return;
   mkdirSync(dirname(linkPath), { recursive: true });
-  const relTarget = relative(dirname(linkPath), target);
-  symlinkSync(relTarget, linkPath, 'dir');
+  const junctionTarget = process.platform === 'win32';
+  const symlinkTarget = junctionTarget ? target : relative(dirname(linkPath), target);
+  symlinkSync(symlinkTarget, linkPath, junctionTarget ? 'junction' : 'dir');
 }
 
 /**
