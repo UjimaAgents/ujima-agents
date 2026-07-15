@@ -107,6 +107,13 @@ export const TOOL_REGISTRY: Record<string, ToolEntry> = {
   // ── Skills ────────────────────────────────────────────────
   'skill.read': { id: 'skill.read', status: 'active', alwaysAvailable: true },
 
+  // ── Workflows (SOP engine) ────────────────────────────────
+  'workflow.run':        { id: 'workflow.run',        status: 'active', alwaysAvailable: true },
+  'workflow.list':       { id: 'workflow.list',       status: 'active', alwaysAvailable: true },
+  'workflow.view':       { id: 'workflow.view',       status: 'active', alwaysAvailable: true },
+  'workflow.advance':    { id: 'workflow.advance',    status: 'active', alwaysAvailable: true },
+  'workflow.transition': { id: 'workflow.transition', status: 'active', alwaysAvailable: true },
+
   // ── MCP ───────────────────────────────────────────────────
   mcp: { id: 'mcp', status: 'active', alwaysAvailable: true },
 

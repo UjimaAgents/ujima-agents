@@ -175,7 +175,15 @@ function classifyApiError(error: unknown): Error | null {
     return new SchemaTooLargeError(message);
   }
 
-  if (/context_length_exceeded/i.test(message)) {
+  // Providers phrase this differently: OpenAI uses `context_length_exceeded`;
+  // deepseek/others say "maximum context length is N tokens ... reduce the
+  // length of the messages". Recognize both so the compaction-and-retry hook
+  // fires instead of the run just failing.
+  if (
+    /context_length_exceeded/i.test(message) ||
+    /maximum context length/i.test(message) ||
+    /reduce the length of the (messages|prompt)/i.test(message)
+  ) {
     return new ContextLengthExceededError(message);
   }
 

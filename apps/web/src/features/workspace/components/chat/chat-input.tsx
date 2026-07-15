@@ -13,6 +13,7 @@ import {
   FileVideo,
   Folder,
   ListTodo,
+  Workflow,
   Loader2,
   Mic,
   Paperclip,
@@ -47,7 +48,7 @@ import type { ConversationMessageMetadata } from "../../conversation-transport";
 
 
 
-const assetKinds = ["file", "folder", "mcp", "skill", "task", "culture"] as const;
+const assetKinds = ["file", "folder", "mcp", "skill", "task", "culture", "workflow"] as const;
 type AssetMentionKind = (typeof assetKinds)[number];
 type NamedAssetKind = Exclude<AssetMentionKind, "file" | "folder">;
 
@@ -185,7 +186,7 @@ function toAssetSuggestion(entry: WorkspaceAssetHit): MentionSuggestion {
 
 const CACHED_LIST_TTL_MS = 60_000;
 let cachedRootFolders: { at: number; items: MentionSuggestion[] } | null = null;
-const namedAssetKinds: NamedAssetKind[] = ["mcp", "skill", "task", "culture"];
+const namedAssetKinds: NamedAssetKind[] = ["workflow", "mcp", "skill", "task", "culture"];
 const assetDisplay = {
   file: [FileIcon, "text-blue-500", "Files"],
   folder: [Folder, "text-amber-500", "Folders"],
@@ -193,6 +194,7 @@ const assetDisplay = {
   skill: [Zap, "text-purple-500", "Skills"],
   task: [ListTodo, "text-rose-500", "Tasks"],
   culture: [BookOpen, "text-sky-500", "Culture"],
+  workflow: [Workflow, "text-violet-500", "Workflows"],
 } satisfies Record<AssetMentionKind, readonly [typeof FileIcon, string, string]>;
 let cachedNamedAssets: { at: number; items: MentionSuggestion[] } | null = null;
 
@@ -246,6 +248,7 @@ const ASSET_ICON_SVG: Record<AssetMentionKind, string> = {
   skill: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-purple-500" style="display:inline-block;vertical-align:middle;"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>',
   task: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-rose-500" style="display:inline-block;vertical-align:middle;"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>',
   culture: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-sky-500" style="display:inline-block;vertical-align:middle;"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>',
+  workflow: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-violet-500" style="display:inline-block;vertical-align:middle;"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>',
 };
 
 function renderPartsToHtml(parts: ComposerPart[]): string {
@@ -721,7 +724,7 @@ function ChatInputComponent({
   const [assetSuggestions, setAssetSuggestions] = useState<MentionSuggestion[]>([]);
   const [namedAssetSuggestions, setNamedAssetSuggestions] = useState<
     Record<NamedAssetKind, MentionSuggestion[]>
-  >({ mcp: [], skill: [], task: [], culture: [] });
+  >({ workflow: [], mcp: [], skill: [], task: [], culture: [] });
 
   const [prevMentionQuery, setPrevMentionQuery] = useState(mentionQuery);
   if (mentionQuery !== prevMentionQuery) {

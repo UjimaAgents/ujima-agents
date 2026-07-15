@@ -71,6 +71,7 @@ export {
 export type { ConfiguredProviderModelOption } from "./configured-provider-models.js";
 export * from "./goal-schemas.js";
 export * from "./goal-board-labels.js";
+export * from "./workflows.js";
 export {
   SHARED_AGENT_SYSTEM_PROMPT,
   TERMINATING_TOOL_USAGE_GUIDANCE,

@@ -86,6 +86,12 @@ export interface CreateRunInput {
   wakeReason?: WakeReason;
   sourceMessageId?: string;
   byMemberId?: string;
+  /**
+   * Pre-assigned run id. The workflow engine sets this so it can stamp the
+   * node run's `child_run_id` before the (async) run starts. Defaults to a
+   * fresh uuid.
+   */
+  runId?: string;
 }
 
 export interface RunSpiritInput {

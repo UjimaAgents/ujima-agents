@@ -5,6 +5,17 @@ import type { GoalSystemService } from '../services/goal-system.js';
 import type { ApiRepository, RepositoryReader } from '../services/repository-reader.js';
 import type { DelegateKind } from '../utils/delegate-turn.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
+import type {
+  StartRunInput,
+  TransitionInput,
+  TransitionResult,
+} from '../services/workflow-engine.js';
+
+/** The slice of the workflow engine the `workflow.*` tools call. */
+export interface WorkflowEngineToolAccess {
+  startRun(input: StartRunInput): Promise<{ workflowRunId: string }>;
+  transition(input: TransitionInput): Promise<TransitionResult>;
+}
 
 export interface AgentDelegateResult {
   status:
@@ -84,6 +95,12 @@ export interface ToolExecutionContext {
   stopDelegate: DelegateHandlers['stopDelegate'];
   readDelegateThread: DelegateHandlers['readDelegateThread'];
   sendToDelegate: DelegateHandlers['sendToDelegate'];
+  /**
+   * Present when workflows are wired at the composition root. `workflow.run`
+   * and `workflow.transition` require it; `workflow.list`/`view`/`advance`
+   * operate on `repo` alone and work without it.
+   */
+  workflowEngine?: WorkflowEngineToolAccess;
   reportProgress?: (output: unknown) => Promise<void> | void;
   /**
    * Root for agent-generated attachments. Absent → channel-tool

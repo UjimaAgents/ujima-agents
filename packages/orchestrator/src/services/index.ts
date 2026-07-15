@@ -24,6 +24,8 @@ import { createNotificationsDomain } from './notifications-domain.js';
 import { ChannelRetentionService } from './channel-retention.js';
 import type { ApiServiceContext } from './context.js';
 import { ConversationService, type ConversationServiceOptions } from './conversation.js';
+import { WorkflowEngineService } from './workflow-engine.js';
+import { LiveWorkflowEffects } from './workflow-effects-live.js';
 import { buildConversationSummaryViaLlm } from './conversation-summary.js';
 import { GoalSystemService } from './goal-system.js';
 import { createSchedulerDomain } from './scheduler-domain.js';
@@ -282,6 +284,7 @@ export interface ApiServices {
   tierCuration: TierCurationService;
   governance: GovernanceService;
   pluginRegistry: PluginRegistryService;
+  workflowEngine: WorkflowEngineService;
 }
 
 type WakeMemberInput = PendingThreadAlert;
@@ -1663,6 +1666,20 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // registry and fall through to regular wake runs for already-active work.
   spirits.bootstrapAll();
 
+  // Workflows (SOP engine). The engine is pure + decoupled; the live adapter
+  // binds its effect ports to Spirit runs / goals / conversations / FS. The
+  // tool service is late-bound to the engine (it couldn't exist until now).
+  const workflowEffects = new LiveWorkflowEffects({
+    repo: context.repo,
+    conversations,
+    goals,
+    spirits: { createRun: (runInput) => spirits.createRun(runInput) },
+    getWorkspaceRoot: (orgId) => context.teamStore.getTeam(orgId)?.workspace.root,
+  });
+  const workflowEngine = new WorkflowEngineService(context.repo, workflowEffects);
+  workflowEffects.setEngine(workflowEngine);
+  innerTools.setWorkflowEngine(workflowEngine);
+
   const wakeMemberDeps = {
     spirits,
     runs: spirits,
@@ -1697,12 +1714,55 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     tools,
     ai,
     goals,
+    workflowEngine,
     attachmentStoreRoot,
     getOrganizationIdsForSweep,
   });
   const { memoryReview, scheduler, trajectory } = schedulerDomain;
   const { notifications } = createNotificationsDomain({ repo: context.repo });
   handleMessagePublished = (msg) => {
+    // `@workflow <name> <input>` from a human starts a workflow run in this
+    // thread. Gated to real human messages so the engine's own system prompts
+    // and agent replies can't re-trigger it.
+    const trimmed = (msg.content ?? '').trim();
+    // Accepts both "@workflow <name> <input>" and the composer's asset token
+    // "@workflow:<name> <input>".
+    const wfMatch = /^@workflow[:\s]+([^\s:]+)\s*([\s\S]*)$/i.exec(trimmed);
+    let wfName = wfMatch?.[1];
+    if (wfName) {
+      try {
+        wfName = decodeURIComponent(wfName);
+      } catch {
+        // keep raw name if it isn't valid percent-encoding
+      }
+    }
+    if (wfName && msg.senderKind === 'human' && msg.senderId !== 'system' && msg.threadId) {
+      const threadId = msg.threadId;
+      const channelId = msg.channelId ?? threadId;
+      void workflowEngine
+        .startRun({
+          organizationId: msg.organizationId,
+          definitionName: wfName,
+          input: (wfMatch?.[2] ?? '').trim(),
+          initiatedBy: msg.senderId,
+          channelId,
+          threadId,
+        })
+        .catch((err) => {
+          conversations.publishMessage(
+            buildSystemMessage({
+              organizationId: msg.organizationId,
+              threadId,
+              channelId: msg.channelId,
+              content: `⚠️ Could not start workflow "${wfName}": ${err instanceof Error ? err.message : String(err)}`,
+            }),
+            [],
+            undefined,
+            { wakePolicy: 'never' },
+          );
+        });
+      return;
+    }
     if (msg.senderId !== '__ujima_scheduler__') {
       const id = msg.channelId ?? msg.threadId;
       if (!id) return;
@@ -1926,6 +1986,23 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // drain-pending-member-alert, memory-review's turn counter, and
   // the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
+    // If this run backs a workflow node, capture its envelope + advance the
+    // graph. Only act on truly terminal runs — a run that pauses for tool
+    // approval / input is not done and will re-fire this hook when it resumes.
+    const wfTerminal = ['completed', 'failed', 'cancelled'];
+    if (wfTerminal.includes(run.status)) {
+      const wfNodeRun = context.repo.getWorkflowNodeRunByChildRun(run.id);
+      if (wfNodeRun) {
+        await workflowEngine.onNodeComplete({
+          organizationId: run.organizationId,
+          workflowRunId: wfNodeRun.workflowRunId,
+          nodeRunId: wfNodeRun.id,
+          failed: run.status !== 'completed',
+          failureReason: run.status !== 'completed' ? `agent_run_${run.status}` : undefined,
+        });
+      }
+    }
+
     const sourceMessageId = run.sourceMessageId;
     if (sourceMessageId) {
       const sourceMsg = context.repo.getMessage(run.organizationId, sourceMessageId);
@@ -2033,5 +2110,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     tierCuration,
     governance,
     pluginRegistry,
+    workflowEngine,
   };
 }

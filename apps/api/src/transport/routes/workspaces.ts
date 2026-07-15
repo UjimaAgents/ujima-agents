@@ -32,7 +32,7 @@ const workspaceAuthResponses = {
   503: ApiErrorSchema,
 };
 const assetSuggestionSchema = z.object({
-  kind: z.enum(['task', 'culture', 'mcp', 'skill']),
+  kind: z.enum(['task', 'culture', 'mcp', 'skill', 'workflow']),
   name: z.string(),
   id: z.string(),
   detail: z.string(),
@@ -432,6 +432,9 @@ export function registerWorkspaceRoutes(
         })),
         ...newestFirst(repo.listOrganizationSkillInstalls(orgId)).map((skill) => ({
           kind: 'skill' as const, name: skill.skillName, id: skill.id, detail: skill.pluginName,
+        })),
+        ...repo.listWorkflowDefinitions(orgId).map((wf) => ({
+          kind: 'workflow' as const, name: wf.name, id: wf.id, detail: wf.description ?? '',
         })),
       ];
     } catch (err) {

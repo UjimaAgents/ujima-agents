@@ -365,6 +365,19 @@ export const MessageMetadataSchema = z
       })
       .optional(),
     /**
+     * Clickable pointer posted into a channel when a workflow run starts or
+     * finishes. Rendered as a compact card that opens the run view — the run
+     * link can't be a plain markdown link (system messages render their body
+     * as a bold label, and relative URLs are stripped), so it rides on metadata.
+     */
+    workflowRunMarker: z
+      .object({
+        workflowRunId: IdSchema,
+        workflowName: z.string().min(1),
+        phase: z.enum(["started", "completed", "failed"]),
+      })
+      .optional(),
+    /**
      * Set by the `channel.handoff` tool. `complete: true` signals
      * the chain terminated (replaces the old `'Acknowledged.'`
      * literal termination protocol).

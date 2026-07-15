@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
-import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Download, ListTodo, Loader2, Maximize2, Sparkles, X } from "lucide-react";
+import Link from "next/link";
+import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Download, ListTodo, Loader2, Maximize2, Play, Sparkles, X, XCircle } from "lucide-react";
 import { type AttachmentCategory } from "@ujima/shared/browser";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
@@ -69,6 +70,15 @@ export interface ChatMessageData {
     kind: "start" | "done";
     agentName?: string;
   };
+  /**
+   * Present on the in-channel card posted when a workflow run starts or
+   * finishes. Rendered as a compact, clickable row that opens the run view.
+   */
+  workflowRunMarker?: {
+    workflowRunId: string;
+    workflowName: string;
+    phase: "started" | "completed" | "failed";
+  };
   tag?: { label: string; variant: TagVariant };
   status?: "success" | "warning";
   pending?: boolean;
@@ -95,6 +105,7 @@ export const ChatMessage = memo(function ChatMessage({
   members = [],
   onOpenTasksTab,
   onNavigateChannel,
+  onOpenWorkflowRun,
 }: {
   message: ChatMessageData;
   active?: boolean;
@@ -105,6 +116,7 @@ export const ChatMessage = memo(function ChatMessage({
   members?: BootstrapResponse["members"];
   onOpenTasksTab?: () => void;
   onNavigateChannel?: (channelId: string, fallbackName?: string) => void;
+  onOpenWorkflowRun?: (runId: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
@@ -192,6 +204,49 @@ export const ChatMessage = memo(function ChatMessage({
           Open thread
         </span>
       </button>
+    );
+  }
+
+  if (message.workflowRunMarker) {
+    const marker = message.workflowRunMarker;
+    const tone =
+      marker.phase === "completed"
+        ? {
+            wrap: "border-emerald-300/60 bg-emerald-50/50 text-emerald-700 hover:border-emerald-400 hover:bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/5 dark:text-emerald-300 dark:hover:bg-emerald-500/10",
+            Icon: CheckCircle2,
+            verb: "completed",
+          }
+        : marker.phase === "failed"
+          ? {
+              wrap: "border-red-300/60 bg-red-50/50 text-red-700 hover:border-red-400 hover:bg-red-50 dark:border-red-500/30 dark:bg-red-500/5 dark:text-red-300 dark:hover:bg-red-500/10",
+              Icon: XCircle,
+              verb: "failed",
+            }
+          : {
+              wrap: "border-violet-300/60 bg-violet-50/40 text-violet-700 hover:border-violet-400 hover:bg-violet-50 dark:border-violet-500/30 dark:bg-violet-500/5 dark:text-violet-300 dark:hover:bg-violet-500/10",
+              Icon: Play,
+              verb: "started",
+            };
+    const { Icon } = tone;
+    const inner = (
+      <>
+        <Icon className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          Workflow <span className="font-semibold">{marker.workflowName}</span> {tone.verb}
+        </span>
+        <span className="shrink-0 font-medium underline-offset-2 group-hover:underline">Open run →</span>
+      </>
+    );
+    const cls = `group flex w-full items-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-left text-xs transition ${tone.wrap}`;
+    // Prefer the in-channel drawer; fall back to the full-page route.
+    return onOpenWorkflowRun ? (
+      <button type="button" onClick={() => onOpenWorkflowRun(marker.workflowRunId)} className={cls}>
+        {inner}
+      </button>
+    ) : (
+      <Link href={`/workflows/runs/${marker.workflowRunId}`} className={cls}>
+        {inner}
+      </Link>
     );
   }
 
@@ -463,6 +518,26 @@ function ArtifactViewToggle({
   );
 }
 
+// The artifact card + modal are always dark surfaces, but <Markdown> colors are
+// theme-aware (text-foreground → dark in a light app), so tables/pre/links
+// rendered dark-on-dark. Force a complete light-on-dark scheme for every element.
+const ARTIFACT_MD_CLASS = [
+  "text-zinc-100",
+  "[&_a]:text-violet-300 [&_a]:underline [&_a]:underline-offset-2",
+  "[&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400",
+  "[&_code]:text-zinc-200",
+  "[&_pre]:bg-white/5 [&_pre]:text-zinc-200 [&_pre]:rounded-lg [&_pre]:p-3",
+  "[&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white",
+  "[&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white",
+  "[&_h3]:text-white [&_h4]:text-zinc-100 [&_h5]:text-zinc-200 [&_h6]:text-zinc-400",
+  "[&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300",
+  "[&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300",
+  "[&_strong]:text-white",
+  "[&_table]:text-zinc-300 [&_th]:text-white [&_th]:border-white/15 [&_td]:text-zinc-300 [&_td]:border-white/10",
+  "[&_hr]:border-white/10",
+  "[&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6",
+].join(" ");
+
 function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -587,7 +662,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
             />
           ) : (
             <div className={isExpanded ? "" : "max-h-[540px] overflow-hidden"}>
-              <div className="text-zinc-100 [&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400 [&_code]:text-zinc-200 [&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white [&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300 [&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300 [&_strong]:text-white [&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6">
+              <div className={ARTIFACT_MD_CLASS}>
                 <Markdown content={artifact.content} />
               </div>
             </div>
@@ -612,7 +687,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        contentClassName="max-w-6xl p-0 border-0 shadow-none bg-[#232323] dark:bg-[#232323]"
+        contentClassName="max-w-6xl p-0 border-0 shadow-none !bg-[#232323]"
       >
         <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] bg-white/[0.04] px-5 py-3 text-zinc-400">
           <div className="flex min-w-0 items-center gap-2">
@@ -670,7 +745,7 @@ function ArtifactFilePreview({ artifact }: { artifact: ArtifactFileView }) {
               />
             </div>
           ) : (
-            <div className="max-h-[calc(100vh-12rem)] overflow-auto text-zinc-100 [&_blockquote]:border-zinc-700 [&_blockquote]:text-zinc-400 [&_code]:text-zinc-200 [&_h1]:mt-1 [&_h1]:mb-4 [&_h1]:text-[2.15rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.05em] [&_h1]:leading-[1.03] [&_h1]:text-white [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-[1.65rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.04em] [&_h2]:leading-tight [&_h2]:text-white [&_li]:my-0.5 [&_li]:text-[0.96rem] [&_li]:leading-7 [&_li]:text-zinc-300 [&_p]:my-0 [&_p]:text-[0.96rem] [&_p]:leading-7 [&_p]:text-zinc-300 [&_strong]:text-white [&_ul]:mt-3 [&_ul]:space-y-2 [&_ul]:pl-6">
+            <div className={`max-h-[calc(100vh-12rem)] overflow-auto ${ARTIFACT_MD_CLASS}`}>
               <Markdown content={artifact.content} />
             </div>
           )}

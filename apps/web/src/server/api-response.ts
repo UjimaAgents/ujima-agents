@@ -8,7 +8,7 @@ export function parseApiError(
   body: unknown,
   fallbackMessage: string,
   fallbackCode: ApiError["code"] = "ERR_INTERNAL",
-): ApiError {
+): ApiError & { issues?: unknown[] } {
   if (
     isObject(body) &&
     typeof body.code === "string" &&
@@ -18,6 +18,9 @@ export function parseApiError(
       code: body.code as ApiError["code"],
       message: body.message,
       details: isObject(body.details) ? body.details : undefined,
+      // Preserve a structured validation-issue list (e.g. ERR_INVALID_WORKFLOW)
+      // so the client can show *what* is wrong, not just a generic message.
+      ...(Array.isArray(body.issues) ? { issues: body.issues } : {}),
     };
   }
 
