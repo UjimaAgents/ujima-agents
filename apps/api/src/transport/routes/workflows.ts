@@ -388,7 +388,10 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
           deps.repo
             .listWorkflowNodeRuns(run.id)
             .filter((n) => n.childRunId)
-            .map((n) => [n.childRunId as string, { nodeId: n.nodeId, agentName: memberName(n.agentId) }]),
+            .map((n) => [
+              n.childRunId as string,
+              { nodeId: n.nodeId, agentId: n.agentId, agentName: memberName(n.agentId) },
+            ]),
         );
         for (const a of pending) {
           const link = a.runId ? childNodeByRun.get(a.runId) : undefined;
@@ -398,6 +401,9 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
             workflowRunId: run.id,
             workflowName: run.name,
             nodeId: link.nodeId,
+            // Stable member id of the agent whose step needs the tool (for
+            // avatars/filtering); agentName is display-only.
+            requestedByMemberId: link.agentId ?? a.requestedBy,
             agentName: link.agentName ?? memberName(a.requestedBy),
             resourceType: a.resourceType,
             action: a.action,

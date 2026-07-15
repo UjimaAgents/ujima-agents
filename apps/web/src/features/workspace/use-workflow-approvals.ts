@@ -51,7 +51,8 @@ export function toolApprovalToCard(t: WorkflowToolApproval): ApprovalCardData {
     id: t.id,
     runId: t.workflowRunId,
     threadId: t.channelId,
-    requestedByMemberId: t.agentName,
+    // Prefer the stable member id; omit rather than fall back to a display name.
+    ...(t.requestedByMemberId ? { requestedByMemberId: t.requestedByMemberId } : {}),
     title: `Approve: ${label}`,
     description: `${t.agentName} in "${t.workflowName}" wants to ${label}.`,
     status: "pending",

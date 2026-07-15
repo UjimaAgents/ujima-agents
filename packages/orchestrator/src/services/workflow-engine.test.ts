@@ -37,6 +37,11 @@ class FakeStore implements WorkflowEngineStore {
   getWorkflowDefinitionByName(_org: string, name: string) {
     return this.defsByName.get(name) ?? null;
   }
+  listWorkflowDefinitionsForChannel(_org: string, channelId: string) {
+    return [...this.defs.values()]
+      .filter((d) => d.channelId === channelId || d.channelId == null)
+      .sort((a, b) => Number(a.channelId == null) - Number(b.channelId == null));
+  }
   saveWorkflowRun(run: WorkflowRun) {
     this.runs.set(run.id, run);
     return run;
@@ -251,6 +256,40 @@ describe('WorkflowEngineService', () => {
 
     expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('failed');
     expect(updates.some((u) => u.status === 'failed')).toBe(true);
+  });
+
+  it('resolves @workflow by name preferring the current channel over org-wide', async () => {
+    const {effects, spawns} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const mkDef = (id: string, channelId: string | null, ag: string): WorkflowDefinition => {
+      const g = graph([trigger, agent(ag)], [edge('t', ag)]);
+      return {
+        id,
+        organizationId: 'org1',
+        channelId,
+        name: 'Foo',
+        nodes: g.nodes,
+        edges: g.edges,
+        version: 1,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+    };
+    // Same name "Foo" exists org-wide and scoped to channel c1.
+    store.defs.set('d-org', mkDef('d-org', null, 'orgAgent'));
+    store.defs.set('d-c1', mkDef('d-c1', 'c1', 'c1Agent'));
+
+    await engine.startRun({
+      organizationId: 'org1',
+      input: 'x',
+      initiatedBy: 'u1',
+      channelId: 'c1',
+      threadId: 'th1',
+      definitionName: 'Foo',
+    });
+
+    // The channel-scoped copy wins, not the org-wide one.
+    expect(spawns[0]!.agentId).toBe('c1Agent');
   });
 
   it('passes the envelope downstream via tokens', async () => {

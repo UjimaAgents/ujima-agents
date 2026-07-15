@@ -22,6 +22,9 @@ class FakeRepo {
   getWorkflowDefinitionByName() {
     return null;
   }
+  listWorkflowDefinitionsForChannel() {
+    return [];
+  }
   saveWorkflowRun(run: WorkflowRun) {
     this.runs.set(run.id, run);
     return run;

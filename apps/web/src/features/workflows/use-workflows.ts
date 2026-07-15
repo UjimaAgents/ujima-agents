@@ -227,6 +227,8 @@ export interface WorkflowToolApproval {
   workflowRunId: string;
   workflowName: string;
   nodeId: string;
+  /** Stable member id of the requesting agent (agentName is display-only). */
+  requestedByMemberId?: string;
   agentName: string;
   resourceType: string;
   action: string;

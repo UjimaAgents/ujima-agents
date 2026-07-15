@@ -48,6 +48,11 @@ export interface WorkflowEngineStore {
     organizationId: string,
     name: string,
   ): WorkflowDefinition | null;
+  /** Channel-scoped + org-wide definitions, ordered channel-scoped first. */
+  listWorkflowDefinitionsForChannel(
+    organizationId: string,
+    channelId: string,
+  ): WorkflowDefinition[];
   saveWorkflowRun(run: WorkflowRun): WorkflowRun;
   getWorkflowRun(organizationId: string, runId: string): WorkflowRun | null;
   listWorkflowRunsByStatus(organizationId: string, statuses: string[]): WorkflowRun[];
@@ -902,10 +907,16 @@ export class WorkflowEngineService {
     if (input.inlineGraph) {
       return {graph: input.inlineGraph, name: input.name ?? 'workflow', definitionId: null};
     }
+    // Resolve a definition by name preferring the current channel's copy, then
+    // the org-wide one — so `@workflow Foo` in channel A can't pick up a
+    // channel-B Foo. listWorkflowDefinitionsForChannel returns channel-scoped
+    // rows before org-wide ones, so the first name match is the right one.
     const def = input.definitionId
       ? this.store.getWorkflowDefinition(input.organizationId, input.definitionId)
       : input.definitionName
-        ? this.store.getWorkflowDefinitionByName(input.organizationId, input.definitionName)
+        ? (this.store
+            .listWorkflowDefinitionsForChannel(input.organizationId, input.channelId)
+            .find((d) => d.name === input.definitionName) ?? null)
         : null;
     if (!def) {
       throw new Error(
