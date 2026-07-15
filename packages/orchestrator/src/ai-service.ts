@@ -18,6 +18,7 @@ import {requireTeam} from "./utils/require-team.js";
 import {resolveVisiblePromptChannels} from "./utils/visible-prompt-channels.js";
 import {buildCacheableSystem, loadProceduresForSystemPrompt} from "./utils/system-prompt-builder.js";
 import {selectPromptContextMessages} from "./utils/prompt-context.js";
+import {configureClaudeCodeTools} from "@ujima/llm";
 
 // Resolver now delegates to the canonical `@ujima/llm` surface so every
 // AI-SDK-driven code path (this `/api/runs` service, the upcoming
@@ -220,8 +221,19 @@ export class AiService {
       tools: toolDefs,
     });
     try {
+      const runnableModel = configureClaudeCodeTools(model, async (toolName, args, toolCallId) => {
+        const definition = toolDefs[toolName] as {
+          execute?: (input: Record<string, unknown>, context: Record<string, unknown>) => Promise<unknown>;
+        } | undefined;
+        if (!definition?.execute) return { error: `Tool not found: ${toolName}` };
+        return definition.execute(args, {
+          toolCallId,
+          abortSignal: input.abortSignal,
+          messages: [],
+        });
+      });
       const memResult = await runAgentLoop({
-        model,
+        model: runnableModel,
         system,
         messages,
         tools: toolDefs,

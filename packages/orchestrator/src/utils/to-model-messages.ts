@@ -26,6 +26,7 @@ import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 import { isPendingToolResult, messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
 import { resolveOpenAIAccessToken } from './codex-auth.js';
+import { resolveAnthropicAccessToken } from './claude-code-auth.js';
 
 export function toModelMessages(
   messages: Message[],
@@ -336,7 +337,10 @@ export async function resolveSpiritModel(params: {
   ): { model: LanguageModel; modelId: string } | null => {
     const provider = params.team.getProvider(providerName);
     if (!provider) return null;
-    const apiKey = resolveOpenAIAccessToken({
+    const resolveAccessToken = providerName === 'anthropic-claude-code'
+      ? resolveAnthropicAccessToken
+      : resolveOpenAIAccessToken;
+    const apiKey = resolveAccessToken({
       providerName,
       authMode: provider.authMode,
       storedCredential: params.getProviderCredential(

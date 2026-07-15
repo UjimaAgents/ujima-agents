@@ -243,14 +243,11 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
   if (input.kind === 'anthropic-claude-code') {
     // Claude Code auth is handled by the SDK reading ~/.claude/ credentials
     // The SDK launches the `claude` CLI as a subprocess which handles auth internally
-    return withReasoning(
-      createClaudeCodeModel({
-        modelId: input.modelId,
-      }),
-      input.kind,
-      input.reasoningEffort,
-      input.modelId,
-    );
+    return createClaudeCodeModel({
+      modelId: input.modelId,
+      cwd: input.cwd,
+      reasoningEffort: input.reasoningEffort,
+    });
   }
 
   const exhaustive: never = input.kind;

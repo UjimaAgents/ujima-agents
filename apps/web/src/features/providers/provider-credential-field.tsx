@@ -19,6 +19,7 @@ import {
   providerLabelFromToken,
   type ProviderAuthModeUI,
 } from "./catalog";
+import { CLAUDE_CODE_LOGIN_HELP_PATH } from "./constants";
 
 export function ProviderCredentialField({
   provider,
@@ -97,6 +98,7 @@ export function ProviderCredentialField({
   const [claudeCodeState, setClaudeCodeState] = useState<
     "checking" | "idle" | "completed" | "failed"
   >("checking");
+  const [claudeCodeRefresh, setClaudeCodeRefresh] = useState(0);
   useEffect(() => {
     if (effectiveMode !== "claude-code") {
       onClaudeCodeConnectionChange?.(false);
@@ -124,7 +126,7 @@ export function ProviderCredentialField({
     }
     void checkClaudeCode();
     return () => { active = false; };
-  }, [effectiveMode, onClaudeCodeConnectionChange]);
+  }, [effectiveMode, onClaudeCodeConnectionChange, claudeCodeRefresh]);
 
   // Handle polling during authorization
   useEffect(() => {
@@ -235,6 +237,56 @@ export function ProviderCredentialField({
             onChange={(e) => onApiKeyChange(e.target.value)}
             placeholder="OpenAI API key (sk-…)"
           />
+        ) : effectiveMode === "claude-code" ? (
+          <div className="space-y-3">
+            {claudeCodeState === "checking" && (
+              <div className="flex items-center gap-2 py-2 text-xs text-zinc-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Checking Claude Code login...
+              </div>
+            )}
+            {claudeCodeState === "idle" && (
+              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900">
+                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Use local Claude Code login</p>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Run <code>claude auth login</code>, then refresh.</p>
+                <div className="mt-3 flex gap-3">
+                  <a
+                    href={CLAUDE_CODE_LOGIN_HELP_PATH}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-950 px-3 py-2 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-950"
+                  >
+                    Login help
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setClaudeCodeRefresh((value) => value + 1)}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+            )}
+            {claudeCodeState === "completed" && (
+              <div className="flex items-start gap-3 rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/20">
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">Claude Code connected</p>
+                  <button
+                    type="button"
+                    onClick={() => setClaudeCodeRefresh((value) => value + 1)}
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 underline dark:text-emerald-400"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Recheck
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="space-y-3">
             {loginState === "checking" && (

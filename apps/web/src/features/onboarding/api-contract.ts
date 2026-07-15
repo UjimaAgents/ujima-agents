@@ -26,6 +26,7 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
   "z.ai": "zhipu",
   "z-ai": "zhipu",
   "openai-codex": "openai-codex",
+  "anthropic-claude-code": "anthropic-claude-code",
 };
 
 export function normalizeProviderName(value: string) {

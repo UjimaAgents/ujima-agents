@@ -53,6 +53,7 @@ function ProviderFormModalActive({
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [codexConnected, setCodexConnected] = useState(false);
+  const [claudeCodeConnected, setClaudeCodeConnected] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,9 +62,8 @@ function ProviderFormModalActive({
   const internalToken = resolveInternalProviderToken(uiProvider, authMode);
   const isCodexMode = internalToken === "openai-codex";
   const isClaudeCodeMode = internalToken === "anthropic-claude-code";
-  const isSubscriptionMode = isCodexMode || isClaudeCodeMode;
   const canSave = Boolean(
-    internalToken && (apiKey.trim() || (isSubscriptionMode && codexConnected) || (isUpdate && baseUrl.trim() !== initialBaseUrl.trim())),
+    internalToken && (apiKey.trim() || (isCodexMode && codexConnected) || (isClaudeCodeMode && claudeCodeConnected) || (isUpdate && baseUrl.trim() !== initialBaseUrl.trim())),
   );
 
   const handleClose = () => onClose();
@@ -96,12 +96,14 @@ function ProviderFormModalActive({
     setApiKey("");
     setBaseUrl("");
     setCodexConnected(false);
+    setClaudeCodeConnected(false);
     if (!isOpenAIProvider(next)) setAuthMode("apikey");
   };
 
   const handleAuthModeChange = (mode: ProviderAuthModeUI) => {
     setAuthMode(mode);
     setCodexConnected(false);
+    setClaudeCodeConnected(false);
     if (mode === "codex") setBaseUrl("");
   };
 
@@ -133,7 +135,7 @@ function ProviderFormModalActive({
         {uiProvider ? (
           <div>
             <label className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {isOpenAIProvider(uiProvider) ? "Connection" : "API key"}
+              {isOpenAIProvider(uiProvider) || isClaudeCodeMode ? "Connection" : "API key"}
             </label>
             <div className="mt-2">
               <ProviderCredentialField
@@ -143,6 +145,7 @@ function ProviderFormModalActive({
                 authMode={authMode}
                 onAuthModeChange={isUpdate ? undefined : handleAuthModeChange}
                 onCodexConnectionChange={setCodexConnected}
+                onClaudeCodeConnectionChange={setClaudeCodeConnected}
               />
             </div>
           </div>

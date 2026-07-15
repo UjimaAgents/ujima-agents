@@ -171,6 +171,7 @@ export function ActivationOnboardingForm(props: Props) {
                     // Always reset to apikey when switching providers
                     const internalName = resolveInternalProviderToken(uiToken, "apikey");
                     setCodexConnected(false);
+                    setClaudeCodeConnected(false);
                     onChange({ ...draft, providers: [{ ...provider, name: internalName, apiKey: "" }], roles: draft.roles.map((item) => ({ ...item, llm: internalName, model: defaultModelForProvider(internalName) })) });
                   }} />
                 </FieldShell>
@@ -181,11 +182,13 @@ export function ActivationOnboardingForm(props: Props) {
                   authMode={resolveAuthMode(provider.name) ?? "apikey"}
                   onAuthModeChange={(mode) => {
                     // Encode auth mode directly in provider name
-                    const internalName = resolveInternalProviderToken("openai", mode);
+                    const internalName = resolveInternalProviderToken(resolveUiProviderToken(provider.name), mode);
                     setCodexConnected(false);
+                    setClaudeCodeConnected(false);
                     onChange({ ...draft, providers: [{ ...provider, name: internalName, apiKey: "" }], roles: draft.roles.map((item) => ({ ...item, llm: internalName })) });
                   }}
                   onCodexConnectionChange={setCodexConnected}
+                  onClaudeCodeConnectionChange={setClaudeCodeConnected}
                 />
               </div>
             </div>

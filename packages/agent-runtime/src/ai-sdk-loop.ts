@@ -6,6 +6,7 @@ import {
   type ToolSet,
 } from 'ai';
 import { runAgentLoop } from '@ujima/agent-core';
+import { configureClaudeCodeTools } from '@ujima/llm';
 import { z } from 'zod';
 import type { AgentDef, UjimaEvent } from '@ujima/shared';
 import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
@@ -295,6 +296,17 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
   const toolSet = Object.fromEntries(
     mcpTools.map((t) => [t.name, wrapMcpTool(t)]),
   ) as ToolSet;
+  const runnableModel = configureClaudeCodeTools(model, async (toolName, args, toolCallId) => {
+    const definition = toolSet[toolName] as {
+      execute?: (input: Record<string, unknown>, context: Record<string, unknown>) => Promise<unknown>;
+    } | undefined;
+    if (!definition?.execute) return { error: `Tool not found: ${toolName}` };
+    return definition.execute(args, {
+      toolCallId,
+      abortSignal,
+      messages: [],
+    });
+  });
 
   const messages: ModelMessage[] = [
     ...(input.contextMessages ?? []),
@@ -305,7 +317,7 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
 
   try {
     const result = await runAgentLoop({
-      model,
+      model: runnableModel,
       system: systemPrompt,
       messages,
       tools: toolSet,

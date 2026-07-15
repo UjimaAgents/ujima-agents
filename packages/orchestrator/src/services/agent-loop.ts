@@ -7,6 +7,7 @@ import {
   type HumanPause,
 } from '@ujima/agent-core';
 import type { McpServerSummary } from './spirit-mcp-helpers.js';
+import { configureClaudeCodeTools } from '@ujima/llm';
 
 export {
   RUN_TERMINATING_TOOL_NAMES,
@@ -84,12 +85,23 @@ export async function runAgentWithRetry(
   config: RunAgentExecutionConfig,
   hooks?: RunAgentRetryHooks,
 ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
-  const temperature = supportsTemperature(config.model) ? config.temperature : undefined;
+  const model = configureClaudeCodeTools(config.model, async (toolName, args, toolCallId) => {
+    const definition = config.tools[toolName] as {
+      execute?: (input: Record<string, unknown>, context: Record<string, unknown>) => Promise<unknown>;
+    } | undefined;
+    if (!definition?.execute) return { error: `Tool not found: ${toolName}` };
+    return definition.execute(args, {
+      toolCallId,
+      abortSignal: config.abortSignal,
+      messages: [],
+    });
+  });
+  const temperature = supportsTemperature(model) ? config.temperature : undefined;
   let compacted = false;
 
   return runAgentLoopWithRetry(
     () => ({
-      model: config.model,
+      model,
       system: config.system,
       messages: config.messages,
       tools: config.tools,

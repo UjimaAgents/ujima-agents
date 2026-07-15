@@ -305,7 +305,7 @@ export class SettingsService {
       let changed = false;
       for (const [name, authMode] of Object.entries(normalizedProviderAuthModes)) {
         const provider = config.providers[name] ?? { kind: name as typeof PROVIDER_KINDS[number], models: [] };
-        if (authMode === 'chatgpt') {
+        if (authMode === 'chatgpt' || authMode === 'claude-code') {
           provider.authMode = authMode;
         } else {
           delete provider.authMode;
