@@ -304,7 +304,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         <div className="border-b border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
           <p className="mb-1 flex items-center gap-1.5 font-semibold">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            {error ?? `Can't save — fix ${issues.length === 1 ? "this issue" : `these ${issues.length} issues`}:`}
+            {issues.length > 0
+              ? `Can't save — fix ${issues.length === 1 ? "this issue" : `these ${issues.length} issues`}:`
+              : error}
           </p>
           {issues.map((issue, i) => (
             <p key={i} className="pl-5">

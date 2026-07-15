@@ -193,6 +193,22 @@ describe("validateWorkflowGraph", () => {
     expect(res.issues.some((i) => i.code === "unknown_agent")).toBe(true);
   });
 
+  it("flags an agent node with no agent selected", () => {
+    const g = validSop();
+    const pm = g.nodes.find((n) => n.id === "pm")!;
+    if (pm.kind === "agent") pm.config.agentId = "";
+    const res = validateWorkflowGraph(g);
+    expect(res.issues.some((i) => i.code === "incomplete_node" && i.nodeId === "pm")).toBe(true);
+  });
+
+  it("flags a skill node with no skill selected", () => {
+    const g = validSop();
+    const brd = g.nodes.find((n) => n.id === "brd")!;
+    if (brd.kind === "skill") brd.config.skillName = "";
+    const res = validateWorkflowGraph(g);
+    expect(res.issues.some((i) => i.code === "incomplete_node" && i.nodeId === "brd")).toBe(true);
+  });
+
   it("requires exactly one trigger", () => {
     const g = validSop();
     g.nodes = g.nodes.filter((n) => n.kind !== "trigger");

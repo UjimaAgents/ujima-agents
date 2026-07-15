@@ -477,7 +477,13 @@ export function validateWorkflowGraph(
   // 6/7/8. Per-node checks: unknown refs + token references
   for (const node of nodes) {
     if (node.kind === "agent") {
-      if (ctx.agentIds && !ctx.agentIds.has(node.config.agentId)) {
+      if (!node.config.agentId.trim()) {
+        issues.push({
+          code: "incomplete_node",
+          message: `Agent node "${node.id}": pick an agent.`,
+          nodeId: node.id,
+        });
+      } else if (ctx.agentIds && !ctx.agentIds.has(node.config.agentId)) {
         issues.push({
           code: "unknown_agent",
           message: `Agent node "${node.id}" references unknown agent "${node.config.agentId}".`,
@@ -496,7 +502,13 @@ export function validateWorkflowGraph(
         checkTokens(node.config.outputPath, node, ancestors, byId, issues);
       }
     } else if (node.kind === "skill") {
-      if (ctx.skillNames && !ctx.skillNames.has(node.config.skillName)) {
+      if (!node.config.skillName.trim()) {
+        issues.push({
+          code: "incomplete_node",
+          message: `Skill node "${node.id}": choose a skill.`,
+          nodeId: node.id,
+        });
+      } else if (ctx.skillNames && !ctx.skillNames.has(node.config.skillName)) {
         issues.push({
           code: "unknown_skill",
           message: `Skill node "${node.id}" references unknown skill "${node.config.skillName}".`,
@@ -504,7 +516,13 @@ export function validateWorkflowGraph(
         });
       }
     } else if (node.kind === "tool") {
-      if (ctx.toolIds && !ctx.toolIds.has(node.config.toolId)) {
+      if (!node.config.toolId.trim()) {
+        issues.push({
+          code: "incomplete_node",
+          message: `Tool node "${node.id}": choose a tool.`,
+          nodeId: node.id,
+        });
+      } else if (ctx.toolIds && !ctx.toolIds.has(node.config.toolId)) {
         issues.push({
           code: "unknown_tool",
           message: `Tool node "${node.id}" references unknown tool "${node.config.toolId}".`,

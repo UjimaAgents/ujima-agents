@@ -34,6 +34,24 @@ const DefinitionInputSchema = z.object({
   edges: z.array(WorkflowEdgeSchema),
 });
 
+/**
+ * Turn Zod schema errors into the same issue shape the graph validator uses,
+ * attaching the offending node's id (from a `nodes.<index>.…` path) so the
+ * editor can tag which node on the canvas is wrong instead of showing a bare
+ * dotted path.
+ */
+function schemaIssues(body: unknown, error: z.ZodError): { code: string; message: string; nodeId?: string }[] {
+  const nodes = (body as { nodes?: { id?: unknown }[] } | null)?.nodes;
+  return error.issues.map((i) => {
+    let nodeId: string | undefined;
+    if (i.path[0] === 'nodes' && typeof i.path[1] === 'number' && Array.isArray(nodes)) {
+      const id = nodes[i.path[1]]?.id;
+      if (typeof id === 'string') nodeId = id;
+    }
+    return { code: 'schema', message: `${i.path.join('.')}: ${i.message}`, nodeId };
+  });
+}
+
 function requireMember(
   deps: WorkflowRouteDeps,
   req: FastifyRequest,
@@ -152,7 +170,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
         return reply.status(422).send({
           code: 'ERR_INVALID_WORKFLOW',
           message: 'Invalid workflow definition',
-          issues: parsed.error.issues.map((i) => ({ code: 'schema', message: `${i.path.join('.')}: ${i.message}` })),
+          issues: schemaIssues(req.body, parsed.error),
         });
       }
       const issues = validate(deps, auth.user.organizationId, parsed.data);
@@ -191,7 +209,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
         return reply.status(422).send({
           code: 'ERR_INVALID_WORKFLOW',
           message: 'Invalid workflow definition',
-          issues: parsed.error.issues.map((i) => ({ code: 'schema', message: `${i.path.join('.')}: ${i.message}` })),
+          issues: schemaIssues(req.body, parsed.error),
         });
       }
       const body = parsed.data;
