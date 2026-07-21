@@ -23,8 +23,13 @@ import {
 export { getArtifactFileCard } from "./message-cards";
 
 const CONVERSATION_ARCHIVE_MARKER = "[[CONVERSATION_ARCHIVE_V1]]";
-const CONVERSATION_SUMMARY_MARKER = "[[CONVERSATION_SUMMARY_V1]]";
+const CONVERSATION_SUMMARY_MARKERS = ["[[CONVERSATION_SUMMARY_V2]]", "[[CONVERSATION_SUMMARY_V1]]"];
 const SELF_NOTE_SUMMARY_MARKER = "[[SELF_NOTE_SUMMARY_V1]]";
+const SUMMARY_MARKERS = [CONVERSATION_ARCHIVE_MARKER, ...CONVERSATION_SUMMARY_MARKERS, SELF_NOTE_SUMMARY_MARKER];
+const SUMMARY_GUIDANCE = new Set([
+  "> README-style compact summary -- your durable context from earlier in the conversation.",
+  "> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.",
+]);
 
 export interface ChatMessageData {
   id: string;
@@ -398,9 +403,9 @@ export const ChatMessage = memo(function ChatMessage({
   );
 });
 
-function getSystemMessageLabel(content: string): string {
+export function getSystemMessageLabel(content: string): string {
   if (content.startsWith(CONVERSATION_ARCHIVE_MARKER)) return "Conversation archived";
-  if (content.startsWith(CONVERSATION_SUMMARY_MARKER)) return "Conversation compacted";
+  if (startsWithAny(content, CONVERSATION_SUMMARY_MARKERS)) return "Conversation compacted";
   if (content.startsWith(SELF_NOTE_SUMMARY_MARKER)) return "Self notes compacted";
   if (content.startsWith("[Approval needed]")) {
     const firstLine = content.split("\n")[0]?.trim() ?? "";
@@ -411,21 +416,20 @@ function getSystemMessageLabel(content: string): string {
 }
 
 function isInternalMarkerContent(content: string): boolean {
-  return (
-    content.startsWith(CONVERSATION_ARCHIVE_MARKER) ||
-    content.startsWith(CONVERSATION_SUMMARY_MARKER) ||
-    content.startsWith(SELF_NOTE_SUMMARY_MARKER)
-  );
+  return startsWithAny(content, SUMMARY_MARKERS);
 }
 
 /** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
-function systemMessageBodyMarkdown(content: string): string | null {
-  if (
-    content.startsWith(CONVERSATION_ARCHIVE_MARKER) ||
-    content.startsWith(CONVERSATION_SUMMARY_MARKER) ||
-    content.startsWith(SELF_NOTE_SUMMARY_MARKER)
-  ) {
-    return null;
+export function systemMessageBodyMarkdown(content: string): string | null {
+  if (startsWithAny(content, SUMMARY_MARKERS)) {
+    const rest = content
+      .split("\n")
+      .slice(1)
+      .filter((line) => !SUMMARY_GUIDANCE.has(line.trim()))
+      .map((line) => line.startsWith("- - ") ? line.slice(2) : line)
+      .join("\n")
+      .trim();
+    return rest.length > 0 ? rest : null;
   }
   if (content.startsWith("[Approval needed]")) {
     const rest = content.split("\n").slice(1).join("\n").trim();
@@ -435,6 +439,10 @@ function systemMessageBodyMarkdown(content: string): string | null {
   if (lines.length <= 1) return null;
   const rest = lines.slice(1).join("\n").trim();
   return rest.length > 0 ? rest : null;
+}
+
+function startsWithAny(content: string, markers: readonly string[]): boolean {
+  return markers.some((marker) => content.startsWith(marker));
 }
 
 /** Matches `formatApprovalRelayMarkdown` shell relay body (`packages/shared` approval-scope). */

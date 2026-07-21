@@ -98,7 +98,7 @@ export async function GET(request: Request) {
   });
 }
 
-function shouldForwardEvent(
+export function shouldForwardEvent(
   eventName: SocketEventName,
   payload: unknown,
   input: {
@@ -108,10 +108,17 @@ function shouldForwardEvent(
   },
 ): boolean {
   switch (eventName) {
-    case SocketEventNames.channelMessage:
     case SocketEventNames.channelPresence: {
       const body = payload as { channelId?: string };
       return typeof body.channelId === "string" && input.channelIds.includes(body.channelId);
+    }
+    case SocketEventNames.channelMessage: {
+      const body = payload as { channelId?: string; message?: { threadId?: string } };
+      return (
+        typeof body.channelId === "string" &&
+        input.channelIds.includes(body.channelId) &&
+        body.message?.threadId === input.threadId
+      );
     }
     case SocketEventNames.threadMessage: {
       const body = payload as { threadId?: string };

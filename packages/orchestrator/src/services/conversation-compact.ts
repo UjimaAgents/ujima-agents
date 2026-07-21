@@ -16,6 +16,7 @@ import {
 } from './conversation-summary.js';
 import { isCompactedSourceMessage } from '../utils/message-visibility.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
+import { completedRunSteps, extractToolCallIdsFromMessages } from '../utils/run-transcript.js';
 
 export const SELF_NOTE_COMPACTION_BATCH_SIZE = 100;
 export const SELF_NOTE_RECENT_RAW_COUNT = 15;
@@ -23,11 +24,6 @@ export const SELF_NOTE_COMPACTION_TRIGGER = 500;
 export const CONVERSATION_COMPACTION_BATCH_SIZE = 100;
 /** Number of most recent user-triggered turns to preserve intact during compaction. */
 export const CONVERSATION_TAIL_TURNS = 2;
-/** Minimum token budget to reserve for preserving recent turns during compaction. */
-export const CONVERSATION_PRESERVE_RECENT_TOKENS_MIN = 2_000;
-/** Maximum token budget to reserve for preserving recent turns during compaction. */
-export const CONVERSATION_PRESERVE_RECENT_TOKENS_MAX = 8_000;
- 
 
 export interface CompactionContext {
   repo: {
@@ -55,7 +51,7 @@ export interface CompactionContext {
     attachmentIds?: undefined,
     options?: PublishMessageOptions,
   ): Message;
-  summarizeConversation(messages: Message[], mode: 'summary' | 'archive'): Promise<string>;
+  summarizeConversation(messages: Message[], mode: 'summary' | 'archive', runSteps: RunStep[]): Promise<string>;
   contextWindowTokens(organizationId: string, threadId: string): number;
 }
 
@@ -137,16 +133,9 @@ export function estimatePromptReplayTokens(
   organizationId: string,
   messages: readonly Message[],
 ): number {
-  const knownToolCallIds = new Set<string>();
+  const knownToolCallIds = extractToolCallIdsFromMessages(messages);
   let total = 0;
   for (const message of messages) {
-    for (const call of message.toolCalls) {
-      if (call.toolCallId) knownToolCallIds.add(call.toolCallId);
-    }
-    if (typeof message.outputTokens === 'number') {
-      total += message.outputTokens;
-      continue;
-    }
     total += estimateTokensForValue(message.content);
     if (message.toolCalls.length > 0) total += estimateTokensForValue(message.toolCalls);
     if (message.reasoningContent) total += estimateTokensForValue(message.reasoningContent);
@@ -158,7 +147,7 @@ export function estimatePromptReplayTokens(
       .filter((runId): runId is string => typeof runId === 'string' && runId.length > 0),
   );
   for (const runId of runIds) {
-    for (const step of repo.listRunSteps?.(organizationId, runId) ?? []) {
+    for (const step of completedRunSteps(repo.listRunSteps?.(organizationId, runId) ?? [])) {
       if (knownToolCallIds.has(step.toolCallId)) continue;
       total += estimateTokensForValue(step.input);
       if (step.output !== undefined) total += estimateTokensForValue(step.output);
@@ -418,12 +407,13 @@ async function compactThreadMessages(
   });
 
   const now = new Date().toISOString();
+  const runSteps = summaryRunSteps(ctx.repo, input.organizationId, summarySources);
   const summaryMessage = buildSystemMessage({
     organizationId: input.organizationId,
     threadId: input.threadId,
     channelId: ctx.repo.getThread(input.organizationId, input.threadId)?.channelId ?? undefined,
     content: input.mode
-      ? await ctx.summarizeConversation(summarySources, input.mode)
+      ? await ctx.summarizeConversation(summarySources, input.mode, runSteps)
       : buildSelfNoteSummary(summarySources),
     createdAt: now,
   });
@@ -447,6 +437,15 @@ async function compactThreadMessages(
     summaryMessage,
     compactedMessageIds: summarySources.map((message) => message.id),
   };
+}
+
+function summaryRunSteps(
+  repo: Pick<CompactionContext['repo'], 'listRunSteps'>,
+  organizationId: string,
+  messages: readonly Message[],
+): RunStep[] {
+  const runIds = new Set(messages.flatMap((message) => message.metadata?.runId ? [message.metadata.runId] : []));
+  return completedRunSteps([...runIds].flatMap((runId) => repo.listRunSteps?.(organizationId, runId) ?? []));
 }
 
 function listAllChannelMessages(

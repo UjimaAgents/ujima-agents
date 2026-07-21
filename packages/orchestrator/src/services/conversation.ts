@@ -10,6 +10,7 @@ import {
   type ChannelPassReason,
   type Message,
   type MessageMention,
+  type RunStep,
   getDirectMessageThreadId,
   isAgentOnlyThread,
 } from '@ujima/shared';
@@ -80,6 +81,7 @@ export interface ConversationServiceOptions {
   summarizeConversation?: (
     messages: Message[],
     mode: 'summary' | 'archive',
+    runSteps: RunStep[],
   ) => Promise<string>;
   summarizeConversationTimeoutMs?: number;
   contextWindowTokens?: (organizationId: string, threadId: string) => number;
@@ -423,12 +425,12 @@ export class ConversationService {
       repo: this.repo,
       publishMessage: (message, mentions, attachmentIds, options) =>
         this.publishMessage(message, mentions as never[], attachmentIds, options),
-      summarizeConversation: async (messages, mode) => {
+      summarizeConversation: async (messages, mode, runSteps) => {
         if (!this.summarizeConversation) {
           throw new Error('AI conversation summarizer is not configured.');
         }
         return withTimeout(
-          this.summarizeConversation(messages, mode),
+          this.summarizeConversation(messages, mode, runSteps),
           this.summarizeConversationTimeoutMs,
           'Conversation summary timed out. Try again in a moment.',
         );
@@ -440,6 +442,7 @@ export class ConversationService {
   private scheduleConversationCompaction(message: Message): void {
     if (!this.autoCompactConversations) return;
     if (!this.summarizeConversation) return;
+    if (message.metadata?.runProgress) return;
     const key = `${message.organizationId}:${message.threadId}`;
     if (
       this.compactingThreads.has(key) ||

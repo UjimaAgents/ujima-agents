@@ -1,5 +1,6 @@
 import type {LanguageModel} from "ai";
-import type {Message} from "@ujima/shared";
+import type {Message, RunStep} from "@ujima/shared";
+import {completedRunSteps, extractToolCallIdsFromMessages} from "../utils/run-transcript.js";
 
 export const SELF_NOTE_SUMMARY_MARKER = "[[SELF_NOTE_SUMMARY_V1]]";
 export const SELF_NOTE_COMPACTED_MARKER = "[[SELF_NOTE_COMPACTED_V1]]";
@@ -34,11 +35,6 @@ export interface ConversationSummaryFacts {
   blocked: string[];
   nextActions: string[];
 }
-const README_SUMMARY_GUIDANCE = [
-  "> README-style compact summary -- your durable context from earlier in the conversation.",
-  "> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.",
-] as const;
-
 export function formatTimestampedContent(
   content: string,
   createdAt: string
@@ -118,8 +114,6 @@ export function buildStructuredConversationSummary(input: {
   if (input.marker) out.push(`${input.marker} # ${input.title}`);
   else out.push(`# ${input.title}`);
   out.push("");
-  out.push(...README_SUMMARY_GUIDANCE);
-  out.push("");
   for (const section of input.sections) {
     out.push(`## ${section.heading}`);
     for (const bullet of section.bullets) out.push(`- ${bullet}`);
@@ -198,6 +192,7 @@ export function buildConversationClearSummary(messages: Message[]): string {
 export interface LlmSummarizerInput {
   messages: Message[];
   model: LanguageModel;
+  runSteps?: RunStep[];
   mode?: "summary" | "archive";
   maxBullets?: number;
 }
@@ -214,32 +209,33 @@ export async function buildConversationSummaryViaLlm(
   if (filtered.length === 0) {
     throw new Error("Cannot summarize a conversation with no user or agent messages.");
   }
-  const chunks = chunk(filtered, CONVERSATION_SUMMARIZATION_CHUNK_SIZE);
+  const entries = summaryTranscriptEntries(filtered, input.runSteps ?? []);
+  const chunks = chunk(entries, CONVERSATION_SUMMARIZATION_CHUNK_SIZE);
   console.warn("[conversation-summary] starting LLM compaction", {
     mode,
     sourceCount: input.messages.length,
-    filteredCount: filtered.length,
+    filteredCount: entries.length,
     chunkCount: chunks.length,
   });
   let previousSummary: string | undefined;
   let facts: ConversationSummaryFacts | undefined;
-  for (const [index, messages] of chunks.entries()) {
-    const transcript = transcriptFor(messages);
+  for (const [index, entries] of chunks.entries()) {
+    const transcript = entries.join("\n");
     const summary = await extractSummary(input.model, transcript, maxBullets, {
       mode,
       chunkIndex: index,
       chunkCount: chunks.length,
-      messageCount: messages.length,
+      messageCount: entries.length,
     }, previousSummary);
-    facts = facts ? mergeSummaryPartials([facts, summary], maxBullets) : summary;
+    facts = summary;
     previousSummary = JSON.stringify(facts, null, 2);
   }
   if (!facts) throw new Error("Conversation summarization produced no result.");
   const archive = mode === "archive";
   const workStateBullets = [
-    `- Completed: ${nonEmpty(facts.completed, "(none)").join("; ")}`,
-    `- Active: ${nonEmpty(facts.active, "(none)").join("; ")}`,
-    `- Blocked: ${nonEmpty(facts.blocked, "(none)").join("; ")}`,
+    `Completed: ${nonEmpty(facts.completed, "(none)").join("; ")}`,
+    `Active: ${nonEmpty(facts.active, "(none)").join("; ")}`,
+    `Blocked: ${nonEmpty(facts.blocked, "(none)").join("; ")}`,
   ];
   return buildStructuredConversationSummary({
     marker: archive ? CONVERSATION_ARCHIVE_MARKER : CONVERSATION_SUMMARY_MARKER,
@@ -353,17 +349,58 @@ function asStringArray(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === "string");
 }
 
-export function transcriptFor(messages: Message[]): string {
-  return messages
-    .map((message) => `[${message.senderId}] ${transcriptBodyFor(message)}`)
-    .join("\n");
+function summaryTranscriptEntries(messages: Message[], runSteps: RunStep[]): string[] {
+  const knownToolCallIds = extractToolCallIdsFromMessages(messages);
+  const entries = [
+    ...messages.map((message) => ({
+      createdAt: message.createdAt,
+      id: message.id,
+      text: `[${message.senderId}] ${transcriptBodyFor(message)}`,
+    })),
+    ...completedRunSteps(runSteps)
+      .filter((step) => !knownToolCallIds.has(step.toolCallId))
+      .map((step) => ({
+        createdAt: step.createdAt,
+        id: step.id,
+        text: `[tool:${step.agentId}] ${step.toolId} input=${compactValue(step.input)} output=${compactValue(step.output)}`,
+      })),
+  ];
+  return entries
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    .map((entry) => entry.text);
+}
+
+function compactValue(value: unknown): string {
+  let text: string;
+  if (typeof value === "string") text = value;
+  else {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value ?? "");
+    }
+  }
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 600) return normalized;
+  return `${normalized.slice(0, 300)} … ${normalized.slice(-300)}`;
+}
+
+function toolCallTranscript(message: Message): string {
+  return message.toolCalls
+    .filter((call) => call.result !== undefined)
+    .map((call) => `${call.toolName} input=${compactValue(call.args)} output=${compactValue(call.result)}`)
+    .join(" ");
 }
 
 function transcriptBodyFor(message: Message): string {
+  let body: string;
   if (isCompactionSummarySystemMessage(message)) {
-    return compactionSummaryExcerpt(message.content);
+    body = compactionSummaryExcerpt(message.content);
+  } else {
+    body = oneLine(message.content);
   }
-  return oneLine(message.content);
+  const tools = toolCallTranscript(message);
+  return tools ? `${body} [tools] ${tools}` : body;
 }
 
 export function compactionSummaryExcerpt(content: string): string {
@@ -393,35 +430,6 @@ function sanitizeBullets(values: string[], maxBullets: number): string[] {
     .map((value) => value.replace(/\s+/g, " ").trim().slice(0, 120))
     .filter((value) => value.length >= 2)
     .slice(0, maxBullets);
-}
-
-export function mergeSummaryPartials(
-  partials: ConversationSummaryFacts[],
-  maxBullets: number,
-): ConversationSummaryFacts {
-  return {
-    objective: dedupeBullets(partials.flatMap((partial) => partial.objective), maxBullets),
-    importantDetails: dedupeBullets(partials.flatMap((partial) => partial.importantDetails), maxBullets),
-    completed: dedupeBullets(partials.flatMap((partial) => partial.completed), maxBullets),
-    active: dedupeBullets(partials.flatMap((partial) => partial.active), maxBullets),
-    blocked: dedupeBullets(partials.flatMap((partial) => partial.blocked), maxBullets),
-    nextActions: dedupeBullets(partials.flatMap((partial) => partial.nextActions), maxBullets),
-  };
-}
-
-function dedupeBullets(values: string[], maxBullets: number): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const normalized = value.replace(/\s+/g, " ").trim().slice(0, 120);
-    if (normalized.length < 2) continue;
-    const key = normalized.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(normalized);
-    if (out.length >= maxBullets) break;
-  }
-  return out;
 }
 
 function oneLine(content: string): string {

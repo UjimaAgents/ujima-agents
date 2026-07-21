@@ -1,6 +1,6 @@
 {
   "name": "@ujima/license-ops",
-  "version": "0.0.66",
+  "version": "0.0.67",
   "private": true,
   "description": "Cloudflare Worker that stores license_ids in KV and serves the revoked list. NOT shipped in the npm package.",
   "scripts": {

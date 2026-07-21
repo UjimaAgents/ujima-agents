@@ -200,7 +200,7 @@ describe('conversation-compact selection', () => {
     expect(estimate).toBeLessThan(200);
   });
 
-  it('correctly handles stamped token counts without double-counting history', () => {
+  it('uses replay content instead of cumulative request usage', () => {
     const messages = [
       makeMessage('user message 1', {
         id: 'msg-1',
@@ -233,8 +233,8 @@ describe('conversation-compact selection', () => {
       messages,
     );
 
-    expect(estimate).toBeLessThan(100);
-    expect(estimate).toBeGreaterThan(50);
+    expect(estimate).toBeLessThan(20);
+    expect(estimate).toBeGreaterThan(0);
   });
 
 });
