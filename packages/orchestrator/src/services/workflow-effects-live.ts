@@ -146,7 +146,7 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     return blocks;
   }
 
-  async raiseApproval(input: RaiseApprovalInput): Promise<{ approvalRequestId: string }> {
+  async raiseApproval(_input: RaiseApprovalInput): Promise<{ approvalRequestId: string }> {
     // The gate is surfaced through the shared approval queue (the "Approval N of
     // M" card + floating pending pill), sourced live from run/node-run state via
     // GET /api/workflow-approvals — no inline channel card. The node run's

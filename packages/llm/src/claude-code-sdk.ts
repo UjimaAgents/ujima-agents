@@ -29,8 +29,7 @@ export interface ClaudeCodeModelOptions {
   queryImpl?: typeof query;
 }
 
-type JsonSchema = Record<string, unknown>;
-type RawMessage = {
+interface RawMessage {
   type?: string;
   message?: { content?: unknown; [key: string]: unknown };
   tool_use_result?: unknown;
@@ -39,13 +38,13 @@ type RawMessage = {
   is_error?: boolean;
   error?: string;
   stop_reason?: string | null;
-};
+}
 
-type Collected = {
+interface Collected {
   content: LanguageModelV2Content[];
   usage: LanguageModelV2Usage;
   stopReason?: string | null;
-};
+}
 
 const MCP_SERVER_NAME = 'ujima';
 const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
@@ -98,7 +97,7 @@ function promptParts(prompt: LanguageModelV2Prompt): { system?: string; prompt: 
   };
 }
 
-function schemaType(schema: JsonSchema | undefined): z.ZodTypeAny {
+function schemaType(schema: Record<string, unknown> | undefined): z.ZodTypeAny {
   if (!schema) return z.unknown();
   const type = schema.type;
   let result: z.ZodTypeAny;
@@ -136,7 +135,7 @@ function buildMcpServer(
   tools: NonNullable<LanguageModelV2CallOptions['tools']>,
   executor: ClaudeCodeToolExecutor,
 ) {
-  type FunctionTool = { type: 'function'; name: string; description?: string; inputSchema: unknown };
+  interface FunctionTool { type: 'function'; name: string; description?: string; inputSchema: unknown }
   type SdkToolFactory = (
     name: string,
     description: string,

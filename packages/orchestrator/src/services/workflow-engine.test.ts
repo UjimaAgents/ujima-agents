@@ -190,6 +190,7 @@ describe('WorkflowEngineService', () => {
   it('does not clobber a fast child completion back to running (race)', async () => {
     // The child run finishes *during* spawnAgentNode (before dispatch returns).
     // The node must end 'completed', not be reset to 'running' by a late write.
+    // eslint-disable-next-line prefer-const
     let engine!: WorkflowEngineService;
     const {effects, spawns} = makeEffects({
       onSpawn: async (input) => {

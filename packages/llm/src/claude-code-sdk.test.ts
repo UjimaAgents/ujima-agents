@@ -1,5 +1,5 @@
 import { generateText, tool } from 'ai';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createClaudeCodeModel } from './claude-code-sdk.js';
@@ -47,7 +47,7 @@ describe('Claude Code SDK model', () => {
       },
       queryImpl: fakeQuery((input) => {
         return (async function* () {
-          const server = (input.options?.mcpServers as Record<string, { instance?: { _registeredTools?: Record<string, { handler: Function }> } }> | undefined)?.ujima?.instance;
+          const server = (input.options?.mcpServers as Record<string, { instance?: { _registeredTools?: Record<string, { handler: (...args: unknown[]) => unknown }> } }> | undefined)?.ujima?.instance;
           const toolHandler = server?._registeredTools?.ping?.handler;
           if (!toolHandler) throw new Error('MCP tool was not registered');
           const toolResult = await toolHandler({ value: 'x' }, { toolUseId: 'call-1' });
