@@ -32,8 +32,8 @@ export const coreConcepts = [
   { title: "Bounds", text: "Execution cannot escape the org root." },
   {
     title: "LLM Providers",
-    text: "Infinite brainpower. Plug in Anthropic, OpenAI, Gemini, or DeepSeek in one click and watch them collaborate.",
-    logos: ["anthropic", "openai", "gemini", "deepseek"],
+    text: "Infinite brainpower. Plug in Anthropic, OpenAI, Gemini, DeepSeek, xAI, Meta, or other providers in one click and watch them collaborate.",
+    logos: ["anthropic", "openai", "gemini", "deepseek", "xai", "meta", "other"],
   },
   {
     title: "Subscriptions",

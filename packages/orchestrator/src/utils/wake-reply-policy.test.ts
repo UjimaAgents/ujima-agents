@@ -29,6 +29,12 @@ describe('resolveWakeReplyPolicy — suppressPassTool matrix', () => {
     expect(resolveWakeReplyPolicy({ threadId: CHANNEL_THREAD }).suppressPassTool).toBe(false);
   });
 
+  it('channel scaffold allows brief replies to greetings even under backpressure', () => {
+    const policy = resolveWakeReplyPolicy({ threadId: CHANNEL_THREAD });
+    expect(policy.scaffoldBlock).toContain('general greeting');
+    expect(policy.scaffoldBlock).toContain('brief response');
+  });
+
   it('@mention always suppresses pass (even agent DM)', () => {
     expect(
       resolveWakeReplyPolicy({

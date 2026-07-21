@@ -71,7 +71,7 @@ import {
 import { ToolServiceImpl, type ApprovalRequester } from './tool-service-impl.js';
 import { ApprovedRunScopeTracker } from '../utils/approved-run-scopes.js';
 import { createSpiritModelResolver } from '../utils/create-spirit-model-resolver.js';
-import { modelContextWindowTokens } from '../utils/model-context-window.js';
+import { conversationContextWindowTokens } from '../utils/model-context-window.js';
 import type { AgentDelegateResult } from '../tools/types.js';
 import { buildSystemMessage } from './message-factory.js';
 
@@ -1142,25 +1142,15 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     archiveStore: retention,
     onMemberAlerted: (input) => wakeMember(input),
     onMessagePublished: (msg) => handleMessagePublished?.(msg),
-    summarizeConversation: (messages, mode) => summarizeConversation(messages, mode),
+    summarizeConversation: (messages, mode, runSteps) => summarizeConversation(messages, mode, runSteps),
     autoCompactConversations: true,
-    contextWindowTokens: (organizationId) => {
-      const team = context.teamStore.getTeam(organizationId);
-      if (!team) return 128_000;
-      const windows = context.repo
-        .listMembers(organizationId)
-        .filter((member) => member.kind === AGENT_KIND && !member.retiredAt)
-        .flatMap((member) => {
-          const agent = team.getAgent(member.id) ?? team.getAgent(member.name);
-          const role = agent ? team.getRole(agent.roleName) : undefined;
-          const providerName = member.llm ?? role?.provider;
-          const provider = providerName ? team.getProvider(providerName) : undefined;
-          const modelId = member.model ?? role?.model ?? provider?.defaultModel;
-          return providerName && modelId
-            ? [modelContextWindowTokens(provider?.kind ?? providerName, modelId)]
-            : [];
-        });
-      return windows.length > 0 ? Math.min(...windows) : 128_000;
+    contextWindowTokens: (organizationId, threadId) => {
+      const thread = threadId ? context.repo.getThread(organizationId, threadId) : null;
+      return conversationContextWindowTokens({
+        team: context.teamStore.getTeam(organizationId),
+        members: context.repo.listMembers(organizationId),
+        threadMemberIds: thread?.memberIds ?? [],
+      });
     },
   });
 
@@ -1497,7 +1487,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const spiritModelResolver =
     context.spiritModelResolver ??
     createSpiritModelResolver(context.teamStore, context.repo);
-  summarizeConversation = async (messages, mode) => {
+  summarizeConversation = async (messages, mode, runSteps) => {
     const agent = [...messages]
       .reverse()
       .map((message) => context.repo.getMember(message.organizationId, message.senderId))
@@ -1510,6 +1500,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     }
     return buildConversationSummaryViaLlm({
       messages,
+      runSteps,
       mode,
       model: await spiritModelResolver({
         organizationId: messages[0].organizationId,

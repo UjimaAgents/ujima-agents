@@ -18,7 +18,7 @@ function buildTeam(input: {
   roleName: string;
   rolePreferredProvider: string;
   roleModel?: string;
-  providers: Record<string, { kind: string; defaultModel?: string; authMode?: 'chatgpt'; models?: string[] }>;
+  providers: Record<string, { kind: string; defaultModel?: string; authMode?: 'chatgpt' | 'claude-code'; models?: string[] }>;
 }) {
   const agent = { id: input.agentName, name: input.agentName, roleName: input.roleName };
   const role = {
@@ -115,6 +115,38 @@ describe('resolveSpiritModel', () => {
 
       expect(result.input.kind).toBe('openai-codex');
       expect(result.input.modelId).toBe('gpt-5.4-mini');
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses Claude Code when Anthropic has a local Claude login', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'ujima-claude-auth-'));
+    try {
+      vi.stubEnv('CLAUDE_CODE_HOME', homeDir);
+      const team = buildTeam({
+        agentName: 'agent-1',
+        roleName: 'engineer',
+        rolePreferredProvider: 'anthropic',
+        providers: {
+          anthropic: { kind: 'anthropic', defaultModel: 'claude-sonnet-4-6' },
+          'anthropic-claude-code': { kind: 'anthropic-claude-code', authMode: 'claude-code', defaultModel: 'claude-sonnet-4-6' },
+        },
+      });
+      const result = (await resolveSpiritModel({
+        organizationId: 'org-1',
+        memberId: 'agent-1',
+        role: 'worker',
+        member: { id: 'agent-1', name: 'agent-1', llm: 'anthropic', model: 'claude-sonnet-4-6' },
+        team,
+        getProviderCredential: () => null,
+        resolveProviderName: defaultResolveProviderName,
+        resolveModelId: defaultResolveModelId,
+        probeFallbackModel: probeOnly(),
+      })) as unknown as { input: { kind: string; apiKey: string } };
+
+      expect(result.input.kind).toBe('anthropic-claude-code');
+      expect(result.input.apiKey).toBe('claude-code-session');
     } finally {
       await rm(homeDir, { recursive: true, force: true });
     }

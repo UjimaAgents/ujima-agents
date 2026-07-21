@@ -526,41 +526,41 @@ export function useConversationSync(
   };
 }
 
-async function loadHistory(
+export async function loadHistory(
   organizationId: string,
   threadId: string,
   signal: AbortSignal,
 ): Promise<Message[]> {
   const messages: Message[] = [];
-  const params = new URLSearchParams({
-    organizationId,
-    threadId,
-    limit: "500",
-  });
+  let cursor: string | undefined;
 
-  const response = await fetch(`/api/conversations/history?${params.toString()}`, {
-    signal,
-  });
-  const body = await response.json().catch(() => null);
+  do {
+    const params = new URLSearchParams({ organizationId, threadId, limit: "500" });
+    if (cursor) params.set("cursor", cursor);
 
-  if (response.status === 404) return messages;
+    const response = await fetch(`/api/conversations/history?${params.toString()}`, { signal });
+    const body = await response.json().catch(() => null);
 
-  if (!response.ok) {
-    const message =
-      body && typeof body === "object" && "message" in body && typeof body.message === "string"
-        ? body.message
-        : "Unable to load conversation history.";
-    throw new Error(message);
-  }
+    if (response.status === 404) return messages;
+    if (!response.ok) {
+      const message =
+        body && typeof body === "object" && "message" in body && typeof body.message === "string"
+          ? body.message
+          : "Unable to load conversation history.";
+      throw new Error(message);
+    }
 
-  if (body && Array.isArray(body.data)) {
-    messages.push(
-      ...body.data.flatMap((item: unknown) => {
-        const parsed = MessageSchema.safeParse(item);
-        return parsed.success ? [parsed.data] : [];
-      }),
-    );
-  }
+    if (body && Array.isArray(body.data)) {
+      messages.unshift(
+        ...body.data.flatMap((item: unknown) => {
+          const parsed = MessageSchema.safeParse(item);
+          return parsed.success ? [parsed.data] : [];
+        }),
+      );
+    }
+
+    cursor = body?.hasMore && typeof body.nextCursor === "string" ? body.nextCursor : undefined;
+  } while (cursor);
 
   return messages;
 }

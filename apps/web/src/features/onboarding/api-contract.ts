@@ -26,6 +26,7 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
   "z.ai": "zhipu",
   "z-ai": "zhipu",
   "openai-codex": "openai-codex",
+  "anthropic-claude-code": "anthropic-claude-code",
 };
 
 export function normalizeProviderName(value: string) {
@@ -40,6 +41,7 @@ export function isProviderDraftComplete(provider: TeamProviderDraft): boolean {
     name &&
       (normalizeProviderName(name) === "ollama" ||
         normalizeProviderName(name) === "openai-codex" ||
+        normalizeProviderName(name) === "anthropic-claude-code" ||
         provider.apiKey.trim()),
   );
 }
@@ -65,7 +67,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: strin
       return {
         name,
         apiKey: provider.apiKey.trim(),
-        authMode: name === "openai-codex" ? ("chatgpt" as const) : undefined,
+        authMode: name === "openai-codex" ? ("chatgpt" as const) : name === "anthropic-claude-code" ? ("claude-code" as const) : undefined,
       };
     })
     .filter((provider) => provider.name.length > 0);

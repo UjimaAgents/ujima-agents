@@ -15,7 +15,7 @@ import type { AgentConfig, RoleConfig } from './schemas.js';
 export { SHARED_AGENT_SYSTEM_PROMPT } from '@ujima/shared';
 
 export const MESSAGE_TOOL_USAGE_GUIDANCE = [
-  'Most messages do not need a reply. If not addressed, not in your domain, or already handled, call channel.close with a specific reason/note and stop the session. Do not emit chat text alongside channel.close.',
+  'Most messages do not need a reply. In shared channels, reply when you are addressed, your role requires it, or you have a concrete contribution. If not addressed and not relevant, or already handled, call channel.close with a specific reason/note and stop the session. Do not emit chat text alongside channel.close.',
   'If you are @mentioned, finish required work first, then terminate with exactly one tool: use channel.reply for substantive content; use channel.close reason "ack" when no visible reply helps.',
   ...TERMINATING_TOOL_USAGE_GUIDANCE,
   'To hand work to another agent, use agent.manage and agent.delegate. Do not simulate handoffs in plain text.',

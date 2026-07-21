@@ -12,7 +12,7 @@ import {
   resolveUiProviderToken,
   resolveAuthMode,
   isOpenAIProvider,
-  type OpenAIAuthMode,
+  type ProviderAuthModeUI,
 } from "@/features/providers/catalog";
 import { ProviderCredentialField } from "@/features/providers/provider-credential-field";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
@@ -21,7 +21,7 @@ export function ProviderFormModal(props: {
   isOpen: boolean;
   onClose: () => void;
   usedProviderNames: Set<string>;
-  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode, baseUrl: string) => Promise<void>;
+  onSave: (name: string, apiKey: string, authMode: ProviderAuthModeUI, baseUrl: string) => Promise<void>;
   mode?: "add" | "update";
   initialName?: string;
   initialBaseUrl?: string;
@@ -41,18 +41,19 @@ function ProviderFormModalActive({
   isOpen: boolean;
   onClose: () => void;
   usedProviderNames: Set<string>;
-  onSave: (name: string, apiKey: string, authMode: OpenAIAuthMode, baseUrl: string) => Promise<void>;
+  onSave: (name: string, apiKey: string, authMode: ProviderAuthModeUI, baseUrl: string) => Promise<void>;
   mode?: "add" | "update";
   initialName?: string;
   initialBaseUrl?: string;
 }) {
   const [uiProvider, setUiProvider] = useState(resolveUiProviderToken(initialName));
-  const [authMode, setAuthMode] = useState<OpenAIAuthMode>(
+  const [authMode, setAuthMode] = useState<ProviderAuthModeUI>(
     resolveAuthMode(initialName) ?? "apikey",
   );
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [codexConnected, setCodexConnected] = useState(false);
+  const [claudeCodeConnected, setClaudeCodeConnected] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,8 +61,9 @@ function ProviderFormModalActive({
 
   const internalToken = resolveInternalProviderToken(uiProvider, authMode);
   const isCodexMode = internalToken === "openai-codex";
+  const isClaudeCodeMode = internalToken === "anthropic-claude-code";
   const canSave = Boolean(
-    internalToken && (apiKey.trim() || (isCodexMode && codexConnected) || (isUpdate && baseUrl.trim() !== initialBaseUrl.trim())),
+    internalToken && (apiKey.trim() || (isCodexMode && codexConnected) || (isClaudeCodeMode && claudeCodeConnected) || (isUpdate && baseUrl.trim() !== initialBaseUrl.trim())),
   );
 
   const handleClose = () => onClose();
@@ -94,12 +96,14 @@ function ProviderFormModalActive({
     setApiKey("");
     setBaseUrl("");
     setCodexConnected(false);
-    if (!isOpenAIProvider(next)) setAuthMode("apikey");
+    setClaudeCodeConnected(false);
+    setAuthMode("apikey");
   };
 
-  const handleAuthModeChange = (mode: OpenAIAuthMode) => {
+  const handleAuthModeChange = (mode: ProviderAuthModeUI) => {
     setAuthMode(mode);
     setCodexConnected(false);
+    setClaudeCodeConnected(false);
     if (mode === "codex") setBaseUrl("");
   };
 
@@ -131,7 +135,7 @@ function ProviderFormModalActive({
         {uiProvider ? (
           <div>
             <label className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {isOpenAIProvider(uiProvider) ? "Connection" : "API key"}
+              {isOpenAIProvider(uiProvider) || isClaudeCodeMode ? "Connection" : "API key"}
             </label>
             <div className="mt-2">
               <ProviderCredentialField
@@ -141,6 +145,7 @@ function ProviderFormModalActive({
                 authMode={authMode}
                 onAuthModeChange={isUpdate ? undefined : handleAuthModeChange}
                 onCodexConnectionChange={setCodexConnected}
+                onClaudeCodeConnectionChange={setClaudeCodeConnected}
               />
             </div>
           </div>

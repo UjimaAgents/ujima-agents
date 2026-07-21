@@ -29,7 +29,6 @@ export function useWorkflowRun(runId: string) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     getWorkflowRun(runId)
       .then((d) => !cancelled && setDetail(d))
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load run."))

@@ -47,8 +47,7 @@ describe('conversation-summary', () => {
     ]);
     expect(summary.startsWith(SELF_NOTE_SUMMARY_MARKER)).toBe(true);
     expect(summary).toContain('# Compacted 2 earlier self notes.');
-    expect(summary).toContain('> README-style compact summary -- your durable context from earlier in the conversation.');
-    expect(summary).toContain("> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.");
+    expect(summary).not.toContain('README-style compact summary');
     expect(summary).toContain('## What I was working on');
     expect(summary).toContain('## Decisions I made');
     expect(summary).toContain('## Important facts');
@@ -75,8 +74,47 @@ describe('conversation-summary', () => {
     });
 
     expect(summary).toContain('fix compaction');
+    expect(summary).not.toContain('- - Completed:');
     expect(streamText).toHaveBeenCalledTimes(1);
     expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it('includes persisted tool work in conversation summaries', async () => {
+    vi.mocked(generateText).mockResolvedValue({
+      text: JSON.stringify({
+        objective: ['fix billing'],
+        importantDetails: ['BillingService inspected'],
+        completed: ['read billing service'],
+        active: [],
+        blocked: [],
+        nextActions: ['patch billing service'],
+      }),
+    } as never);
+
+    await buildConversationSummaryViaLlm({
+      model: { provider: 'anthropic' } as never,
+      messages: [makeMessage('Working on billing.', '2026-05-08T09:41:00.000Z')],
+      runSteps: [{
+        id: 'step-1',
+        organizationId: 'org-1',
+        runId: 'run-1',
+        threadId: 'self:agent-1',
+        agentId: 'agent-1',
+        toolCallId: 'call-1',
+        toolId: 'filesystem.read',
+        action: 'read',
+        resourceType: 'file',
+        resourcePath: 'billing_service.py',
+        input: { path: 'billing_service.py' },
+        output: { content: 'class BillingService' },
+        status: 'ok',
+        createdAt: '2026-05-08T09:41:01.000Z',
+      }],
+    });
+
+    const prompt = vi.mocked(generateText).mock.calls[0]?.[0].prompt;
+    expect(prompt).toContain('filesystem.read');
+    expect(prompt).toContain('BillingService');
   });
 
   it('passes the rolling previous summary back into later summary chunks', async () => {
@@ -102,7 +140,7 @@ describe('conversation-summary', () => {
         }),
       } as never);
 
-    await buildConversationSummaryViaLlm({
+    const summary = await buildConversationSummaryViaLlm({
       model: { provider: 'anthropic' } as never,
       messages: Array.from({ length: 36 }, (_, index) =>
         makeMessage(`message-${index}`, `2026-05-08T09:${String(index).padStart(2, '0')}:00.000Z`),
@@ -113,6 +151,8 @@ describe('conversation-summary', () => {
     expect(vi.mocked(generateText).mock.calls[0]?.[0].system).not.toContain('PREVIOUS summary');
     expect(vi.mocked(generateText).mock.calls[1]?.[0].system).toContain('PREVIOUS summary');
     expect(vi.mocked(generateText).mock.calls[1]?.[0].system).toContain('"objective"');
+    expect(summary).toContain('second chunk');
+    expect(summary).not.toContain('first chunk');
     expect(streamText).not.toHaveBeenCalled();
   });
 

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 const MAX_CHARS = 24_384;
 
-const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)?\s+@@/;
+const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)?\s*@@/;
 
 type PatchLineKind = "meta" | "hunk" | "add" | "del" | "ctx";
 

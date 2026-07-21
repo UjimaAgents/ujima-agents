@@ -26,6 +26,7 @@ import { toModelToolErrorOutput, toModelToolOutput } from '../services/tool-loop
 import { isCompactionSummarySystemMessage } from '../services/conversation-summary.js';
 import { isPendingToolResult, messageToolCallsToModelMessages, sanitizeModelMessages } from './run-transcript.js';
 import { resolveOpenAIAccessToken } from './codex-auth.js';
+import { resolveAnthropicAccessToken } from './claude-code-auth.js';
 
 export function toModelMessages(
   messages: Message[],
@@ -336,7 +337,10 @@ export async function resolveSpiritModel(params: {
   ): { model: LanguageModel; modelId: string } | null => {
     const provider = params.team.getProvider(providerName);
     if (!provider) return null;
-    const apiKey = resolveOpenAIAccessToken({
+    const resolveAccessToken = providerName === 'anthropic-claude-code'
+      ? resolveAnthropicAccessToken
+      : resolveOpenAIAccessToken;
+    const apiKey = resolveAccessToken({
       providerName,
       authMode: provider.authMode,
       storedCredential: params.getProviderCredential(
@@ -391,6 +395,17 @@ export async function resolveSpiritModel(params: {
           `using configured "openai-codex" (${codex.modelId}).`,
       );
       return codex.model;
+    }
+  }
+
+  if (preferredKey === 'anthropic' && params.team.getProvider('anthropic-claude-code')) {
+    const claudeCode = buildForProvider('anthropic-claude-code', false);
+    if (claudeCode) {
+      console.warn(
+        `[model-resolver] member "${params.memberId}" preferred "anthropic" has no API key; ` +
+          `using configured "anthropic-claude-code" (${claudeCode.modelId}).`,
+      );
+      return claudeCode.model;
     }
   }
 

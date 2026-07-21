@@ -42,10 +42,10 @@ export const ProvidersTab = memo(function ProvidersTab({
     [configured],
   );
 
-  const saveProvider = useCallback(async (name: string, apiKey: string, authMode: "apikey" | "codex", baseUrl: string) => {
+  const saveProvider = useCallback(async (name: string, apiKey: string, authMode: "apikey" | "codex" | "claude-code", baseUrl: string) => {
     if (!orgId) return;
     const normalizedName = normalizeProviderKey(name);
-    const backendAuthMode = authMode === "codex" ? "chatgpt" : "apikey";
+    const backendAuthMode = authMode === "codex" ? "chatgpt" : authMode === "claude-code" ? "claude-code" : "apikey";
     const data = await settingsFetch<ProviderSecretsUpsertResponse>(
       "/api/settings/providers",
       {

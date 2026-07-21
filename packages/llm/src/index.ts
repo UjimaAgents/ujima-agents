@@ -8,3 +8,9 @@ export {
   getDefaultOpenAiCompatBaseUrl,
   type SelectLanguageModelInput,
 } from './select.js';
+export {
+  configureClaudeCodeTools,
+  createClaudeCodeModel,
+  type ClaudeCodeModelOptions,
+  type ClaudeCodeToolExecutor,
+} from './claude-code-sdk.js';

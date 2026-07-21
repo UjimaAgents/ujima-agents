@@ -16,6 +16,7 @@ import {
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   "openai-codex": "OpenAI Codex",
+  "anthropic-claude-code": "Claude Code",
   anthropic: "Anthropic",
   google: "Google",
 };
@@ -84,6 +85,14 @@ export function AgentChatHeaderControls({
     ) {
       const codexValue = `openai-codex::${parsed.model}`;
       if (modelOptions.some((option) => option.value === codexValue)) return codexValue;
+    }
+    if (
+      parsed?.provider === "anthropic" &&
+      !providers.some((provider) => provider.name === "anthropic" && provider.hasKey) &&
+      providers.some((provider) => provider.name === "anthropic-claude-code" && provider.hasKey)
+    ) {
+      const claudeCodeValue = `anthropic-claude-code::${parsed.model}`;
+      if (modelOptions.some((option) => option.value === claudeCodeValue)) return claudeCodeValue;
     }
     return rawSelectedModelValue;
   }, [modelOptions, providers, rawSelectedModelValue]);

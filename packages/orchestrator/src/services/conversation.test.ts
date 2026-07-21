@@ -9,13 +9,13 @@ import {
   decodeCursor,
   encodeCursor,
 } from '@ujima/shared';
-import type { Message } from '@ujima/shared';
+import type { Message, RunStep } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import { ConversationService } from './conversation.js';
 
 function createConversationFixture(options: {
   autoCompactConversations?: boolean;
-  summarizeConversation?: (messages: Message[], mode: 'summary' | 'archive') => Promise<string>;
+  summarizeConversation?: (messages: Message[], mode: 'summary' | 'archive', runSteps: RunStep[]) => Promise<string>;
   summarizeConversationTimeoutMs?: number;
 } = {}) {
   const organization = OrganizationSchema.parse({
@@ -616,6 +616,29 @@ describe('ConversationService @all mentions', () => {
     expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(503);
   });
 
+  it('does not compact while an agent run is still publishing progress', async () => {
+    const { repo, service } = createConversationFixture({ autoCompactConversations: true });
+    service.publishMessage({
+      id: 'progress-1',
+      organizationId: 'org-1',
+      threadId: 'general',
+      channelId: 'general',
+      senderId: 'agent-1',
+      senderKind: 'agent',
+      kind: 'agent',
+      content: 'x'.repeat(5_000),
+      metadata: { runId: 'run-1', runProgress: true },
+      mentions: [],
+      toolCalls: [],
+      attachments: [],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const messages = repo.listMessages('org-1', 'general').data;
+    expect(messages.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'))).toBe(false);
+    expect(messages[0]?.metadata?.compactedInto).toBeUndefined();
+  });
+
   it('clears conversation history through the AI archive summarizer', async () => {
     const summarizeConversation = vi.fn(async (_messages: Message[], mode: 'summary' | 'archive') =>
       `${mode === 'archive' ? '[[CONVERSATION_ARCHIVE_V1]]' : '[[CONVERSATION_SUMMARY_V2]]'} # AI summarized.`,
@@ -636,7 +659,7 @@ describe('ConversationService @all mentions', () => {
       mode: 'clear',
     });
 
-    expect(summarizeConversation).toHaveBeenCalledWith(expect.any(Array), 'archive');
+    expect(summarizeConversation).toHaveBeenCalledWith(expect.any(Array), 'archive', []);
     expect(result.summaryMessage?.content).toContain('[[CONVERSATION_ARCHIVE_V1]]');
     const source = repo.listMessages('org-1', 'general').data.find((message) => message.content === 'clear me');
     expect(source?.metadata?.compactedInto).toBe(result.summaryMessage?.id);

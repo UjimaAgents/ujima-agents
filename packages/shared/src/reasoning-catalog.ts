@@ -4,6 +4,7 @@ const PROVIDER_REASONING_EFFORTS: Record<string, readonly ReasoningEffort[]> = {
   anthropic: ['none', 'low', 'medium', 'high', 'extra_high'],
   openai: ['none', 'low', 'medium', 'high', 'extra_high'],
   'openai-codex': ['none', 'low', 'medium', 'high', 'extra_high'],
+  'anthropic-claude-code': ['none', 'low', 'medium', 'high', 'extra_high'],
   google: ['none', 'low', 'medium', 'high'],
 };
 

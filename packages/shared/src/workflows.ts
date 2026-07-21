@@ -464,7 +464,7 @@ export function validateWorkflowGraph(
   for (const edge of edges) {
     if (edge.targetPort !== "main") continue;
     if (!byId.has(edge.source) || !byId.has(edge.target)) continue;
-    mainAdj.get(edge.source)!.push(edge.target);
+    mainAdj.get(edge.source)?.push(edge.target);
   }
   if (hasCycle(mainAdj)) {
     issues.push({
@@ -626,8 +626,8 @@ function computeAncestors(adj: Map<string, string[]>): Map<string, Set<string>> 
   for (const id of adj.keys()) {
     const anc = new Set<string>();
     const stack = [...(reverse.get(id) ?? [])];
-    while (stack.length) {
-      const cur = stack.pop()!;
+    while (stack.length > 0) {
+      const cur = stack.pop() as string;
       if (anc.has(cur)) continue;
       anc.add(cur);
       for (const prev of reverse.get(cur) ?? []) stack.push(prev);

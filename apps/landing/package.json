@@ -1,6 +1,6 @@
 {
   "name": "landing",
-  "version": "0.0.65",
+  "version": "0.0.67",
   "private": true,
   "scripts": {
     "predev": "bun ../../scripts/free-port.ts ${LANDING_PORT:-3453}",
