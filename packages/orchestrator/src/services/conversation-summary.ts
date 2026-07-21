@@ -197,6 +197,20 @@ export interface LlmSummarizerInput {
   maxBullets?: number;
 }
 
+function mergeFacts(prev: ConversationSummaryFacts, next: ConversationSummaryFacts): ConversationSummaryFacts {
+  function union(a: string[], b: string[]): string[] {
+    return [...new Set([...a, ...b])];
+  }
+  return {
+    objective: next.objective.length > 0 ? next.objective : prev.objective,
+    importantDetails: union(prev.importantDetails, next.importantDetails),
+    completed: union(prev.completed, next.completed),
+    active: union(prev.active, next.active),
+    blocked: union(prev.blocked, next.blocked),
+    nextActions: union(prev.nextActions, next.nextActions),
+  };
+}
+
 export async function buildConversationSummaryViaLlm(
   input: LlmSummarizerInput,
 ): Promise<string> {
@@ -227,7 +241,9 @@ export async function buildConversationSummaryViaLlm(
       chunkCount: chunks.length,
       messageCount: entries.length,
     }, previousSummary);
-    facts = summary;
+    facts = facts
+      ? mergeFacts(facts, summary)
+      : summary;
     previousSummary = JSON.stringify(facts, null, 2);
   }
   if (!facts) throw new Error("Conversation summarization produced no result.");

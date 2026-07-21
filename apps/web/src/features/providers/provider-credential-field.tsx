@@ -119,6 +119,8 @@ export function ProviderCredentialField({
             setClaudeCodeState("idle");
             onClaudeCodeConnectionChange?.(false);
           }
+        } else {
+          if (active) setClaudeCodeState("idle");
         }
       } catch {
         if (active) setClaudeCodeState("idle");

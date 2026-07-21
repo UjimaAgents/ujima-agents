@@ -97,7 +97,7 @@ function ProviderFormModalActive({
     setBaseUrl("");
     setCodexConnected(false);
     setClaudeCodeConnected(false);
-    if (!isOpenAIProvider(next)) setAuthMode("apikey");
+    setAuthMode("apikey");
   };
 
   const handleAuthModeChange = (mode: ProviderAuthModeUI) => {
