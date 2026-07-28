@@ -1,7 +1,55 @@
-import { generateText } from 'ai';
+import { generateText, streamText } from 'ai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { codexTerminalError, createCodexResponsesModel, stableCodexSessionId } from './codex-responses.js';
 import { selectLanguageModel } from './select.js';
+
+const FailingWebSocket = vi.hoisted(() => class {
+  static OPEN = 1;
+  readyState = 0;
+  private listeners = new Map<string, Set<(...args: any[]) => void>>();
+
+  constructor() {
+    queueMicrotask(() => this.emit('error', new Error('socket unavailable')));
+  }
+
+  once(event: string, listener: (...args: any[]) => void): this {
+    const once = (...args: any[]) => {
+      this.off(event, once);
+      listener(...args);
+    };
+    return this.on(event, once);
+  }
+
+  on(event: string, listener: (...args: any[]) => void): this {
+    const listeners = this.listeners.get(event) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(event, listeners);
+    return this;
+  }
+
+  off(event: string, listener: (...args: any[]) => void): this {
+    this.listeners.get(event)?.delete(listener);
+    return this;
+  }
+
+  terminate(): void {
+    this.readyState = 3;
+  }
+
+  close(): void {
+    this.readyState = 3;
+  }
+
+  send(_payload: string, callback?: (error?: Error) => void): void {
+    callback?.();
+  }
+
+  private emit(event: string, ...args: any[]): void {
+    for (const listener of this.listeners.get(event) ?? []) listener(...args);
+  }
+});
+
+vi.mock('ws', () => ({ default: FailingWebSocket }));
 
 describe('stableCodexSessionId', () => {
   it('returns a valid UUID-shaped session id', () => {
@@ -177,6 +225,27 @@ describe('createCodexResponsesModel', () => {
     expect(requestBody.input.some((item: any) => item.id === 'rs_old')).toBe(false);
     expect(requestBody.input.some((item: any) => item.id === 'msg_old')).toBe(false);
     expect(requestBody.input.some((item: any) => item.type === 'reasoning')).toBe(false);
+  });
+
+  it('falls back to HTTP streaming when WebSocket never opens', async () => {
+    vi.stubGlobal('fetch', async () => new Response(
+      [
+        'data: {"type":"response.created","response":{"id":"resp_http","created_at":1,"model":"gpt-5.4-mini"}}\n\n',
+        'data: {"type":"response.output_text.delta","item_id":"msg_http","delta":"http fallback"}\n\n',
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":2}}}\n\n',
+        'data: [DONE]\n\n',
+      ].join(''),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ));
+
+    const model = createCodexResponsesModel({
+      modelId: 'gpt-5.4-mini',
+      accessToken: 'token',
+      baseUrl: 'https://codex.test/backend-api/codex',
+    });
+
+    const result = streamText({ model, prompt: 'hi' });
+    expect(await result.text).toBe('http fallback');
   });
 
   it('forwards reasoning settings for openai-codex like the normal openai path', async () => {

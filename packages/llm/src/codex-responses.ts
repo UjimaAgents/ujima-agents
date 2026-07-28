@@ -126,7 +126,14 @@ async function fetchCodex(
   const target = shouldUseOpenAIResponsesSocket(request, init);
   const url = new URL(request instanceof Request ? request.url : String(request));
   if (!target) return logNonOkResponse(url, await fetch(request, init));
-  return streamSocket(target.url, init?.headers, pool, target.body, init?.signal ?? undefined);
+  return streamSocket(
+    target.url,
+    init?.headers,
+    pool,
+    target.body,
+    init?.signal ?? undefined,
+    async () => logNonOkResponse(url, await fetch(request, init)),
+  );
 }
 
 async function logNonOkResponse(url: URL, response: Response): Promise<Response> {
@@ -234,6 +241,7 @@ function streamSocket(
   pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void },
   body: OpenAIResponsesRequestBody,
   signal: AbortSignal | undefined,
+  fallback: () => Promise<Response>,
 ): Response {
   const encoder = new TextEncoder();
   let done = false;
@@ -286,6 +294,28 @@ function streamSocket(
         cleanup();
         invalidate();
         socket?.terminate();
+        if (frameCount === 0 && !signal?.aborted) {
+          void fallback().then(async (response) => {
+            if (!response.ok || !response.body) {
+              controller.error(error);
+              return;
+            }
+            try {
+              const reader = response.body.getReader();
+              while (true) {
+                const next = await reader.read();
+                if (next.done) break;
+                controller.enqueue(next.value);
+              }
+              controller.close();
+            } catch (fallbackError) {
+              controller.error(fallbackError instanceof Error ? fallbackError : error);
+            }
+          }).catch((fallbackError) => {
+            controller.error(fallbackError instanceof Error ? fallbackError : error);
+          });
+          return;
+        }
         controller.error(error);
       };
       const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {

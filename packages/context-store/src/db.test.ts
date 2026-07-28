@@ -102,6 +102,18 @@ describe('database migrations', () => {
         tool_calls TEXT NOT NULL DEFAULT '[]'
       );
 
+      CREATE TABLE runs (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        thread_id TEXT,
+        status TEXT NOT NULL,
+        step TEXT NOT NULL DEFAULT '',
+        summary TEXT NOT NULL DEFAULT '',
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+      );
+
       -- Tables introduced by 004_additive_ports. The fixture is hand-
       -- rolled so each migration we mark "applied" must have its
       -- artefacts present, otherwise later migrations that ALTER one

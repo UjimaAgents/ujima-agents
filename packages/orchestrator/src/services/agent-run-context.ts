@@ -55,6 +55,7 @@ export interface RunContext {
 export function visibleHistoryRunSteps(input: {
   repo: ApiRepository;
   organizationId: string;
+  threadId: string;
   historyMessages: readonly Message[];
   currentRunId: string;
 }): RunStep[] {
@@ -66,6 +67,15 @@ export function visibleHistoryRunSteps(input: {
     if (!runId || runId === input.currentRunId) continue;
     runIds.add(runId);
   }
+  // Crashed runs can persist tool steps before publishing progress messages.
+  // Recover recent interrupted same-thread runs so next wake keeps context.
+  const recoverableRuns = input.repo
+    .listThreadRuns(input.organizationId, input.threadId, undefined, 10)
+    .data
+    .filter((run) => run.id !== input.currentRunId && run.status !== 'completed')
+    .slice(0, 3);
+  for (const run of recoverableRuns) runIds.add(run.id);
+
   for (const runId of runIds) {
     for (const step of input.repo.listRunSteps(input.organizationId, runId)) {
       if (seen.has(step.toolCallId)) continue;
@@ -157,7 +167,13 @@ export async function buildRunContext(input: RunContextInput): Promise<RunContex
   }
 
   const runSteps = [
-    ...visibleHistoryRunSteps({ repo, organizationId, historyMessages: promptHistoryMessages, currentRunId: runId }),
+    ...visibleHistoryRunSteps({
+      repo,
+      organizationId,
+      threadId,
+      historyMessages: promptHistoryMessages,
+      currentRunId: runId,
+    }),
     ...(repo.listRunSteps?.(organizationId, runId) ?? []),
   ];
   const messages = buildPromptMessages({

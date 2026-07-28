@@ -128,4 +128,32 @@ describe('OpenAIResponsesLanguageModel', () => {
     expect(parts.some((part) => part.type === 'finish' && part.usage.outputTokens.reasoning === 3)).toBe(true);
     expect(parts.some((part) => part.type === 'finish' && part.providerMetadata?.openai?.serviceTier === 'priority')).toBe(true);
   });
+
+  it('emits text when Codex sends it only on output_item.done', async () => {
+    const model = new OpenAIResponsesLanguageModel('gpt-5.4-mini', {
+      url: 'https://codex.test/backend-api/codex/responses',
+      fetch: async () => new Response(
+        [
+          'data: {"type":"response.created","response":{"id":"resp_2","created_at":1,"model":"gpt-5.4-mini"}}\n\n',
+          'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","id":"msg_2","content":[{"type":"output_text","text":"I will inspect the files first.","annotations":[]}]}}\n\n',
+          'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":5}}}\n\n',
+          'data: [DONE]\n\n',
+        ].join(''),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      ),
+    });
+
+    const result = await model.doStream({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'inspect' }] }],
+    });
+    const reader = result.stream.getReader();
+    const parts: any[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+    }
+
+    expect(parts.some((part) => part.type === 'text-delta' && part.delta === 'I will inspect the files first.')).toBe(true);
+  });
 });

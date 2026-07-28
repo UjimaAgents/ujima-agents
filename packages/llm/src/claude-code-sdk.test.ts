@@ -50,7 +50,7 @@ describe('Claude Code SDK model', () => {
           const server = (input.options?.mcpServers as Record<string, { instance?: { _registeredTools?: Record<string, { handler: (...args: unknown[]) => unknown }> } }> | undefined)?.ujima?.instance;
           const toolHandler = server?._registeredTools?.ping?.handler;
           if (!toolHandler) throw new Error('MCP tool was not registered');
-          const toolResult = await toolHandler({ value: 'x' }, { toolUseId: 'call-1' });
+          const toolResult = await toolHandler({ value: 'x' }, { toolUseId: 'call-1' }) as { content?: unknown };
           yield {
             type: 'assistant',
             message: { content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ujima__ping', input: { value: 'x' } }] },

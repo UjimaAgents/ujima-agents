@@ -715,6 +715,20 @@ function handleStreamEvent(
         state.hasToolCall = true;
       } else if (current.item.type === 'message') {
         for (const part of current.item.content) {
+          if (part.type === 'output_text' && !state.textOpen.has(current.item.id)) {
+            state.textOpen.add(current.item.id);
+            controller.enqueue({
+              type: 'text-start',
+              id: current.item.id,
+              providerMetadata: openaiMeta({ itemId: current.item.id }),
+            });
+            controller.enqueue({
+              type: 'text-delta',
+              id: current.item.id,
+              delta: part.text,
+              providerMetadata: openaiMeta({ itemId: current.item.id }),
+            });
+          }
           for (const source of annotationsToSources(part.annotations)) {
             controller.enqueue(source);
           }
