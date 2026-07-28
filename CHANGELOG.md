@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.69] - 2026-07-28
+
+### Fixed
+
+- Load the ESM Claude Agent SDK outside the CommonJS release bundle so `ujima start` works on Node.
+
 ## [0.0.68] - 2026-07-28
 
 ### Fixed
