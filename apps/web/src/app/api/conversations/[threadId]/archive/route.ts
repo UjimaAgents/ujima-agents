@@ -34,7 +34,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ thr
         body: JSON.stringify({ organizationId, mode }),
       },
       await getSessionTokenFromCookie(),
-      { timeoutMs: 60_000 },
+      { timeoutMs: null },
     );
     const body = await response.json().catch(() => null);
 

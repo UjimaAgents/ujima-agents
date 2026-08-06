@@ -17,6 +17,7 @@ export interface RunStore {
     cursor?: string,
     limit?: number,
   ): PaginatedRuns;
+  listRunsByIds?(organizationId: string, runIds: readonly string[]): RunState[];
   findActiveRunForMemberThread(
     organizationId: string,
     memberId: string,
@@ -24,5 +25,10 @@ export interface RunStore {
   ): RunState | null;
   saveRunStep(step: RunStep): RunStep;
   listRunSteps(organizationId: string, runId: string): RunStep[];
+  listRunStepsByRunIds?(
+    organizationId: string,
+    runIds: readonly string[],
+    limit?: number,
+  ): RunStep[];
   listActiveRuns(organizationId: string): RunState[];
 }

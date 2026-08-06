@@ -33,6 +33,8 @@ export interface ParsedConnectorScope {
   serverDisplayName: string;
   toolName: string;
   argsPreview: string;
+  /** Hash of the unredacted arguments. Never rendered or persisted in clear. */
+  argsFingerprint?: string;
 }
 
 function stringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -123,7 +125,7 @@ export function stripApprovalScopeDisplayFields(scope: string): string {
     if (!payload.startsWith('{')) return scope;
     try {
       const parsed = JSON.parse(payload) as Record<string, unknown>;
-      const { argsPreview: _preview, ...rest } = parsed;
+      const { serverDisplayName: _displayName, ...rest } = parsed;
       return `connector:${JSON.stringify(rest)}`;
     } catch {
       return scope;
@@ -330,6 +332,7 @@ export function parseConnectorScope(scope: string): ParsedConnectorScope | null 
   const serverDisplayName = stringField(record, 'serverDisplayName', 'server_display_name', 'server');
   const toolName = stringField(record, 'toolName', 'tool_name', 'tool');
   const argsPreview = stringField(record, 'argsPreview', 'args_preview', 'args');
+  const argsFingerprint = stringField(record, 'argsFingerprint', 'args_fingerprint');
   // serverDisplayName is display-only and is intentionally neutralized to ''
   // by canonicalizeApprovalScope (grants key on serverId+toolName). Requiring
   // it here would make the canonical form unparseable — re-canonicalizing
@@ -343,6 +346,7 @@ export function parseConnectorScope(scope: string): ParsedConnectorScope | null 
     serverDisplayName: serverDisplayName ?? '',
     toolName,
     argsPreview: argsPreview ?? '',
+    ...(argsFingerprint ? { argsFingerprint } : {}),
   };
 }
 
@@ -358,6 +362,7 @@ export function buildConnectorScope(input: ParsedConnectorScope): string {
     serverDisplayName: input.serverDisplayName,
     toolName: input.toolName,
     argsPreview: input.argsPreview,
+    ...(input.argsFingerprint ? { argsFingerprint: input.argsFingerprint } : {}),
   })}`;
 }
 
@@ -565,9 +570,42 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
 
   const filesystem = parseFilesystemScope(scope) ?? parseWorkspaceWriteScope(scope);
   if (filesystem) {
+    const operation = scope.startsWith('write:')
+      ? 'write'
+      : scope.startsWith('edit:')
+        ? 'edit'
+        : scope.startsWith('multiedit:')
+          ? 'multiedit'
+          : 'filesystem';
+    if (!family && operation !== 'filesystem') {
+      const normalizedScope = stripApprovalScopeDisplayFields(scope);
+      const payload = normalizedScope.slice(`${operation}:`.length);
+      if (payload.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(payload) as Record<string, unknown>;
+          const { startLine: _startLine, ...details } = parsed;
+          return `filesystem:${stableJson({
+            action: filesystem.action,
+            resourcePath: normalizeApprovalPath(filesystem.resourcePath),
+            operation,
+            details,
+          })}`;
+        } catch {
+          /* fall through to the parsed filesystem shape */
+        }
+      }
+    }
     return `filesystem:${JSON.stringify({
       action: filesystem.action,
       resourcePath: normalizeApprovalPath(filesystem.resourcePath),
+      ...(!family && operation === 'filesystem'
+        ? {
+            ...(filesystem.offset !== undefined ? { offset: filesystem.offset } : {}),
+            ...(filesystem.limit !== undefined ? { limit: filesystem.limit } : {}),
+            ...(filesystem.patch !== undefined ? { patch: filesystem.patch } : {}),
+            ...(filesystem.content !== undefined ? { content: filesystem.content } : {}),
+          }
+        : {}),
     })}`;
   }
 
@@ -577,7 +615,10 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
       serverId: connector.serverId,
       serverDisplayName: '',
       toolName: connector.toolName,
-      argsPreview: '',
+      argsPreview: family ? '' : connector.argsPreview,
+      ...(!family && connector.argsFingerprint
+        ? { argsFingerprint: connector.argsFingerprint }
+        : {}),
     });
   }
 
@@ -636,6 +677,15 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
   }
 
   return scope;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (!value || typeof value !== 'object') return JSON.stringify(value);
+  return `{${Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+    .join(',')}}`;
 }
 
 /** Browser-safe posix-style path normalization (no node:path — shared ships to webview). */

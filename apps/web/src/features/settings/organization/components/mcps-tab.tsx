@@ -5,11 +5,11 @@ import { useCallback, useEffect, useMemo, useState, memo } from "react";
 import type {
   AgentMcpAttachmentsResponse,
   McpServerListResponse,
-  McpToolsResponse,
   TestMcpResponse,
 } from "@ujima/api-schema";
 import type { AgentMcpAttachment, McpServerPublic, Member } from "@ujima/shared";
 import { Select } from "@/components/ui/select";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { useSettingsPage } from "@/features/settings/shared/settings-workspace-context";
 import { SettingsErrorAlert } from "@/features/settings/shared/settings-alert";
@@ -82,6 +82,7 @@ export const McpsTab = memo(function McpsTab({
   const activeAgentId = attachAgentId || agents[0]?.id || "";
   const [attachments, setAttachments] = useState<AgentMcpAttachment[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const { workspaces: suggestionWorkspaces, fetching: fetchingSuggestions } = useWorkspaceSuggestions(orgId);
 
@@ -128,21 +129,6 @@ export const McpsTab = memo(function McpsTab({
     return JSON.stringify({ mcpServers: configs }, null, 2);
   }
 
-  const loadToolCount = useCallback(
-    async (serverId: string) => {
-      try {
-        const data = await settingsFetch<McpToolsResponse>(
-          `/api/settings/mcps/${encodeURIComponent(serverId)}/tools?organizationId=${encodeURIComponent(orgId)}`,
-          undefined,
-          "Failed to load tools.",
-        );
-        setToolCounts((prev) => ({ ...prev, [serverId]: data.tools.length }));
-        setToolsByServer((prev) => ({ ...prev, [serverId]: data.tools }));
-      } catch {}
-    },
-    [orgId],
-  );
-
   const refreshServers = useCallback(async () => {
     const data = await settingsFetch<McpServerListResponse>(
       `/api/settings/mcps?organizationId=${encodeURIComponent(orgId)}`,
@@ -150,10 +136,7 @@ export const McpsTab = memo(function McpsTab({
       "Failed to refresh MCP servers.",
     );
     setMcpServers(data.servers);
-    await Promise.all(
-      data.servers.filter((s) => s.lastTestedAt).map((s) => loadToolCount(s.id)),
-    );
-  }, [orgId, setMcpServers, loadToolCount]);
+  }, [orgId, setMcpServers]);
 
   const loadAttachments = useCallback(
     async (agentId: string) => {
@@ -184,23 +167,6 @@ export const McpsTab = memo(function McpsTab({
     };
   }, [orgId, activeAgentId, loadAttachments]);
 
-  // Backfill tool-counts for previously tested servers on first mount.
-  useEffect(() => {
-    let ignore = false;
-    queueMicrotask(() => {
-      if (ignore) return;
-      for (const s of servers) {
-        if (s.lastTestedAt && toolCounts[s.id] == null) {
-          void loadToolCount(s.id);
-        }
-      }
-    });
-    return () => {
-      ignore = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [servers]);
-
   const deleteServer = useCallback(async (serverId: string) => {
     setError(null);
     setBusy(`delete:${serverId}`);
@@ -213,6 +179,7 @@ export const McpsTab = memo(function McpsTab({
       setMcpServers(servers.filter((s) => s.id !== serverId));
       if (activeAgentId) await loadAttachments(activeAgentId);
       await catalog.refresh();
+      setDeleteTarget(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete MCP server.");
     } finally {
@@ -382,8 +349,8 @@ export const McpsTab = memo(function McpsTab({
                             <SettingsBadge variant={statusVariant(server.status)}>{server.status}</SettingsBadge>
                             <SettingsBadge>{server.transport}</SettingsBadge>
                             <span>
-                              {toolCounts[server.id] != null
-                                ? `${toolCounts[server.id]} tools`
+                              {(catalog.catalogByServer[server.id]?.toolCount ?? toolCounts[server.id]) != null
+                                ? `${catalog.catalogByServer[server.id]?.toolCount ?? toolCounts[server.id]} tools`
                                 : "Not tested"}
                             </span>
                           </span>
@@ -418,7 +385,7 @@ export const McpsTab = memo(function McpsTab({
                             <SettingsGhostIconButton
                               title="Delete server"
                               disabled={busy === `delete:${server.id}`}
-                              onClick={() => void deleteServer(server.id)}
+                              onClick={() => setDeleteTarget(server.id)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </SettingsGhostIconButton>
@@ -624,6 +591,17 @@ export const McpsTab = memo(function McpsTab({
           }}
         />
       ) : null}
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete MCP server"
+        message={`Delete "${servers.find((s) => s.id === deleteTarget)?.name ?? "this server"}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        busy={deleteTarget ? busy === `delete:${deleteTarget}` : false}
+        onConfirm={() => {
+          if (deleteTarget) void deleteServer(deleteTarget);
+        }}
+      />
     </>
   );
 });

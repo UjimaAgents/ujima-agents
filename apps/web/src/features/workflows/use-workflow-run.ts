@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkflowTransitionAction } from "@ujima/shared";
+import { usePolling } from "@/hooks/use-polling";
 import { getWorkflowRun, transitionWorkflowRun, type WorkflowRunDetail } from "./use-workflows";
 
 const ACTIVE_STATUSES = new Set(["running", "awaiting_approval"]);
@@ -16,34 +17,44 @@ export function useWorkflowRun(runId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     try {
-      setDetail(await getWorkflowRun(runId));
+      const next = await getWorkflowRun(runId);
+      if (sequence !== loadSequence.current) return;
+      setDetail(next);
+      setError(null);
     } catch (err) {
+      if (sequence !== loadSequence.current) return;
       setError(err instanceof Error ? err.message : "Failed to load run.");
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [runId]);
 
   useEffect(() => {
     let cancelled = false;
-    getWorkflowRun(runId)
-      .then((d) => !cancelled && setDetail(d))
-      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load run."))
-      .finally(() => !cancelled && setLoading(false));
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setDetail(null);
+      setError(null);
+      setLoading(true);
+      void load();
+    });
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [runId, load]);
 
-  // Poll while the run is active so status/steps stay live.
-  useEffect(() => {
-    if (!detail || !ACTIVE_STATUSES.has(detail.run.status)) return;
-    const timer = setInterval(() => void load(), 2500);
-    return () => clearInterval(timer);
-  }, [detail, load]);
+  // Poll while the run is active so status/steps stay live. The hook prevents
+  // overlap and pauses hidden tabs.
+  usePolling(load, {
+    intervalMs: 2500,
+    enabled: Boolean(detail && ACTIVE_STATUSES.has(detail.run.status)),
+    immediate: false,
+  });
 
   const act = useCallback(
     async (action: WorkflowTransitionAction) => {

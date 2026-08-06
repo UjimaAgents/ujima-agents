@@ -52,6 +52,30 @@ export function listRunSteps(
   return rows.map(rowToRunStep);
 }
 
+export function listRunStepsByRunIds(
+  db: DbHandle,
+  organizationId: string,
+  runIds: readonly string[],
+  limit = 60,
+): RunStep[] {
+  if (runIds.length === 0) return [];
+  const placeholders = runIds.map(() => '?').join(', ');
+  const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+  const rows = db
+    .prepare(
+      `SELECT * FROM (
+         SELECT run_steps.*,
+           ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY created_at DESC, id DESC) AS row_num
+         FROM run_steps
+         WHERE organization_id = ? AND run_id IN (${placeholders})
+       )
+       WHERE row_num <= ?
+       ORDER BY run_id, created_at ASC, id ASC`,
+    )
+    .all(organizationId, ...runIds, boundedLimit) as Row[];
+  return rows.map(rowToRunStep);
+}
+
 function rowToRunStep(row: Row): RunStep {
   return RunStepSchema.parse({
     id: rowString(row, 'id'),

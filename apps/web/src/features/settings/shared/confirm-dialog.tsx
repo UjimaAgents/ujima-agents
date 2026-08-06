@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertCircle } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 
 export function ConfirmDialog({
@@ -11,6 +12,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   variant = "default",
   busy = false,
+  errorMessage,
   onConfirm,
 }: {
   isOpen: boolean;
@@ -21,6 +23,7 @@ export function ConfirmDialog({
   cancelLabel?: string;
   variant?: "default" | "primary";
   busy?: boolean;
+  errorMessage?: string;
   onConfirm: () => void | Promise<void>;
 }) {
   const confirmClass =
@@ -31,6 +34,15 @@ export function ConfirmDialog({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} contentClassName="max-w-sm">
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{message}</p>
+      {errorMessage ? (
+        <div
+          role="alert"
+          className="mt-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <p className="min-w-0 break-words">{errorMessage}</p>
+        </div>
+      ) : null}
       <div className="mt-6 flex justify-end gap-3">
         <button
           type="button"

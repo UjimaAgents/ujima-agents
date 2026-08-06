@@ -2,6 +2,7 @@ export const UJIMA_VERSION = "0.1.0-alpha.0";
 export * from "./provider-kinds.js";
 export * from "./types.js";
 export * from "./messages.js";
+export * from "./conversation-markers.js";
 export {
   EMPTY_ACTIVITY_FILTER,
   appendEvents,

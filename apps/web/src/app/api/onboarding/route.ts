@@ -12,6 +12,12 @@ import { daemonFetch, setSessionCookie } from "@/server/ujima-daemon";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  if (!isSameOrigin(request)) {
+    return NextResponse.json(
+      { code: "ERR_FORBIDDEN", message: "Invalid request origin." },
+      { status: 403 },
+    );
+  }
   try {
     const payload = (await request.json().catch(() => null)) as Partial<OnboardingRequest> | null;
     if (
@@ -63,12 +69,17 @@ export async function POST(request: Request) {
     const nextResponse = NextResponse.json(stripSessionToken(body), { status: response.status });
     setSessionCookie(nextResponse, body.sessionToken, body.auth.session.expiresAt);
     return nextResponse;
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       upstreamUnavailable(
-        error instanceof Error ? error.message : "Unable to submit onboarding to the Ujima daemon.",
+        "Unable to submit onboarding to the Ujima daemon.",
       ),
       { status: 503 },
     );
   }
+}
+
+function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  return !origin || origin === new URL(request.url).origin;
 }

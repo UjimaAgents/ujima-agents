@@ -1142,7 +1142,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     archiveStore: retention,
     onMemberAlerted: (input) => wakeMember(input),
     onMessagePublished: (msg) => handleMessagePublished?.(msg),
-    summarizeConversation: (messages, mode, runSteps) => summarizeConversation(messages, mode, runSteps),
+    summarizeConversation: (messages, mode, runSteps, signal) => summarizeConversation(messages, mode, runSteps, signal),
     autoCompactConversations: true,
     contextWindowTokens: (organizationId, threadId) => {
       const thread = threadId ? context.repo.getThread(organizationId, threadId) : null;
@@ -1487,7 +1487,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const spiritModelResolver =
     context.spiritModelResolver ??
     createSpiritModelResolver(context.teamStore, context.repo);
-  summarizeConversation = async (messages, mode, runSteps) => {
+  summarizeConversation = async (messages, mode, runSteps, abortSignal) => {
     const agent = [...messages]
       .reverse()
       .map((message) => context.repo.getMember(message.organizationId, message.senderId))
@@ -1502,6 +1502,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       messages,
       runSteps,
       mode,
+      abortSignal,
       model: await spiritModelResolver({
         organizationId: messages[0].organizationId,
         memberId: agent.id,

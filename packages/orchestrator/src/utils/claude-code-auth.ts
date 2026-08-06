@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,12 +16,27 @@ function resolveClaudeHome(): string {
 
 export function hasClaudeCodeLogin(): boolean {
   try {
-    // Claude Code stores credentials in ~/.claude/ after `claude auth login`
-    const claudeDir = resolveClaudeHome();
-    return existsSync(claudeDir);
+    const claudeHome = resolveClaudeHome();
+    for (const file of [join(claudeHome, '.credentials.json'), join(claudeHome, 'credentials.json')]) {
+      if (!existsSync(file)) continue;
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+      if (containsCredentialToken(parsed)) return true;
+    }
+    return false;
   } catch {
     return false;
   }
+}
+
+function containsCredentialToken(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(access[_-]?token|refresh[_-]?token|token)$/i.test(key) && typeof child === 'string' && child.trim()) {
+      return true;
+    }
+    if (containsCredentialToken(child)) return true;
+  }
+  return false;
 }
 
 export function resolveAnthropicAccessToken(params: {

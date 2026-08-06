@@ -130,7 +130,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   zhipu: "glm-4.5",
   "openai-codex": "gpt-5.4",
   "anthropic-claude-code": "claude-sonnet-4-6",
-  openrouter: "openai/gpt-4o",
+  openrouter: "openai/gpt-5.4",
   ollama: "llama3.1",
 };
 

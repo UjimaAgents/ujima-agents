@@ -1,6 +1,6 @@
 {
   "name": "@ujima/api",
-  "version": "0.0.67",
+  "version": "0.0.70",
   "private": true,
   "main": "./dist/main.js",
   "bin": {

@@ -423,6 +423,11 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'multiedit',
         'shell',
         'web_search',
+        'workflow.advance',
+        'workflow.list',
+        'workflow.run',
+        'workflow.transition',
+        'workflow.view',
         'write',
       ].sort(),
     );

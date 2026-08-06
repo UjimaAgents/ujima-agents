@@ -1,11 +1,19 @@
 import { execFile } from "node:child_process";
 import { NextResponse } from "next/server";
+import { daemonFetch } from "@/server/ujima-daemon";
 
 export const dynamic = "force-dynamic";
 
 type PickOutcome = { path: string } | { cancelled: true };
+let lastPickAt = 0;
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (!isSameOrigin(request)) {
+    return NextResponse.json({ code: "ERR_FORBIDDEN", message: "Invalid request origin." }, { status: 403 });
+  }
+  if (Date.now() - lastPickAt < 5_000) {
+    return NextResponse.json({ code: "ERR_RATE_LIMIT", message: "Please wait before opening another folder picker." }, { status: 429 });
+  }
   if (process.env.VERCEL) {
     return NextResponse.json(
       {
@@ -18,16 +26,22 @@ export async function POST() {
   }
 
   try {
+    const bootstrap = await daemonFetch("/api/bootstrap");
+    const state = await bootstrap.json().catch(() => null) as { onboardingStatus?: string; organizations?: unknown[] } | null;
+    if (!bootstrap.ok || state?.onboardingStatus !== "pending" || (state.organizations?.length ?? 0) > 0) {
+      return NextResponse.json({ code: "ERR_ONBOARDING_COMPLETE", message: "Complete workspace setup is unavailable." }, { status: 409 });
+    }
+    lastPickAt = Date.now();
     const outcome = await pickWorkspaceFolder();
     if ("cancelled" in outcome) {
       return NextResponse.json({ cancelled: true }, { status: 200 });
     }
     return NextResponse.json({ path: outcome.path }, { status: 200 });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         code: "ERR_PICK_WORKSPACE_ROOT",
-        message: error instanceof Error ? error.message : "Unable to open folder picker.",
+        message: "Unable to open folder picker.",
       },
       { status: 500 },
     );
@@ -117,8 +131,9 @@ function execFileOutcome(
       command,
       args as string[],
       { timeout: 120_000, maxBuffer: 1024 * 1024, ...options },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         const text = stdout.toString().trim();
+        const errorText = stderr.toString().trim();
         if (error) {
           const code = (error as NodeJS.ErrnoException).code;
           if (code === "ENOENT") {
@@ -133,11 +148,11 @@ function execFileOutcome(
             );
             return;
           }
-          if (!text) {
+          if (!text && ((command === "osascript" && /user canceled|user cancelled/i.test(errorText)) || (!errorText && code === "1"))) {
             resolve({ cancelled: true });
             return;
           }
-          reject(error);
+          reject(new Error(errorText || `Folder picker failed (${command}).`));
           return;
         }
         if (!text) {
@@ -148,4 +163,9 @@ function execFileOutcome(
       },
     );
   });
+}
+
+function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  return !origin || origin === new URL(request.url).origin;
 }

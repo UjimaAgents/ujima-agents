@@ -1,4 +1,4 @@
-import type { Message, RunStep } from '@ujima/shared';
+import { hasAnyMessageMarker, type Message, type RunStep } from '@ujima/shared';
 import type { PublishMessageOptions } from './conversation-types.js';
 import { buildSystemMessage } from './message-factory.js';
 import { filterVisibleMessages } from '../utils/message-visibility.js';
@@ -11,7 +11,6 @@ import {
   SELF_NOTE_COMPACTED_MARKER,
   SELF_NOTE_SUMMARY_MARKER,
   buildSelfNoteSummary,
-  isCompactionSummarySystemMessage,
   isSelfSummaryNote,
 } from './conversation-summary.js';
 import { isCompactedSourceMessage } from '../utils/message-visibility.js';
@@ -51,21 +50,22 @@ export interface CompactionContext {
     attachmentIds?: undefined,
     options?: PublishMessageOptions,
   ): Message;
-  summarizeConversation(messages: Message[], mode: 'summary' | 'archive', runSteps: RunStep[]): Promise<string>;
+  summarizeConversation(messages: Message[], mode: 'summary' | 'archive', runSteps: RunStep[], signal?: AbortSignal): Promise<string>;
   contextWindowTokens(organizationId: string, threadId: string): number;
 }
 
-export function compactSelfNotesIfNeeded(
+export async function compactSelfNotesIfNeeded(
   ctx: CompactionContext,
   organizationId: string,
   memberId: string,
   channelId: string,
-): void {
+): Promise<void> {
+  await Promise.resolve();
   const messages = listAllChannelMessages(ctx.repo, organizationId, channelId);
   if (messages.length <= SELF_NOTE_COMPACTION_TRIGGER) {
     return;
   }
-  compactThreadMessages(ctx, {
+  await compactThreadMessages(ctx, {
     organizationId,
     threadId: channelId,
     senderId: memberId,
@@ -73,6 +73,7 @@ export function compactSelfNotesIfNeeded(
     summaryMarker: SELF_NOTE_SUMMARY_MARKER,
     compactedMarker: SELF_NOTE_COMPACTED_MARKER,
     batchSize: SELF_NOTE_COMPACTION_BATCH_SIZE,
+    tailTurns: SELF_NOTE_RECENT_RAW_COUNT,
   });
 }
 
@@ -93,20 +94,12 @@ export async function compactConversationIfNeeded(
     ctx.contextWindowTokens(organizationId, threadId),
   )) return;
 
-  const messages = listAllThreadMessages(ctx.repo, organizationId, threadId);
-  const uncompacted = listUncompactedConversationMessages(
-    messages,
-    CONVERSATION_SUMMARIZE_COMPACTION,
-  );
-  if (uncompacted.length === 0) {
-    return;
-  }
-
-  await compactConversationPass(ctx, {
+  await compactConversationUntilDone(ctx, {
     organizationId,
     threadId,
     senderId,
     plan: CONVERSATION_SUMMARIZE_COMPACTION,
+    maxPasses: 8,
   });
 }
 
@@ -116,15 +109,14 @@ export function conversationNeedsCompaction(
   threadId: string,
   contextWindowTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
 ): boolean {
-  const rawMessages = listAllThreadMessages(repo, organizationId, threadId)
-    .filter((message) =>
-      !isCompactedSourceMessage(message) &&
-      !isCompactionSummarySystemMessage(message),
-    );
+  const estimatedChars = repo.countUncompactedMessageChars?.(organizationId, threadId);
   // Use actual token counts when available (stamped by persistMessageTokens),
   // falling back to an estimate from char length for older messages.
-  const usedTokens = estimatePromptReplayTokens(repo, organizationId, rawMessages);
   const threshold = Math.floor(contextWindowTokens * 0.7);
+  if (estimatedChars !== undefined && Math.ceil(estimatedChars / 4) <= threshold) return false;
+  const rawMessages = listAllThreadMessages(repo, organizationId, threadId)
+    .filter((message) => !isCompactedSourceMessage(message));
+  const usedTokens = estimatePromptReplayTokens(repo, organizationId, rawMessages);
   return usedTokens > threshold;
 }
 
@@ -136,6 +128,11 @@ export function estimatePromptReplayTokens(
   const knownToolCallIds = extractToolCallIdsFromMessages(messages);
   let total = 0;
   for (const message of messages) {
+    if (message.inputTokens !== undefined || message.outputTokens !== undefined) {
+      total += message.inputTokens ?? 0;
+      total += message.outputTokens ?? 0;
+      continue;
+    }
     total += estimateTokensForValue(message.content);
     if (message.toolCalls.length > 0) total += estimateTokensForValue(message.toolCalls);
     if (message.reasoningContent) total += estimateTokensForValue(message.reasoningContent);
@@ -258,7 +255,7 @@ export async function archiveConversation(
     plan: conversationCompactionPlan(mode),
   };
   return mode === 'summarize'
-    ? compactConversationPass(ctx, input)
+    ? compactConversationUntilDone(ctx, { ...input, maxPasses: 8 })
     : compactConversationUntilDone(ctx, input);
 }
 
@@ -293,7 +290,7 @@ export function listActiveCompactionSummaries(
 ): Message[] {
   return messages.filter(
     (message) =>
-      isMessageWithAnyMarker(message, [summaryMarker]) &&
+      hasAnyMessageMarker(message.content, [summaryMarker]) &&
       !message.metadata?.compactedInto,
   );
 }
@@ -310,7 +307,7 @@ export function listUncompactedConversationMessages(
   return messages.filter(
     (message) =>
       !isCompactedSourceMessage(message) &&
-      !isMessageWithAnyMarker(message, excluded),
+      !hasAnyMessageMarker(message.content, excluded),
   );
 }
 
@@ -330,7 +327,7 @@ export function tailStartIndex(
   let found = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (!msg || isMessageWithAnyMarker(msg, exclusionMarkers)) continue;
+    if (!msg || hasAnyMessageMarker(msg.content, exclusionMarkers)) continue;
     // Preserve whole incoming turns by counting only messages not sent by the
     // current agent. Once we find the Nth incoming turn, we keep everything
     // from that point onward, including the assistant/tool work that followed.
@@ -383,6 +380,7 @@ async function compactThreadMessages(
     batchSize: number;
     mode?: 'summary' | 'archive';
     pass?: number;
+    tailTurns?: number;
   },
 ): Promise<{ summaryMessage: Message | null; compactedMessageIds: string[] }> {
   const { activeSummaries, compactable } = selectCompactionBatch({
@@ -391,6 +389,7 @@ async function compactThreadMessages(
     compactedMarker: input.compactedMarker,
     batchSize: input.batchSize,
     mode: input.mode ?? 'summary',
+    tailTurns: input.tailTurns,
     selfMemberId: input.senderId,
   });
   if (compactable.length === 0) {
@@ -476,10 +475,6 @@ function listAllThreadMessages(
     const byTime = left.createdAt.localeCompare(right.createdAt);
     return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
   });
-}
-
-export function isMessageWithAnyMarker(message: Message, markers: string[]): boolean {
-  return markers.some((marker) => message.content.startsWith(marker));
 }
 
 export async function emergencyCompactThread(

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.70] - 2026-08-06
+
+## [0.0.69] - 2026-07-28
+
+### Fixed
+
+- Load the ESM Claude Agent SDK outside the CommonJS release bundle so `ujima start` works on Node.
+
+## [0.0.68] - 2026-07-28
+
+### Fixed
+
+- Preserve assistant text delivered by Codex Responses `output_item.done` events.
+- Fall back to HTTP streaming when the Codex WebSocket cannot connect.
+- Recover tool steps from interrupted runs and make background CLI log startup reliable.
+
 ## [0.0.67] - 2026-07-21
 
 ## [0.0.66] - 2026-07-11

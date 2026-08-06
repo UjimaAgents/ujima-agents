@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Loader2, Workflow, X } from "lucide-react";
 import type { WorkflowRun } from "@ujima/shared";
+import { usePolling } from "@/hooks/use-polling";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { listWorkflowRuns } from "./use-workflows";
 
@@ -17,36 +18,17 @@ const POLL_MS = 8000;
 export function WorkflowRunsIndicator(): React.ReactElement | null {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [open, setOpen] = useState(false);
+  const lastSignature = useRef("");
   const openWorkflowRunDrawer = useWorkspaceStore((s) => s.openWorkflowRunDrawer);
 
-  useEffect(() => {
-    let cancelled = false;
-    let lastSig = "";
-    const tick = async () => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      try {
-        const active = await listWorkflowRuns("running");
-        if (cancelled) return;
-        const sig = active.map((r) => r.id).sort().join("|");
-        if (sig === lastSig) return;
-        lastSig = sig;
-        setRuns(active);
-      } catch {
-        // transient — keep last
-      }
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), POLL_MS);
-    const onVisible = () => {
-      if (typeof document !== "undefined" && !document.hidden) void tick();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+  const poll = useCallback(async () => {
+    const active = await listWorkflowRuns("running");
+    const signature = active.map((r) => r.id).sort().join("|");
+    if (signature === lastSignature.current) return;
+    lastSignature.current = signature;
+    setRuns(active);
   }, []);
+  usePolling(poll, { intervalMs: POLL_MS });
 
   if (runs.length === 0) return null;
   const label = runs.length === 1 ? "1 workflow running" : `${runs.length} workflows running`;

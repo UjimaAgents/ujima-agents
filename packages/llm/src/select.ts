@@ -187,7 +187,7 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
     return createDeepSeek({
       apiKey: input.apiKey,
       baseURL: input.baseUrl ?? DEEPSEEK_BASE_URL,
-    }).chat(normalizeDeepSeekModelId(input.modelId));
+    }).chat(input.modelId);
   }
 
   if (input.kind === 'xai') {
@@ -252,15 +252,4 @@ export function selectLanguageModel(input: SelectLanguageModelInput): LanguageMo
 
   const exhaustive: never = input.kind;
   throw new LLMError('unsupported_kind', `unreachable: ${String(exhaustive)}`);
-}
-
-function normalizeDeepSeekModelId(modelId: string): string {
-  const normalized = modelId.trim().toLowerCase();
-  if (normalized === 'deepseek-chat-v2') {
-    return 'deepseek-v4-flash';
-  }
-  if (normalized === 'deepseek-chat' || normalized === 'deepseek-reasoner') {
-    return 'deepseek-v4-flash';
-  }
-  return modelId;
 }

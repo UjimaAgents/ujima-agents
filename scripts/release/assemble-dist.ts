@@ -37,6 +37,7 @@ const dryRun = process.argv.includes("--dry-run");
 const nativeRuntimeExternals = [
   "better-sqlite3",
   "onnxruntime-node",
+  "@anthropic-ai/claude-agent-sdk",
 ];
 
 function log(message: string): void {

@@ -156,10 +156,19 @@ function rethrowClassified(error: unknown): never {
 function classifyApiError(error: unknown): Error | null {
   if (!error || typeof error !== 'object') return null;
   const e = error as Record<string, unknown>;
-  if (e.name !== 'AI_APICallError') return null;
-  const message = typeof e.message === 'string' ? e.message : '';
-  const url = typeof e.url === 'string' ? e.url : '';
-  const status = typeof e.statusCode === 'number' ? e.statusCode : undefined;
+  const cause = e.cause && typeof e.cause === 'object' ? e.cause as Record<string, unknown> : undefined;
+  const message = [e.message, cause?.message]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ');
+  const url = typeof e.url === 'string' ? e.url : typeof cause?.url === 'string' ? cause.url : '';
+  const status = typeof e.statusCode === 'number'
+    ? e.statusCode
+    : typeof cause?.statusCode === 'number'
+      ? cause.statusCode
+      : undefined;
+  const hasApiShape = e.name === 'AI_APICallError' || cause?.name === 'AI_APICallError' || status !== undefined;
+  const hasKnownProviderMessage = /context_length_exceeded|maximum context length|reduce the length of the (messages|prompt)|too many states for serving|is not found for API version|is not supported for generateContent/i.test(message);
+  if (!hasApiShape && !hasKnownProviderMessage) return null;
 
   if (
     status === 404 &&

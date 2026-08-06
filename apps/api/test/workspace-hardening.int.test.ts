@@ -686,7 +686,7 @@ describe('workspace path hardening', () => {
     });
   });
 
-  it('allows reads outside the member role scope without approval', async () => {
+  it('blocks reads outside the member role scope', async () => {
     const fixture = await createToolFixture();
 
     const result = await fixture.tools.invoke({
@@ -701,8 +701,12 @@ describe('workspace path hardening', () => {
       input: {},
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.requiresApprovalId).toBeUndefined();
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('ERR_PATH_ESCAPE');
+    expect(result.output).toMatchObject({
+      status: 'blocked',
+      code: 'ERR_PATH_ESCAPE',
+    });
   });
 
   it.skipIf(skipIfWin32)('blocks symlink escapes that point outside the workspace root', async () => {
@@ -732,7 +736,7 @@ describe('workspace path hardening', () => {
     });
   });
 
-  it('requires approval for shell cwd values outside the member role scope', async () => {
+  it('blocks shell cwd values outside the member role scope', async () => {
     const fixture = await createToolFixture();
 
     const result = await fixture.tools.invoke({
@@ -751,10 +755,10 @@ describe('workspace path hardening', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.requiresApprovalId).toBe('approval-1');
+    expect(result.code).toBe('ERR_PATH_ESCAPE');
     expect(result.output).toMatchObject({
-      status: 'waiting_for_approval',
-      approvalId: 'approval-1',
+      status: 'blocked',
+      code: 'ERR_PATH_ESCAPE',
     });
   });
 

@@ -1,9 +1,7 @@
-import { dirname } from 'node:path';
-import {
-  createSdkMcpServer,
+import type * as ClaudeAgentSdkModule from '@anthropic-ai/claude-agent-sdk';
+import type {
   query,
-  tool as sdkTool,
-  type Options as ClaudeCodeSdkOptions,
+  Options as ClaudeCodeSdkOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   LanguageModelV2CallOptions,
@@ -27,6 +25,12 @@ export interface ClaudeCodeModelOptions {
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'extra_high';
   toolExecutor?: ClaudeCodeToolExecutor;
   queryImpl?: typeof query;
+}
+
+type ClaudeAgentSdk = typeof ClaudeAgentSdkModule;
+
+function loadClaudeAgentSdk(): Promise<ClaudeAgentSdk> {
+  return import('@anthropic-ai/claude-agent-sdk');
 }
 
 interface RawMessage {
@@ -134,6 +138,7 @@ function toolNameFromSdk(name: string): string {
 function buildMcpServer(
   tools: NonNullable<LanguageModelV2CallOptions['tools']>,
   executor: ClaudeCodeToolExecutor,
+  sdk: ClaudeAgentSdk,
 ) {
   interface FunctionTool { type: 'function'; name: string; description?: string; inputSchema: unknown }
   type SdkToolFactory = (
@@ -143,7 +148,7 @@ function buildMcpServer(
     handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>,
     extras?: { alwaysLoad?: boolean },
   ) => unknown;
-  const makeSdkTool = sdkTool as unknown as SdkToolFactory;
+  const makeSdkTool = sdk.tool as unknown as SdkToolFactory;
   const definitions = (tools.filter((item) => item.type === 'function') as FunctionTool[]).map((item) => makeSdkTool(
       item.name,
       item.description ?? item.name,
@@ -170,7 +175,7 @@ function buildMcpServer(
     ));
 
   return definitions.length > 0
-    ? createSdkMcpServer({ name: MCP_SERVER_NAME, version: '1.0.0', alwaysLoad: true, tools: definitions as never })
+    ? sdk.createSdkMcpServer({ name: MCP_SERVER_NAME, version: '1.0.0', alwaysLoad: true, tools: definitions as never })
     : undefined;
 }
 
@@ -248,7 +253,6 @@ function claudeEnvironment(): Record<string, string | undefined> {
   const configuredHome = process.env.CLAUDE_CODE_HOME?.trim();
   if (configuredHome) {
     env.CLAUDE_CONFIG_DIR = configuredHome;
-    env.HOME = dirname(configuredHome);
   }
   return env;
 }
@@ -263,13 +267,14 @@ async function collectQuery(
   params: LanguageModelV2CallOptions,
 ): Promise<Collected> {
   const parts = promptParts(params.prompt);
+  const sdk = await loadClaudeAgentSdk();
   const abortController = new AbortController();
   const onAbort = () => abortController.abort();
   if (params.abortSignal?.aborted) abortController.abort();
   else params.abortSignal?.addEventListener('abort', onAbort, { once: true });
 
   const mcpServer = options.toolExecutor && params.tools
-    ? buildMcpServer(params.tools, options.toolExecutor)
+    ? buildMcpServer(params.tools, options.toolExecutor, sdk)
     : undefined;
   const mcpToolNames = (params.tools ?? [])
     .filter((item): item is Extract<typeof item, { type: 'function' }> => item.type === 'function')
@@ -296,7 +301,7 @@ async function collectQuery(
     const toolNames = new Map<string, string>();
     let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let stopReason: string | null | undefined;
-    const run = (options.queryImpl ?? query)({ prompt: parts.prompt, options: sdkOptions });
+    const run = (options.queryImpl ?? sdk.query)({ prompt: parts.prompt, options: sdkOptions });
     for await (const message of run as AsyncIterable<RawMessage>) {
       const result = collectSdkMessage(message, content, toolNames);
       if (result.usage) usage = result.usage;

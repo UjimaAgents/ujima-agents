@@ -291,6 +291,7 @@ export function useConversationSync(
         setLoading,
         setMemberActivity,
         storeMembers: storeMembersRef.current,
+        expectedConversationKey: currentConversationKey,
         appendRunChunk: queueRunChunk,
         flushRunChunks,
         upsertApproval,
@@ -383,6 +384,7 @@ export function useConversationSync(
       // layer for concurrent retries.
       const clientMessageId = options?.clientMessageId ?? crypto.randomUUID();
       const tempId = `temp:${clientMessageId}`;
+      const expectedConversationKey = conversationKey;
       // Retries reuse the same tempId. The earlier failed attempt
       // calls `removeMessage(tempId)` in its error branch, so the
       // pending entry is gone by the time a retry lands and we add
@@ -391,6 +393,7 @@ export function useConversationSync(
       // typically upsert by id — add-then-overwrite is benign.
       addPendingMessage({
         id: tempId,
+        clientMessageId,
         senderId: sender.id,
         role: sender.roleName,
         name: sender.name,
@@ -403,22 +406,35 @@ export function useConversationSync(
         detail: "Sending…",
       });
 
-      const response = await fetch("/api/messages", {
-        method: "POST",
-        body: JSON.stringify(
-          buildConversationMessagePayload(
-            transport,
-            conversation.type,
-            conversation.id,
-            sender.id,
-            content,
-            parentMessageId,
-            attachmentIds,
-            metadata,
-            clientMessageId,
-          ),
+      const requestBody = JSON.stringify(
+        buildConversationMessagePayload(
+          transport,
+          conversation.type,
+          conversation.id,
+          sender.id,
+          content,
+          parentMessageId,
+          attachmentIds,
+          metadata,
+          clientMessageId,
         ),
-      });
+      );
+      let response: Response | undefined;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await fetch("/api/messages", { method: "POST", body: requestBody });
+          break;
+        } catch (error) {
+          if (attempt === 1) {
+            removeMessage(tempId);
+            throw error;
+          }
+        }
+      }
+      if (!response) {
+        removeMessage(tempId);
+        throw new Error("Unable to send message.");
+      }
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         removeMessage(tempId);
@@ -438,9 +454,9 @@ export function useConversationSync(
         throw new Error("Unexpected message response.");
       }
 
-      receiveMessage(tempId, parsed.data, (value) => messageToChatMessage(value, storeMembersRef.current), messageToActivity);
+      receiveMessage(tempId, parsed.data, (value) => messageToChatMessage(value, storeMembersRef.current), messageToActivity, expectedConversationKey);
     },
-    [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, receiveMessage, removeMessage, transport],
+    [addPendingMessage, bootstrap.auth.member, conversation.id, conversation.type, conversationKey, receiveMessage, removeMessage, transport],
   );
 
   const archiveConversation = useCallback(
@@ -620,12 +636,14 @@ function handleStreamEvent(
       message: Message,
       toMessage: (message: Message) => ChatMessageData,
       toActivity: (message: Message) => ActivityEvent,
+      expectedConversationKey?: string,
     ): void;
     removeMessage(id: string): void;
     setConversationError(message: string | undefined): void;
     setLoading(loading: boolean): void;
     setMemberActivity(memberId: string, activity: ActivityState): void;
     storeMembers: Member[];
+    expectedConversationKey: string;
     upsertApproval(
       approval: ApprovalRequest,
       toCard: (approval: ApprovalRequest, state: { members: Member[] }) => ApprovalCardData,
@@ -646,7 +664,7 @@ function handleStreamEvent(
     case "dm:message": {
       const message = parseMessagePayload(envelope.payload);
       if (!message) return;
-      actions.receiveMessage(undefined, message, (value) => messageToChatMessage(value, actions.storeMembers), messageToActivity);
+      actions.receiveMessage(undefined, message, (value) => messageToChatMessage(value, actions.storeMembers), messageToActivity, actions.expectedConversationKey);
       if (message.senderKind === "agent") {
         actions.setConversationError(undefined);
       }
@@ -854,6 +872,7 @@ function messageToChatMessage(message: Message, members: Member[]): ChatMessageD
   const sender = members.find((member) => member.id === message.senderId);
   return {
     id: message.id,
+    clientMessageId: message.clientMessageId,
     senderId: message.senderId,
     parentMessageId: message.parentMessageId,
     threadId: message.threadId,

@@ -162,12 +162,14 @@ import {
   getRun as readRun,
   listActiveRuns as readActiveRuns,
   listRuns as readRuns,
+  listRunsByIds as readRunsByIds,
   listThreadRuns as readThreadRuns,
   saveRun as writeRun,
   type PaginatedRuns,
 } from './runs.js';
 import {
   listRunSteps as readRunSteps,
+  listRunStepsByRunIds as readRunStepsByRunIds,
   saveRunStep as writeRunStep,
 } from './run-steps.js';
 import {
@@ -608,9 +610,16 @@ export class Repository {
     threadId: string,
   ): RunState | null => readActiveRunForMemberThread(this.db, organizationId, agentId, threadId);
   listActiveRuns = (organizationId: string): RunState[] => readActiveRuns(this.db, organizationId);
+  listRunsByIds = (organizationId: string, runIds: readonly string[]): RunState[] =>
+    readRunsByIds(this.db, organizationId, runIds);
   saveRunStep = (step: RunStep): RunStep => writeRunStep(this.db, step);
   listRunSteps = (organizationId: string, runId: string): RunStep[] =>
     readRunSteps(this.db, organizationId, runId);
+  listRunStepsByRunIds = (
+    organizationId: string,
+    runIds: readonly string[],
+    limit?: number,
+  ): RunStep[] => readRunStepsByRunIds(this.db, organizationId, runIds, limit);
   listRuns = (organizationId: string, cursor?: string, limit?: number): PaginatedRuns =>
     readRuns(this.db, organizationId, cursor, limit);
   listThreadRuns = (

@@ -72,7 +72,8 @@ export function validateProviderKeys(
     if (role.provider === 'ollama') {
       continue;
     }
-    if (providerAuthMode(team, role.provider) === 'chatgpt') {
+    const authMode = providerAuthMode(team, role.provider);
+    if (authMode === 'chatgpt' || authMode === 'claude-code') {
       continue;
     }
 

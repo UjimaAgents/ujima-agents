@@ -353,6 +353,18 @@ interface ChannelViewProps {
   onOrgShellApprovalModeChange?: (value: ShellApprovalMode) => Promise<void> | void;
 }
 
+function readReplyDraft(key: string): ChatMessageData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(`ujima.replyDraft.${key}`) ?? "null") as Partial<ChatMessageData> | null;
+    return value && typeof value.id === "string" && typeof value.name === "string" && typeof value.content === "string"
+      ? { id: value.id, name: value.name, content: value.content, role: value.role ?? "", time: value.time ?? "", kind: value.kind }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ChannelView({
   bootstrap,
   conversation,
@@ -372,7 +384,8 @@ export function ChannelView({
   const [resolvingQuestions, setResolvingQuestions] = useState<Record<string, boolean>>({});
   const [questionErrors, setQuestionErrors] = useState<Record<string, string>>({});
   const [stoppingRunId, setStoppingRunId] = useState<string | undefined>();
-  const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
+  const replyDraftKey = `${bootstrap.organization?.id ?? ""}:${conversation.type}:${conversation.id}`;
+  const [replyTo, setReplyTo] = useState<ChatMessageData | null>(() => readReplyDraft(replyDraftKey));
   const [scheduleMode, setScheduleMode] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -382,6 +395,23 @@ export function ChannelView({
   const detailsWidth = useWorkspaceStore((state) => state.detailsWidth);
   const detailsTab = useWorkspaceStore((state) => state.detailsTab);
   const chatFontSize = useWorkspaceStore((state) => state.chatFontSize);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = `ujima.replyDraft.${replyDraftKey}`;
+    if (!replyTo) {
+      window.sessionStorage.removeItem(key);
+      return;
+    }
+    window.sessionStorage.setItem(key, JSON.stringify({
+      id: replyTo.id,
+      name: replyTo.name,
+      content: replyTo.content,
+      role: replyTo.role,
+      time: replyTo.time,
+      kind: replyTo.kind,
+    }));
+  }, [replyDraftKey, replyTo]);
 
   const {
     setActiveTab,
@@ -1123,12 +1153,26 @@ export function ChannelView({
           </div>
         </div>
         {activeTab === "conversation" ? (
-          <div className="relative flex flex-1 min-h-0 flex-col">
+          <div className="relative flex flex-1 min-h-0 flex-col" aria-busy={Boolean(feed.archiving)}>
             {feed.archiving ? (
-              <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-white/70 backdrop-blur-[1px] dark:bg-zinc-950/70">
-                <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                  <Loader2 className="h-4 w-4 animate-spin text-violet-600 dark:text-violet-400" />
-                  {feed.archiving === "clear" ? "Clearing conversation…" : "Summarizing…"}
+              <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex justify-center">
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-xl border border-violet-200 bg-white/95 px-3 py-2.5 text-sm shadow-lg shadow-violet-500/10 backdrop-blur dark:border-violet-500/30 dark:bg-zinc-900/95"
+                >
+                  <Loader2
+                    className="mt-0.5 h-4 w-4 shrink-0 text-violet-600 motion-safe:animate-spin dark:text-violet-400"
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-zinc-800 dark:text-zinc-100">
+                      {feed.archiving === "clear" ? "Clearing conversation" : "Summarizing conversation"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                      Working through the transcript. You can keep reading while it runs.
+                    </p>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -1376,6 +1420,7 @@ export function ChannelView({
             inlineError={feed.error}
             mentionSuggestions={mentionSuggestions}
             replyTo={replyTo}
+            draftKey={replyDraftKey}
             onCancelReply={handleCancelReply}
             stoppableRunIds={stoppableRunIds}
             onStopRuns={stopRuns}

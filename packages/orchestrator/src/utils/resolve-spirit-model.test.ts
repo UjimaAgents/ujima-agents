@@ -124,6 +124,10 @@ describe('resolveSpiritModel', () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'ujima-claude-auth-'));
     try {
       vi.stubEnv('CLAUDE_CODE_HOME', homeDir);
+      await writeFile(
+        join(homeDir, 'credentials.json'),
+        JSON.stringify({ accessToken: 'token' }),
+      );
       const team = buildTeam({
         agentName: 'agent-1',
         roleName: 'engineer',

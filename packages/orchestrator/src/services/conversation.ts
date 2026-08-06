@@ -82,8 +82,8 @@ export interface ConversationServiceOptions {
     messages: Message[],
     mode: 'summary' | 'archive',
     runSteps: RunStep[],
+    signal?: AbortSignal,
   ) => Promise<string>;
-  summarizeConversationTimeoutMs?: number;
   contextWindowTokens?: (organizationId: string, threadId: string) => number;
   autoCompactConversations?: boolean;
 }
@@ -93,7 +93,6 @@ export class ConversationService {
   private readonly onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
   private readonly summarizeConversation?: ConversationServiceOptions['summarizeConversation'];
-  private readonly summarizeConversationTimeoutMs: number;
   private readonly contextWindowTokens: NonNullable<ConversationServiceOptions['contextWindowTokens']>;
   private readonly autoCompactConversations: boolean;
   private readonly mentionFanoutCap: number;
@@ -103,6 +102,7 @@ export class ConversationService {
   private readonly pairMentionTracker: PairMentionTracker;
   private readonly lastMessageCreatedAtByThread = new Map<string, number>();
   private readonly compactingThreads = new Set<string>();
+  private readonly compactionBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
   private readonly writer: MessageWriter;
   private readonly mentionResolver: MentionResolver;
   private readonly wakeDispatcher: WakeDispatcher;
@@ -116,7 +116,6 @@ export class ConversationService {
     this.onMemberAlerted = options.onMemberAlerted;
     this.onMessagePublished = options.onMessagePublished;
     this.summarizeConversation = options.summarizeConversation;
-    this.summarizeConversationTimeoutMs = options.summarizeConversationTimeoutMs ?? 180_000;
     this.contextWindowTokens = options.contextWindowTokens ?? (() => 128_000);
     this.autoCompactConversations = options.autoCompactConversations ?? false;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
@@ -407,12 +406,7 @@ export class ConversationService {
     }
     if (!isCompactionSummarySystemMessage(emittedMessage)) {
       if (channel?.kind === 'self') {
-        compactSelfNotesIfNeeded(
-          this.compactionContext(),
-          emittedMessage.organizationId,
-          emittedMessage.senderId,
-          emittedMessage.channelId ?? emittedMessage.threadId,
-        );
+        this.scheduleSelfNoteCompaction(emittedMessage);
       } else {
         this.scheduleConversationCompaction(emittedMessage);
       }
@@ -425,15 +419,12 @@ export class ConversationService {
       repo: this.repo,
       publishMessage: (message, mentions, attachmentIds, options) =>
         this.publishMessage(message, mentions as never[], attachmentIds, options),
-      summarizeConversation: async (messages, mode, runSteps) => {
-        if (!this.summarizeConversation) {
+      summarizeConversation: async (messages, mode, runSteps, signal) => {
+        const summarizeConversation = this.summarizeConversation;
+        if (!summarizeConversation) {
           throw new Error('AI conversation summarizer is not configured.');
         }
-        return withTimeout(
-          this.summarizeConversation(messages, mode, runSteps),
-          this.summarizeConversationTimeoutMs,
-          'Conversation summary timed out. Try again in a moment.',
-        );
+        return summarizeConversation(messages, mode, runSteps, signal);
       },
       contextWindowTokens: this.contextWindowTokens,
     };
@@ -444,29 +435,32 @@ export class ConversationService {
     if (!this.summarizeConversation) return;
     if (message.metadata?.runProgress) return;
     const key = `${message.organizationId}:${message.threadId}`;
-    if (
-      this.compactingThreads.has(key) ||
-      !conversationNeedsCompaction(
-        this.repo,
-        message.organizationId,
-        message.threadId,
-        this.contextWindowTokens(message.organizationId, message.threadId),
-      )
-    ) return;
+    if (this.compactingThreads.has(key) || (this.compactionBackoff.get(key)?.nextAttemptAt ?? 0) > Date.now()) return;
+    if (!conversationNeedsCompaction(this.repo, message.organizationId, message.threadId, this.contextWindowTokens(message.organizationId, message.threadId))) return;
     this.compactingThreads.add(key);
-    void compactConversationIfNeeded(
-      this.compactionContext(),
-      message.organizationId,
-      message.threadId,
-      message.senderId,
-    ).catch((error) => {
-      console.error(
-        'conversation: AI compaction failed',
-        error instanceof Error ? error.stack ?? error.message : String(error),
-      );
-    }).finally(() => {
-      this.compactingThreads.delete(key);
-    });
+    void Promise.resolve().then(() => compactConversationIfNeeded(
+      this.compactionContext(), message.organizationId, message.threadId, message.senderId,
+    )).then(() => this.compactionBackoff.delete(key)).catch((error) => {
+      const failures = (this.compactionBackoff.get(key)?.failures ?? 0) + 1;
+      this.compactionBackoff.set(key, { failures, nextAttemptAt: Date.now() + Math.min(300_000, 5_000 * 2 ** Math.min(failures, 6)) });
+      console.error('conversation: AI compaction failed', error instanceof Error ? error.stack ?? error.message : String(error));
+    }).finally(() => this.compactingThreads.delete(key));
+  }
+
+  private scheduleSelfNoteCompaction(message: Message): void {
+    const key = `${message.organizationId}:${message.threadId}`;
+    if (this.compactingThreads.has(key) || (this.compactionBackoff.get(key)?.nextAttemptAt ?? 0) > Date.now()) return;
+    this.compactingThreads.add(key);
+    setTimeout(() => {
+      void compactSelfNotesIfNeeded(this.compactionContext(), message.organizationId, message.senderId, message.channelId ?? message.threadId)
+        .then(() => this.compactionBackoff.delete(key))
+        .catch((error) => {
+          const failures = (this.compactionBackoff.get(key)?.failures ?? 0) + 1;
+          this.compactionBackoff.set(key, { failures, nextAttemptAt: Date.now() + Math.min(300_000, 5_000 * 2 ** Math.min(failures, 6)) });
+          console.error('conversation: self-note compaction failed', error instanceof Error ? error.stack ?? error.message : String(error));
+        })
+        .finally(() => this.compactingThreads.delete(key));
+    }, 0);
   }
 
   private get fanout(): (label: string, promise: Promise<unknown>) => void {
@@ -1395,14 +1389,4 @@ function mergeRankedPaginatedMessages(
 
 function uniqueMentionIds(mentions: MessageMention[]): string[] {
   return [...new Set(mentions.map((mention) => mention.memberId))];
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
 }

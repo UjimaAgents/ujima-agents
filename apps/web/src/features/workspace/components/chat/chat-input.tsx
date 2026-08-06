@@ -72,6 +72,26 @@ interface UploadedAttachment {
   uploading?: boolean;
 }
 
+const COMPOSER_DRAFT_PREFIX = "ujima.composerDraft.";
+
+function readComposerDraft(key: string | undefined): { content: string; attachments: UploadedAttachment[] } {
+  if (!key || typeof window === "undefined") return { content: "", attachments: [] };
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(`${COMPOSER_DRAFT_PREFIX}${key}`) ?? "null") as {
+      content?: unknown;
+      attachments?: unknown;
+    } | null;
+    const attachments = Array.isArray(value?.attachments)
+      ? value.attachments.filter((item): item is UploadedAttachment =>
+          Boolean(item && typeof item === "object" && typeof (item as UploadedAttachment).id === "string" && !(item as UploadedAttachment).uploading),
+        )
+      : [];
+    return { content: typeof value?.content === "string" ? value.content : "", attachments };
+  } catch {
+    return { content: "", attachments: [] };
+  }
+}
+
 interface MentionTrigger {
   start: number;
   end: number;
@@ -498,6 +518,7 @@ function ChatInputComponent({
   mentionSuggestions = [],
   replyTo,
   onCancelReply,
+  draftKey,
   organizationId,
   goalMode: goalModeProp,
   onGoalModeChange,
@@ -519,6 +540,7 @@ function ChatInputComponent({
   mentionSuggestions?: MentionSuggestion[];
   replyTo?: ChatMessageData | null;
   onCancelReply?: () => void;
+  draftKey?: string;
   goalMode?: boolean;
   onGoalModeChange?: (active: boolean) => void;
   scheduleMode?: boolean;
@@ -533,7 +555,8 @@ function ChatInputComponent({
 }) {
   const goalMode = goalModeProp ?? false;
   const scheduleMode = scheduleModeProp ?? false;
-  const [content, setContent] = useState("");
+  const [initialDraft] = useState(() => readComposerDraft(draftKey));
+  const [content, setContent] = useState(initialDraft.content);
   const [isSending, setIsSending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isCommanding, setIsCommanding] = useState(false);
@@ -543,7 +566,7 @@ function ChatInputComponent({
   const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
   const [clearConfirmation, setClearConfirmation] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
-  const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
+  const [attachments, setAttachments] = useState<UploadedAttachment[]>(initialDraft.attachments);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -552,6 +575,7 @@ function ChatInputComponent({
   const contentRef = useRef(content);
   const attachmentsRef = useRef<UploadedAttachment[]>([]);
   const uploadControllersRef = useRef(new Map<string, AbortController>());
+  const mountedRef = useRef(true);
   const activePlaceholder = scheduleMode
     ? "Describe what to schedule…"
     : goalMode
@@ -644,11 +668,11 @@ function ChatInputComponent({
     if (readOnly || uploading) stopVoiceListening();
   }, [readOnly, uploading, stopVoiceListening]);
 
-  function revokePreviewUrl(attachment: UploadedAttachment) {
+  const revokePreviewUrl = useCallback((attachment: UploadedAttachment) => {
     if (attachment.previewUrl?.startsWith("blob:")) {
       URL.revokeObjectURL(attachment.previewUrl);
     }
-  }
+  }, []);
 
   useEffect(() => {
     if (replyTo && !readOnly) {
@@ -659,12 +683,27 @@ function ChatInputComponent({
     attachmentsRef.current = attachments;
   }, [attachments]);
   useEffect(() => {
-    return () => {
-      for (const attachment of attachmentsRef.current) {
-        revokePreviewUrl(attachment);
-      }
-    };
-  }, []);
+    if (!draftKey || typeof window === "undefined") return;
+    const persistedAttachments = attachments
+      .filter((attachment) => !attachment.uploading)
+      .map((attachment) => {
+        const persisted = { ...attachment };
+        delete persisted.previewUrl;
+        return persisted;
+      });
+    if (!content.trim() && persistedAttachments.length === 0) {
+      window.sessionStorage.removeItem(`${COMPOSER_DRAFT_PREFIX}${draftKey}`);
+      return;
+    }
+    window.sessionStorage.setItem(`${COMPOSER_DRAFT_PREFIX}${draftKey}`, JSON.stringify({ content, attachments: persistedAttachments }));
+  }, [attachments, content, draftKey]);
+  const cleanupUploads = useCallback(() => {
+    mountedRef.current = false;
+    for (const controller of uploadControllersRef.current.values()) controller.abort();
+    uploadControllersRef.current.clear();
+    for (const attachment of attachmentsRef.current) revokePreviewUrl(attachment);
+  }, [revokePreviewUrl]);
+  useEffect(() => cleanupUploads, [cleanupUploads]);
   const hasAttachments = attachments.length > 0;
   const visibleAttachments = readOnly ? [] : attachments;
   const hasDraft = !readOnly && (content.trim().length > 0 || visibleAttachments.length > 0);
@@ -879,6 +918,7 @@ function ChatInputComponent({
         throw new Error("Unexpected attachment response.");
       }
       const attachment = parsed.data;
+      if (!mountedRef.current) return;
       updateAttachment(tempId, (current) => {
         if (current.previewUrl?.startsWith("blob:")) {
           URL.revokeObjectURL(current.previewUrl);
@@ -898,6 +938,7 @@ function ChatInputComponent({
       if (err instanceof DOMException && err.name === "AbortError") {
         return;
       }
+      if (!mountedRef.current) return;
       revokePreviewUrl(tempAttachment);
       removeAttachment(tempId);
       throw err;
@@ -1170,6 +1211,7 @@ function ChatInputComponent({
           onClose={() => { if (!isCommanding) { setClearConfirmation(false); setError(null); } }}
           title="Clear conversation"
           message="Older messages are summarized into one archive note and hidden from the thread. This can't be undone."
+          errorMessage={clearConfirmation ? error ?? undefined : undefined}
           confirmLabel="Clear"
           cancelLabel="Cancel"
           variant="primary"
@@ -1669,7 +1711,7 @@ function ChatInputComponent({
             </div>
           </div>
         </div>
-        {error ? (
+        {error && !clearConfirmation ? (
           <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
         ) : null}
       </div>

@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { readFileSync, mkdirSync, writeFileSync, existsSync, createWriteStream, unlinkSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync, openSync, closeSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -308,28 +308,36 @@ async function startBackground(runtimeDir: string, opts: StartOptions): Promise<
 
   const apiLog = join(autoStartupLogDir(), 'api.log');
   const webLog = join(autoStartupLogDir(), 'web.log');
-  const apiStream = createWriteStream(apiLog, { flags: 'a' });
-  const webStream = createWriteStream(webLog, { flags: 'a' });
+  // Passing a newly-created WriteStream races its `open` event. launchd can
+  // spawn us before `fd` exists, making Node reject the whole daemon start.
+  const apiLogFd = openSync(apiLog, 'a');
+  const webLogFd = openSync(webLog, 'a');
+  let apiChild;
+  let webChild;
+  try {
+    apiChild = spawn(process.execPath, [apiEntry, ...opts.passthrough], {
+      env: { ...process.env, UJIMA_HOME: homeDir },
+      stdio: ['ignore', apiLogFd, apiLogFd],
+      detached: true,
+    });
 
-  const apiChild = spawn(process.execPath, [apiEntry, ...opts.passthrough], {
-    env: { ...process.env, UJIMA_HOME: homeDir },
-    stdio: ['ignore', apiStream, apiStream],
-    detached: true,
-  });
-
-  const webChild = spawn(process.execPath, [webEntry], {
-    cwd: webCwd,
-    env: {
-      ...process.env,
-      UJIMA_HOME: homeDir,
-      UJIMA_PORT: process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT),
-      PORT: webPort,
-      HOSTNAME: process.env.WEB_HOST ?? '127.0.0.1',
-      NODE_PATH: buildPackagedWebNodePath(webRuntimeDir, process.env.NODE_PATH),
-    },
-    stdio: ['ignore', webStream, webStream],
-    detached: true,
-  });
+    webChild = spawn(process.execPath, [webEntry], {
+      cwd: webCwd,
+      env: {
+        ...process.env,
+        UJIMA_HOME: homeDir,
+        UJIMA_PORT: process.env.UJIMA_PORT ?? String(DEFAULT_BIND_PORT),
+        PORT: webPort,
+        HOSTNAME: process.env.WEB_HOST ?? '127.0.0.1',
+        NODE_PATH: buildPackagedWebNodePath(webRuntimeDir, process.env.NODE_PATH),
+      },
+      stdio: ['ignore', webLogFd, webLogFd],
+      detached: true,
+    });
+  } finally {
+    closeSync(apiLogFd);
+    closeSync(webLogFd);
+  }
 
   // Write PID file for ujima stop
   const pidData = JSON.stringify({

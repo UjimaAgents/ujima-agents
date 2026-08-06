@@ -11,6 +11,7 @@ import {
   TERMINAL_SECTION,
 } from "./terminal-chrome";
 import { ExpandableOutput } from "./expandable-output";
+import { usePolling } from "@/hooks/use-polling";
 
 const POLL_MS = 700;
 
@@ -61,48 +62,23 @@ export function BackgroundShellJobPane({
     return body as ShellJobDetail;
   }, [organizationId, runId, jobId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
-
-    const schedulePolling = () => {
-      timer = setInterval(() => {
-        void (async () => {
-          try {
-            const next = await fetchSnapshot();
-            if (cancelled) return;
-            setLoadError(null);
-            setSnapshot(next);
-            if (next.status !== "running" && timer) {
-              clearInterval(timer);
-              timer = undefined;
-            }
-          } catch (e) {
-            if (cancelled) return;
-            setLoadError(e instanceof Error ? e.message : "Failed to load job output");
-          }
-        })();
-      }, POLL_MS);
-    };
-
-    void (async () => {
-      try {
-        const next = await fetchSnapshot();
-        if (cancelled) return;
-        setLoadError(null);
-        setSnapshot(next);
-        if (next.status === "running") schedulePolling();
-      } catch (e) {
-        if (cancelled) return;
-        setLoadError(e instanceof Error ? e.message : "Failed to load job output");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
-    };
+  const load = useCallback(async () => {
+    try {
+      setLoadError(null);
+      setSnapshot(await fetchSnapshot());
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Failed to load job output");
+    }
   }, [fetchSnapshot]);
+
+  useEffect(() => {
+    queueMicrotask(() => void load());
+  }, [load]);
+  usePolling(load, {
+    intervalMs: POLL_MS,
+    enabled: snapshot?.status === "running",
+    immediate: false,
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });

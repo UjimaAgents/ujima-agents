@@ -1,7 +1,4 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
 import type { LanguageModel } from 'ai';
 import WebSocket from 'ws';
 import {
@@ -17,32 +14,14 @@ import { OpenAIResponsesLanguageModel } from './protocols/openai-responses-langu
 
 type FetchHeaders = NonNullable<Parameters<typeof fetch>[1]>['headers'];
 const CODEX_RESPONSES_BASE_URL = 'https://chatgpt.com/backend-api/codex';
-const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const OPENAI_AUTH_ISSUER = 'https://auth.openai.com';
 const RESPONSES_WS_PROTOCOL = 'responses_websockets=2026-02-06';
 const CODEX_WS_OPEN_RETRIES = 2;
 const CODEX_WS_IDLE_TIMEOUT_MS = 5 * 60_000;
-let refreshPromise: Promise<StoredCodexToken | null> | null = null;
 
 interface CodexResponsesOptions {
   modelId: string;
   accessToken: string;
   baseUrl?: string;
-}
-
-interface StoredCodexToken {
-  accessToken: string;
-  accountId?: string;
-}
-
-interface StoredCodexAuth {
-  tokens?: {
-    id_token?: unknown;
-    access_token?: unknown;
-    refresh_token?: unknown;
-    expires_at?: unknown;
-    account_id?: unknown;
-  };
 }
 
 export function createCodexResponsesModel(options: CodexResponsesOptions): LanguageModel {
@@ -55,26 +34,11 @@ export function createCodexResponsesModel(options: CodexResponsesOptions): Langu
 }
 
 function codexFetch(accessToken: string): typeof fetch {
-  let bearer = accessToken;
-  let accountId = envAccountId() ?? extractAccountId(accessToken);
-  let sessionId = stableCodexSessionId(accessToken, accountId);
+  const bearer = accessToken;
+  const accountId = envAccountId() ?? extractAccountId(accessToken);
+  const sessionId = stableCodexSessionId(accessToken, accountId);
 
   return async (request, init) => {
-    const refreshed = await maybeRefreshStoredToken();
-    if (refreshed) {
-      bearer = refreshed.accessToken;
-      accountId = envAccountId() ?? refreshed.accountId ?? extractAccountId(refreshed.accessToken);
-      sessionId = stableCodexSessionId(bearer, accountId);
-    }
-
-    const response = await requestWithFreshPool(request, init, bearer, accountId, sessionId);
-    if (response.status !== 401) return response;
-
-    const retryToken = await refreshStoredToken();
-    if (!retryToken) return response;
-    bearer = retryToken.accessToken;
-    accountId = envAccountId() ?? retryToken.accountId ?? extractAccountId(retryToken.accessToken);
-    sessionId = stableCodexSessionId(bearer, accountId);
     return requestWithFreshPool(request, init, bearer, accountId, sessionId);
   };
 }
@@ -126,7 +90,14 @@ async function fetchCodex(
   const target = shouldUseOpenAIResponsesSocket(request, init);
   const url = new URL(request instanceof Request ? request.url : String(request));
   if (!target) return logNonOkResponse(url, await fetch(request, init));
-  return streamSocket(target.url, init?.headers, pool, target.body, init?.signal ?? undefined);
+  return streamSocket(
+    target.url,
+    init?.headers,
+    pool,
+    target.body,
+    init?.signal ?? undefined,
+    async () => logNonOkResponse(url, await fetch(request, init)),
+  );
 }
 
 async function logNonOkResponse(url: URL, response: Response): Promise<Response> {
@@ -234,6 +205,7 @@ function streamSocket(
   pool: { getSocket: () => WebSocket | null; setSocket: (socket: WebSocket | null) => void },
   body: OpenAIResponsesRequestBody,
   signal: AbortSignal | undefined,
+  fallback: () => Promise<Response>,
 ): Response {
   const encoder = new TextEncoder();
   let done = false;
@@ -286,6 +258,28 @@ function streamSocket(
         cleanup();
         invalidate();
         socket?.terminate();
+        if (frameCount === 0 && !signal?.aborted) {
+          void fallback().then(async (response) => {
+            if (!response.ok || !response.body) {
+              controller.error(error);
+              return;
+            }
+            try {
+              const reader = response.body.getReader();
+              while (true) {
+                const next = await reader.read();
+                if (next.done) break;
+                controller.enqueue(next.value);
+              }
+              controller.close();
+            } catch (fallbackError) {
+              controller.error(fallbackError instanceof Error ? fallbackError : error);
+            }
+          }).catch((fallbackError) => {
+            controller.error(fallbackError instanceof Error ? fallbackError : error);
+          });
+          return;
+        }
         controller.error(error);
       };
       const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {
@@ -374,74 +368,6 @@ async function prepareRequest(
   init: Parameters<typeof fetch>[1],
 ): Promise<{ request: Parameters<typeof fetch>[0]; init: Parameters<typeof fetch>[1] }> {
   return prepareOpenAIResponsesRequest(request, init);
-}
-
-function authPath(): string {
-  return join(process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'), 'auth.json');
-}
-
-function readAuth(): StoredCodexAuth | null {
-  try {
-    return JSON.parse(readFileSync(authPath(), 'utf8')) as StoredCodexAuth;
-  } catch {
-    return null;
-  }
-}
-
-async function maybeRefreshStoredToken(): Promise<StoredCodexToken | null> {
-  const expiresAt = readAuth()?.tokens?.expires_at;
-  if (typeof expiresAt !== 'number' || expiresAt - Date.now() > 60_000) return null;
-  return refreshStoredToken();
-}
-
-async function refreshStoredToken(): Promise<StoredCodexToken | null> {
-  refreshPromise ??= refreshStoredTokenOnce().finally(() => {
-    refreshPromise = null;
-  });
-  return refreshPromise;
-}
-
-async function refreshStoredTokenOnce(): Promise<StoredCodexToken | null> {
-  const auth = readAuth();
-  const refreshToken = auth?.tokens?.refresh_token;
-  if (typeof refreshToken !== 'string' || !refreshToken.trim()) return null;
-
-  const response = await fetch(`${OPENAI_AUTH_ISSUER}/oauth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: process.env.UJIMA_CODEX_CLIENT_ID ?? DEFAULT_CODEX_CLIENT_ID,
-    }).toString(),
-  });
-  if (!response.ok) return null;
-
-  const tokens = await response.json() as {
-    id_token?: string;
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-  if (!tokens.access_token) return null;
-
-  const accountId = extractAccountId(tokens.id_token ?? tokens.access_token);
-  const path = authPath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({
-    ...auth,
-    auth_mode: 'chatgpt',
-    tokens: {
-      ...auth?.tokens,
-      id_token: tokens.id_token ?? auth?.tokens?.id_token,
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token ?? refreshToken,
-      expires_at: Date.now() + (tokens.expires_in ?? 3600) * 1000,
-      account_id: accountId ?? auth?.tokens?.account_id,
-    },
-  }, null, 2), { mode: 0o600 });
-
-  return { accessToken: tokens.access_token, accountId };
 }
 
 function envAccountId(): string | undefined {

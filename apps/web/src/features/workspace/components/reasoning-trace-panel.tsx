@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowDown, Loader2 } from "lucide-react";
 import { RunTraceListResponseSchema, type RunTraceEntry } from "@ujima/api-schema";
 import { buildHistoricalTraceSteps } from "../reasoning-trace";
@@ -19,6 +19,15 @@ function formatElapsed(ms: number): string {
   const hours = Math.floor(minutes / 60);
   return `${hours}hr`;
 }
+
+const ElapsedBadge = memo(function ElapsedBadge({ startedAtMs }: { startedAtMs: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return <span>Working for {formatElapsed(now - startedAtMs)}</span>;
+});
 
 interface TraceRowData {
   key: string;
@@ -83,20 +92,11 @@ export function ReasoningTracePanel({
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [newTraceCount, setNewTraceCount] = useState(0);
 
-  const [now, setNow] = useState(() => Date.now());
   const startedAtMs = useMemo(() => {
     if (!startedAt) return undefined;
     const ms = Date.parse(startedAt);
     return Number.isFinite(ms) ? ms : undefined;
   }, [startedAt]);
-  const elapsed = startedAtMs === undefined ? undefined : formatElapsed(now - startedAtMs);
-
-  useEffect(() => {
-    if (startedAtMs === undefined) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [startedAtMs]);
-
   const historyEnabled = !!organizationId && !!threadId;
 
   useEffect(() => {
@@ -373,11 +373,11 @@ export function ReasoningTracePanel({
             <TraceStep
               key={row.key}
               step={row.step}
-              isLast={row.isLast && !elapsed}
+              isLast={row.isLast && startedAtMs === undefined}
               autoOpen={row.autoOpen}
             />
           ))}
-          {elapsed ? (
+          {startedAtMs !== undefined ? (
             <div className="relative pl-6 pb-2 pt-1 animate-in fade-in duration-300">
               {traceRows.length > 0 ? (
                 <div
@@ -395,7 +395,7 @@ export function ReasoningTracePanel({
               />
               <div className="flex items-center gap-2 text-[11px] font-semibold text-violet-600/90 dark:text-violet-400/90 tabular-nums">
                 <Loader2 className="h-3 w-3 animate-spin shrink-0 text-violet-500" />
-                <span>Working for {elapsed}</span>
+                <ElapsedBadge startedAtMs={startedAtMs} />
               </div>
             </div>
           ) : null}
@@ -413,7 +413,7 @@ export function ReasoningTracePanel({
     </>
   );
 
-  if (traceRows.length > 0 || elapsed) {
+  if (traceRows.length > 0 || startedAtMs !== undefined) {
     return <div className="flex flex-col gap-4">{traceList}</div>;
   }
 

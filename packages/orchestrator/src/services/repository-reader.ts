@@ -173,6 +173,12 @@ export interface RepositoryReader {
   getProviderCredential(organizationId: string, providerName: string): string | null;
   listOrganizationSkillInstalls?(organizationId: string): SkillInstall[];
   listRunSteps?(organizationId: string, runId: string): RunStep[];
+  listRunsByIds?(organizationId: string, runIds: readonly string[]): RunState[];
+  listRunStepsByRunIds?(
+    organizationId: string,
+    runIds: readonly string[],
+    limit?: number,
+  ): RunStep[];
   /**
    * Optional lookup so ai-service can read the wake-trigger
    * sourceMessageId off the run row to anchor the

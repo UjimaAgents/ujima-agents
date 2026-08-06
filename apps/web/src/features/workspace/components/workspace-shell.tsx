@@ -93,6 +93,7 @@ export function WorkspaceShell(props: {
     setOrgShellApprovalMode(normalizeOrgShellApprovalMode(props.teamSettings?.policies ?? {}));
   }
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
+  const [notificationError, setNotificationError] = useState<string | null>(null);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
@@ -389,20 +390,34 @@ export function WorkspaceShell(props: {
     const currentMemberId = bootstrap.auth.member?.id;
     if (!organizationId || !currentMemberId) return;
 
-    const source = new EventSource(
-      `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
-    );
+    let source: EventSource | undefined;
+    let reconnectTimer: number | undefined;
+    let disposed = false;
     let seenReady = false;
 
-    source.onopen = () => {
-      console.info("[notifications] stream connected");
-    };
-    source.onerror = () => {
-      if (source.readyState === EventSource.CLOSED) {
-        console.warn("[notifications] stream disconnected permanently — unread counts may be stale");
-      }
-    };
-    source.onmessage = (event) => {
+    const connect = () => {
+      if (disposed) return;
+      source = new EventSource(
+        `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
+      );
+      source.onopen = () => {
+        console.info("[notifications] stream connected");
+        setNotificationError(null);
+      };
+      source.onerror = () => {
+        if (source?.readyState !== EventSource.CLOSED) return;
+        const message = "Live notifications disconnected. Retrying…";
+        console.warn("[notifications]", message);
+        setNotificationError(message);
+        source?.close();
+        if (reconnectTimer === undefined) {
+          reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = undefined;
+            connect();
+          }, 3_000);
+        }
+      };
+      source.onmessage = (event) => {
       const envelope = parseNotificationEnvelope(event.data);
       if (!envelope) return;
       if (envelope.type === "ready") {
@@ -420,7 +435,11 @@ export function WorkspaceShell(props: {
         }
         return;
       }
-      if (envelope.type === "error") return;
+      if (envelope.type === "error") {
+        console.warn("[notifications] server stream error", envelope.message);
+        setNotificationError(envelope.message || "Live notifications are unavailable.");
+        return;
+      }
       if (
         envelope.event !== SocketEventNames.approvalRequested &&
         !isNotificationMessageEvent(envelope.event) &&
@@ -473,10 +492,14 @@ export function WorkspaceShell(props: {
           playApprovalSound();
         }
       }
+      };
     };
+    connect();
 
     return () => {
-      source.close();
+      disposed = true;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      source?.close();
     };
   }, [
     bootstrap.auth.member?.id,
@@ -552,6 +575,11 @@ export function WorkspaceShell(props: {
       </div>
       <DragHandle onResize={setSidebarWidth} />
       <main className="flex h-full min-w-0 flex-1 overflow-hidden bg-white dark:bg-[#09090b]">
+        {notificationError ? (
+          <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-900 shadow dark:bg-amber-950 dark:text-amber-100" role="status">
+            {notificationError}
+          </div>
+        ) : null}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {workspaceTasksActive ? (
             <ChannelGoalsBoard key="workspace-goals" members={members} />
