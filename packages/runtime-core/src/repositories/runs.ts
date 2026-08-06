@@ -164,6 +164,19 @@ export function listRuns(
   return { data, hasMore, nextCursor };
 }
 
+export function listRunsByIds(
+  db: DbHandle,
+  organizationId: string,
+  runIds: readonly string[],
+): RunState[] {
+  if (runIds.length === 0) return [];
+  const placeholders = runIds.map(() => '?').join(', ');
+  const rows = db
+    .prepare(`SELECT * FROM runs WHERE organization_id = ? AND id IN (${placeholders})`)
+    .all(organizationId, ...runIds) as Row[];
+  return rows.map(rowToRun);
+}
+
 export function listThreadRuns(
   db: DbHandle,
   organizationId: string,

@@ -149,6 +149,44 @@ export interface ProviderTestResult {
   message: string;
 }
 
+async function testProviderEndpoint(
+  providerName: string,
+  kind: ProviderKind,
+  configuredBaseUrl: string | undefined,
+  apiKey: string,
+): Promise<{ ok: boolean; message: string }> {
+  const baseUrl = configuredBaseUrl?.replace(/\/$/, '') ?? getDefaultOpenAiCompatBaseUrl(kind);
+  let url: string | undefined;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+
+  if (kind === 'anthropic') {
+    url = configuredBaseUrl ? `${baseUrl}/models` : 'https://api.anthropic.com/v1/models?limit=1';
+    headers['x-api-key'] = apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+  } else if (kind === 'google') {
+    url = 'https://generativelanguage.googleapis.com/v1beta/models';
+    headers['x-goog-api-key'] = apiKey;
+  } else if (baseUrl) {
+    url = `${baseUrl}/models`;
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  if (!url) return { ok: false, message: `No test endpoint is available for ${providerName}.` };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    return response.ok
+      ? { ok: true, message: 'Provider connection verified' }
+      : { ok: false, message: `Provider rejected the request (HTTP ${response.status}).` };
+  } catch {
+    return { ok: false, message: 'Provider connection failed. Check the endpoint and network.' };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function validateOrganizationChart(
   reportsTo: Record<string, string>,
   memberIds: Set<string>,
@@ -353,7 +391,7 @@ export class SettingsService {
     return this.listProviders(organizationId);
   }
 
-  testProvider(organizationId: string, providerName: string): ProviderTestResult {
+  async testProvider(organizationId: string, providerName: string): Promise<ProviderTestResult> {
     const team = this.loadTeamForOrganization(organizationId);
     requireOrganization(this.repo, organizationId);
     const providerKey = normalizeProviderKey(providerName);
@@ -390,7 +428,9 @@ export class SettingsService {
       };
     }
 
-    return { provider: providerKey, ok: true, message: 'Key present' };
+    const provider = team.providers[providerKey];
+    const result = await testProviderEndpoint(providerKey, provider.kind as ProviderKind, provider.baseUrl, key.trim());
+    return { provider: providerKey, ...result };
   }
 
   /**

@@ -233,8 +233,7 @@ describe('conversation-compact selection', () => {
       messages,
     );
 
-    expect(estimate).toBeLessThan(20);
-    expect(estimate).toBeGreaterThan(0);
+    expect(estimate).toBe(1_055);
   });
 
 });

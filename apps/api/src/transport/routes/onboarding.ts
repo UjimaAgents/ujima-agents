@@ -12,7 +12,10 @@ import type {
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
 
-const completedAttempts = new Map<string, OnboardingResponse>();
+const COMPLETED_ATTEMPT_TTL_MS = 10 * 60_000;
+const MAX_COMPLETED_ATTEMPTS = 32;
+const completedAttempts = new Map<string, { response: OnboardingResponse; expiresAt: number }>();
+let onboardingInFlight = false;
 
 export interface OnboardingRoutesOptions {
   auth: AuthService;
@@ -49,12 +52,22 @@ export function registerOnboardingRoutes(
       response: {
         200: OnboardingResponseSchema,
         400: ApiErrorSchema,
+        409: ApiErrorSchema,
       },
     },
   }, async (req, reply) => {
-    if (req.body.attemptId && completedAttempts.has(req.body.attemptId)) {
-      return completedAttempts.get(req.body.attemptId);
+    const now = Date.now();
+    for (const [attemptId, entry] of completedAttempts) {
+      if (entry.expiresAt <= now) completedAttempts.delete(attemptId);
     }
+    if (req.body.attemptId) {
+      const cached = completedAttempts.get(req.body.attemptId);
+      if (cached) return cached.response;
+    }
+    if (onboardingInFlight || repo.listOrganizations().length > 0 || auth.getAuthState(readSessionToken(req)).authenticated) {
+      return apiError(reply, 409, 'Onboarding is already complete or in progress.');
+    }
+    onboardingInFlight = true;
     let organizationId: string | undefined;
     try {
       const result = await onboarding.onboard({
@@ -88,7 +101,15 @@ export function registerOnboardingRoutes(
         sessionToken: session.sessionToken,
       };
       if (req.body.attemptId) {
-        completedAttempts.set(req.body.attemptId, response);
+        completedAttempts.set(req.body.attemptId, {
+          response,
+          expiresAt: Date.now() + COMPLETED_ATTEMPT_TTL_MS,
+        });
+        while (completedAttempts.size > MAX_COMPLETED_ATTEMPTS) {
+          const oldest = completedAttempts.keys().next().value;
+          if (typeof oldest !== 'string') break;
+          completedAttempts.delete(oldest);
+        }
       }
       return response;
     } catch (err) {
@@ -100,7 +121,15 @@ export function registerOnboardingRoutes(
           // Best-effort rollback so a failed sign-up does not strand a login-less org.
         }
       }
-      return apiError(reply, 400, errorMessage(err));
+      return apiError(reply, 400, safeOnboardingError(err));
+    } finally {
+      onboardingInFlight = false;
     }
   });
+}
+
+function safeOnboardingError(error: unknown): string {
+  const message = errorMessage(error);
+  const redacted = message.replace(/(?:[A-Za-z]:[\\/]|\/)[^\s'"`]+/g, '[path]');
+  return redacted.length <= 240 ? redacted : 'Unable to complete onboarding right now.';
 }

@@ -29,19 +29,21 @@ const PROVIDER_NAME_MAP: Record<string, string> = {
   "anthropic-claude-code": "anthropic-claude-code",
 };
 
-export function normalizeProviderName(value: string) {
+export function normalizeProviderName(value: string): string | null {
   // provider.name already stores the internal token (openai / openai-codex / …)
   const normalized = normalizeProviderKey(value);
-  return PROVIDER_NAME_MAP[normalized] ?? "openrouter";
+  return PROVIDER_NAME_MAP[normalized] ?? null;
 }
 
 export function isProviderDraftComplete(provider: TeamProviderDraft): boolean {
   const name = provider.name.trim();
+  const normalized = normalizeProviderName(name);
   return Boolean(
     name &&
-      (normalizeProviderName(name) === "ollama" ||
-        normalizeProviderName(name) === "openai-codex" ||
-        normalizeProviderName(name) === "anthropic-claude-code" ||
+      normalized &&
+      (normalized === "ollama" ||
+        normalized === "openai-codex" ||
+        normalized === "anthropic-claude-code" ||
         provider.apiKey.trim()),
   );
 }
@@ -64,6 +66,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: strin
   const providerEntries = draft.providers
     .map((provider) => {
       const name = normalizeProviderName(provider.name);
+      if (!name) throw new Error(`Unknown provider: ${provider.name}`);
       return {
         name,
         apiKey: provider.apiKey.trim(),
@@ -84,7 +87,7 @@ export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: strin
       title: role.title.trim() || toRoleTitle(roleName),
       description: role.title.trim() || toRoleTitle(roleName),
       instructions: role.instructions.trim() || `Operate as the ${toRoleTitle(roleName)} role.`,
-      provider: normalizeProviderName(role.llm),
+      provider: requireProviderName(role.llm),
       model: role.model.trim() || undefined,
       workspaceScopes: [],
       tools: [],
@@ -157,4 +160,10 @@ export function buildOnboardingRequest(draft: OnboardingDraft, attemptId?: strin
       policies: draft.policies,
     },
   };
+}
+
+function requireProviderName(value: string): string {
+  const normalized = normalizeProviderName(value);
+  if (!normalized) throw new Error(`Unknown provider: ${value}`);
+  return normalized;
 }

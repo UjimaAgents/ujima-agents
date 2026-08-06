@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import {
   buildConnectorScope,
   enrichApprovalScopeForDisplay,
@@ -221,11 +222,20 @@ export function buildConnectorActionScope(input: ToolInvocationInput): string {
   } catch {
     argsPreview = '';
   }
+  let argsFingerprint: string | undefined;
+  try {
+    argsFingerprint = createHash('sha256')
+      .update(JSON.stringify(data.args ?? null))
+      .digest('hex');
+  } catch {
+    argsFingerprint = undefined;
+  }
   return buildConnectorScope({
     serverId,
     serverDisplayName: serverName,
     toolName,
     argsPreview,
+    ...(argsFingerprint ? { argsFingerprint } : {}),
   });
 }
 

@@ -28,15 +28,17 @@ export function WorkflowRunApprovalBanner({
   onReload?: () => void;
 }) {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   if (detail.blockingApprovals.length === 0) return null;
 
   async function resolve(id: string, resolution: "allow_once" | "reject") {
     setResolvingId(id);
+    setError(null);
     try {
       await resolveBlockingApproval(id, detail.run.organizationId, resolution);
       onReload?.();
-    } catch {
-      // leave it; the poll will refresh
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to resolve approval.");
     } finally {
       setResolvingId(null);
     }
@@ -47,6 +49,7 @@ export function WorkflowRunApprovalBanner({
       <div className="flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
         <ShieldAlert className="h-3.5 w-3.5" /> Waiting for approval
       </div>
+      {error ? <p className="px-1 text-xs text-red-600 dark:text-red-300">{error}</p> : null}
       {detail.blockingApprovals.map((a) => (
         <div
           key={a.id}

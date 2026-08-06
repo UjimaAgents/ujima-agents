@@ -104,7 +104,7 @@ export interface WorkspaceState {
   setLoading(loading: boolean): void;
   hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
   addPendingMessage(message: ChatMessageData): void;
-  receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
+  receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent, expectedConversationKey?: string): void;
   appendRunChunk(message: ChatMessageData | undefined, activity?: ActivityEvent): void;
   appendRunChunkBatch(items: { message?: ChatMessageData; activity?: ActivityEvent }[]): void;
   removeMessage(id: string): void;
@@ -731,7 +731,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   hydrateMessages: (messages, toMessage, toActivity) =>
     set((state) => {
       const converted = messages.map((message) => toMessage(message));
-      const mergedMessages = ensureReplyPreviews(mergeChatMessages(state.messages, converted));
+      const withoutStaleStreams = converted.reduce(pruneStreamingMessage, state.messages);
+      const mergedMessages = ensureReplyPreviews(mergeChatMessages(withoutStaleStreams, converted));
       return {
         messages: mergedMessages,
         ...appendSequencedEvents(state, messages.map((message) => toActivity(message))),
@@ -739,8 +740,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   addPendingMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message] })),
-  receiveMessage: (tempId, message, toMessage, toActivity) =>
+  receiveMessage: (tempId, message, toMessage, toActivity, expectedConversationKey) =>
     set((state) => {
+      if (expectedConversationKey && state.conversationKey !== expectedConversationKey) return state;
       const nextMessage = toMessage(message);
       if (nextMessage.parentMessageId && !nextMessage.replyPreview) {
         const parent = state.messages.find((m) => m.id === nextMessage.parentMessageId);
@@ -748,16 +750,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           nextMessage.replyPreview = { name: parent.name, content: parent.content };
         }
       }
-      const withoutTemp = tempId
-        ? state.messages.filter((item) => item.id !== tempId)
-        : state.messages.filter(
-            (item) => !(item.pending && item.name === nextMessage.name && item.content === nextMessage.content),
-          );
-      if (withoutTemp.some((item) => item.id === nextMessage.id)) {
-        return {
-          messages: ensureReplyPreviews(mergeChatMessages(pruneStreamingMessage(withoutTemp, nextMessage), [nextMessage])),
-          ...appendSequencedEvents(state, [toActivity(message)]),
-        };
+      let withoutTemp = state.messages;
+      if (tempId) {
+        withoutTemp = state.messages.filter((item) => item.id !== tempId);
+      } else {
+        const pendingIndex = state.messages.findIndex((item) =>
+          item.pending && (nextMessage.clientMessageId
+            ? item.clientMessageId === nextMessage.clientMessageId
+            : item.name === nextMessage.name && item.content === nextMessage.content),
+        );
+        if (pendingIndex >= 0) {
+          withoutTemp = [...state.messages.slice(0, pendingIndex), ...state.messages.slice(pendingIndex + 1)];
+        }
       }
       return {
         messages: ensureReplyPreviews(mergeChatMessages(pruneStreamingMessage(withoutTemp, nextMessage), [nextMessage])),

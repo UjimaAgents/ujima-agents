@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Bot, Check, Eye, EyeOff, FolderKanban, Search, Server, ShieldCheck } from "lucide-react";
 import { FieldShell, TextInput } from "@/components/ui/form-fields";
 import { Select } from "@/components/ui/select";
@@ -10,7 +10,6 @@ import {
   resolveInternalProviderToken,
   resolveUiProviderToken,
   resolveAuthMode,
-  type OpenAIAuthMode,
 } from "@/features/providers/catalog";
 import { defaultModelForProvider, type OnboardingDraft, type OnboardingStep, type RolePresetTemplate } from "../types";
 import { getSuggestedAgentName } from "../agent-name-suggestions";
@@ -26,12 +25,15 @@ interface Props {
   canGoBack: boolean;
   isSubmitting: boolean;
   submitError: string | null;
+  isStepAccessible: boolean;
+  providerReady: boolean;
+  onProviderReady: (ready: boolean) => void;
 }
 
 const panel = "rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950";
 
 export function ActivationOnboardingForm(props: Props) {
-  const { step, draft, roleTemplates, onChange } = props;
+  const { step, draft, roleTemplates, onChange, onProviderReady } = props;
   const [attempted, setAttempted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -42,6 +44,7 @@ export function ActivationOnboardingForm(props: Props) {
   const [claudeCodeConnected, setClaudeCodeConnected] = useState(false);
 
   const error = useMemo(() => {
+    if (!props.isStepAccessible) return "Complete the previous step first.";
     if (step.id === "owner") {
       if (!draft.ownerName.trim()) return "Enter your name.";
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.ownerEmail.trim())) return "Enter a valid email address.";
@@ -65,8 +68,9 @@ export function ActivationOnboardingForm(props: Props) {
       if (!role?.agentName.trim()) return "Name your starter agent.";
       if (!role.name.trim()) return "Choose a starter role.";
     }
+    if (step.id === "review" && !props.providerReady) return "Reconnect your provider before creating the workspace.";
     return null;
-  }, [draft, step.id, codexConnected, claudeCodeConnected]);
+  }, [draft, step.id, codexConnected, claudeCodeConnected, props.isStepAccessible, props.providerReady]);
 
   const update = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) =>
     onChange({ ...draft, [key]: value });
@@ -95,6 +99,17 @@ export function ActivationOnboardingForm(props: Props) {
 
   const provider = draft.providers[0];
   const role = draft.roles[0];
+  const providerName = provider?.name;
+  const providerApiKey = provider?.apiKey;
+
+  useEffect(() => {
+    if (step.id !== "provider" || !providerName) return;
+    const ready = providerName === "ollama" ||
+      (providerName !== "openai-codex" && providerName !== "anthropic-claude-code"
+        ? Boolean(providerApiKey?.trim())
+        : providerName === "openai-codex" ? codexConnected : claudeCodeConnected);
+    onProviderReady(ready);
+  }, [step.id, providerName, providerApiKey, codexConnected, claudeCodeConnected, onProviderReady]);
   const defaultTemplate = {
     name: "senior-engineer",
     title: role?.title || "Software Engineer",

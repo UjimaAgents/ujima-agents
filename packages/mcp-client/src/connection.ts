@@ -23,6 +23,7 @@ export interface ToolCallContext {
   agentId: string;
   taskId?: string;
   sessionId?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface MCPConnection {
@@ -51,6 +52,7 @@ export interface ConnectOptions {
 }
 
 type QueueItem = () => Promise<void>;
+const MCP_TOOL_CALL_TIMEOUT_MS = 60_000;
 
 export async function connectMCP(
   def: MCPDef,
@@ -141,17 +143,22 @@ export async function connectMCP(
       let result: ToolCallResult;
       try {
         result = await enqueue<ToolCallResult>(async () => {
-          const res = await client.callTool({
-            name: toolName,
-            arguments: (args ?? {}) as Record<string, unknown>,
-          });
+          const res = await withAbortTimeout(
+            client.callTool({
+              name: toolName,
+              arguments: (args ?? {}) as Record<string, unknown>,
+            }),
+            ctx.abortSignal,
+            MCP_TOOL_CALL_TIMEOUT_MS,
+            toolName,
+          );
           return {
             content: res.content,
             isError: typeof res.isError === 'boolean' ? res.isError : undefined,
           };
         });
       } catch (err) {
-        if (isConnectionClosedError(err)) {
+        if (isConnectionClosedError(err) || isMcpCallAbortError(err)) {
           open = false;
           void client.close().catch(() => {
             /* already closed */
@@ -238,4 +245,40 @@ function resultErrorText(result: ToolCallResult): string | undefined {
     }
   }
   return parts.join('\n') || undefined;
+}
+
+function isMcpCallAbortError(input: unknown): boolean {
+  return input instanceof Error && input.message.startsWith('MCP tool call ');
+}
+
+function withAbortTimeout<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  toolName: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => finish(new Error(`MCP tool call timed out after ${timeoutMs}ms: ${toolName}`)), timeoutMs);
+    const onAbort = () => finish(new Error(`MCP tool call aborted: ${toolName}`));
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (error?: Error, value?: T) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(value as T);
+    };
+    if (signal?.aborted) {
+      finish(new Error(`MCP tool call aborted: ${toolName}`));
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    work.then((value) => finish(undefined, value), (error: unknown) => {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
 }

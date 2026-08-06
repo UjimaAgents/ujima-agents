@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import { hasClaudeCodeLogin } from '@ujima/orchestrator';
 
 interface CodexLoginSession {
   loginId: string;
@@ -172,15 +173,6 @@ function extractAccountIdFromJwt(token: string | undefined): string | undefined 
   }
 }
 
-function hasClaudeCodeLogin(): boolean {
-  try {
-    const claudeHome = process.env.CLAUDE_CODE_HOME?.trim() || join(homedir(), '.claude');
-    return existsSync(claudeHome);
-  } catch {
-    return false;
-  }
-}
-
 export function registerOauthRoutes(_app: FastifyInstance): void {
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
@@ -258,7 +250,7 @@ export function registerOauthRoutes(_app: FastifyInstance): void {
 
   app.get('/auth/anthropic/claude-code/status', {
     schema: {
-      description: 'Check if Claude Code is logged in (detects ~/.claude/ directory)',
+      description: 'Check if Claude Code credentials are available locally',
       tags: ['Onboarding'],
       response: {
         200: z.object({

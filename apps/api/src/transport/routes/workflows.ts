@@ -260,16 +260,30 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     const run = deps.repo.getWorkflowRun(auth.user.organizationId, req.params.id);
     if (!run) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Workflow run not found' });
     const orgId = auth.user.organizationId;
+    const memberById = new Map(deps.repo.listMembers(orgId).map((member) => [member.id, member]));
     const memberName = (id: string | null | undefined) =>
-      id ? (deps.repo.getMember(orgId, id)?.name ?? id) : undefined;
+      id ? (memberById.get(id)?.name ?? id) : undefined;
     // Node runs carry the execution timeline; resolve the agent behind each one
     // plus the tool calls it made, so the run view can show who did what, when —
     // the agent's actual activity, not just its final text.
-    const nodeRuns = deps.repo.listWorkflowNodeRuns(run.id).map((nr) => {
+    const rawNodeRuns = deps.repo.listWorkflowNodeRuns(run.id);
+    const childRunIds = [...new Set(rawNodeRuns.flatMap((nr) => (nr.childRunId ? [nr.childRunId] : [])))];
+    const childRuns = deps.repo.listRunsByIds?.(orgId, childRunIds) ??
+      childRunIds.map((childRunId) => deps.repo.getRun(orgId, childRunId)).filter((childRun): childRun is NonNullable<typeof childRun> => childRun !== null);
+    const childRunById = new Map(childRuns.map((childRun) => [childRun.id, childRun]));
+    const stepRows = deps.repo.listRunStepsByRunIds?.(orgId, childRunIds, 60) ??
+      childRunIds.flatMap((childRunId) => deps.repo.listRunSteps?.(orgId, childRunId)?.slice(-60) ?? []);
+    const stepsByRunId = new Map<string, typeof stepRows>();
+    for (const step of stepRows) {
+      const steps = stepsByRunId.get(step.runId) ?? [];
+      steps.push(step);
+      stepsByRunId.set(step.runId, steps);
+    }
+    const nodeRuns = rawNodeRuns.map((nr) => {
       // The node's failureReason is generic ('agent_run_failed'); the real error
       // lives on the child agent run's summary. Surface it so the timeline shows
       // what actually went wrong (e.g. a context-length overflow).
-      const childSummary = nr.childRunId ? deps.repo.getRun(orgId, nr.childRunId)?.summary : undefined;
+      const childSummary = nr.childRunId ? childRunById.get(nr.childRunId)?.summary : undefined;
       return {
         ...nr,
         agentName: memberName(nr.agentId),
@@ -278,8 +292,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
             ? childSummary
             : undefined,
         toolSteps: nr.childRunId
-          ? (deps.repo.listRunSteps?.(orgId, nr.childRunId) ?? [])
-              .slice(-60)
+          ? (stepsByRunId.get(nr.childRunId) ?? [])
               .map((s) => ({
                 tool: s.toolId,
                 action: s.action,

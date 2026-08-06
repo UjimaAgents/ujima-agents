@@ -72,7 +72,11 @@ function formatMmSs(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function NudgeCountdown({ lastNudgedAtIso }: { lastNudgedAtIso: string }): JSX.Element | null {
+const NudgeCountdown = memo(function NudgeCountdown({
+  lastNudgedAtIso,
+}: {
+  lastNudgedAtIso: string;
+}): JSX.Element | null {
   const lastMs = useMemo(() => Date.parse(lastNudgedAtIso), [lastNudgedAtIso]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -95,7 +99,7 @@ function NudgeCountdown({ lastNudgedAtIso }: { lastNudgedAtIso: string }): JSX.E
       <span>Next nudge in {formatMmSs(remaining)}</span>
     </div>
   );
-}
+});
 
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback;

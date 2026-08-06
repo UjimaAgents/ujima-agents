@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useRef } from "react";
 import {
   listWorkflowApprovals,
   transitionWorkflowRun,
@@ -8,6 +8,7 @@ import {
   type WorkflowToolApproval,
 } from "@/features/workflows/use-workflows";
 import type { ApprovalCardData } from "./components/chat";
+import { usePolling } from "@/hooks/use-polling";
 import { useWorkspaceStore } from "./workspace-store";
 
 /** Map a pending workflow gate into the shared approval-queue card shape. */
@@ -92,39 +93,17 @@ const WORKFLOW_APPROVALS_POLL_MS = 15000;
  */
 export function useWorkflowApprovalsPoll(): void {
   const setWorkflowApprovals = useWorkspaceStore((state) => state.setWorkflowApprovals);
-  useEffect(() => {
-    let cancelled = false;
-    let lastSignature = "";
-    const tick = async () => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      try {
-        const { approvals, toolApprovals } = await listWorkflowApprovals();
-        if (cancelled) return;
-        const cards = [
-          ...approvals.map(workflowApprovalToCard),
-          ...toolApprovals.map(toolApprovalToCard),
-        ];
-        const signature = cards
-          .map((c) => c.id)
-          .sort()
-          .join("|");
-        if (signature === lastSignature) return; // unchanged — skip the store write
-        lastSignature = signature;
-        setWorkflowApprovals(cards);
-      } catch {
-        // Transient — keep the last known set until the next tick.
-      }
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), WORKFLOW_APPROVALS_POLL_MS);
-    const onVisible = () => {
-      if (typeof document !== "undefined" && !document.hidden) void tick();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+  const lastSignature = useRef("");
+  const poll = useCallback(async () => {
+    const { approvals, toolApprovals } = await listWorkflowApprovals();
+    const cards = [
+      ...approvals.map(workflowApprovalToCard),
+      ...toolApprovals.map(toolApprovalToCard),
+    ];
+    const signature = cards.map((c) => c.id).sort().join("|");
+    if (signature === lastSignature.current) return;
+    lastSignature.current = signature;
+    setWorkflowApprovals(cards);
   }, [setWorkflowApprovals]);
+  usePolling(poll, { intervalMs: WORKFLOW_APPROVALS_POLL_MS });
 }

@@ -143,7 +143,7 @@ function ProviderFormModalActive({
                 apiKey={apiKey}
                 onApiKeyChange={setApiKey}
                 authMode={authMode}
-                onAuthModeChange={isUpdate ? undefined : handleAuthModeChange}
+                onAuthModeChange={handleAuthModeChange}
                 onCodexConnectionChange={setCodexConnected}
                 onClaudeCodeConnectionChange={setClaudeCodeConnected}
               />

@@ -244,7 +244,7 @@ export function registerSettingsRoutes(
 
   app.post('/settings/providers/:providerName/test', {
     schema: {
-      description: 'Test whether a provider key is configured',
+      description: 'Verify provider credentials with a live connectivity check',
       tags: ['Settings'],
       params: ProviderTestParamsSchema,
       querystring: OrganizationQuerySchema,
@@ -261,7 +261,7 @@ export function registerSettingsRoutes(
     try {
       const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
       if (forbidden) return forbidden;
-      return settings.testProvider(req.query.organizationId, req.params.providerName);
+      return await settings.testProvider(req.query.organizationId, req.params.providerName);
     } catch (err) {
       return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
     }

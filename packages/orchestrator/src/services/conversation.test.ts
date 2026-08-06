@@ -613,7 +613,7 @@ describe('ConversationService @all mentions', () => {
     expect(compactedSource?.toolCalls).toHaveLength(1);
     expect(compactedSource?.metadata?.compactedInto).toBe(summary?.id);
     expect(stored.data.some((message) => message.metadata?.compactedInto)).toBe(true);
-    expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(503);
+    expect(emits.filter((entry) => entry.event === SocketEventNames.channelMessage)).toHaveLength(508);
   });
 
   it('does not compact while an agent run is still publishing progress', async () => {
@@ -659,7 +659,7 @@ describe('ConversationService @all mentions', () => {
       mode: 'clear',
     });
 
-    expect(summarizeConversation).toHaveBeenCalledWith(expect.any(Array), 'archive', []);
+    expect(summarizeConversation).toHaveBeenCalledWith(expect.any(Array), 'archive', [], expect.any(AbortSignal));
     expect(result.summaryMessage?.content).toContain('[[CONVERSATION_ARCHIVE_V1]]');
     const source = repo.listMessages('org-1', 'general').data.find((message) => message.content === 'clear me');
     expect(source?.metadata?.compactedInto).toBe(result.summaryMessage?.id);

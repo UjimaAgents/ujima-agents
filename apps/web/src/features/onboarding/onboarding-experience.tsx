@@ -61,7 +61,7 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
               ? (item as { id: string }).id
               : fallbackRole?.id ?? `role-restored-${index}`;
           const rawLlm = typeof (item as { llm?: unknown }).llm === "string" ? (item as { llm: string }).llm : "";
-          const llm = rawLlm.trim() ? normalizeProviderName(rawLlm) : fallbackRole?.llm ?? "";
+          const llm = (rawLlm.trim() ? normalizeProviderName(rawLlm) : null) ?? fallbackRole?.llm ?? "";
           const model = typeof (item as { model?: unknown }).model === "string" ? (item as { model: string }).model : fallbackRole?.model ?? "";
           const modelOptions = getModelOptionsForProvider(llm);
           const repairedModel = modelOptions.some((option) => option.value === model)
@@ -95,7 +95,7 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
         })
       : baseline.roles.map((role) => ({
           ...role,
-          llm: normalizeProviderName(role.llm),
+          llm: normalizeProviderName(role.llm) ?? role.llm,
           model: getModelOptionsForProvider(role.llm).some((option) => option.value === role.model)
             ? role.model
             : defaultModelForProvider(role.llm),
@@ -137,7 +137,7 @@ function normalizeDraft(raw: unknown, baseline: OnboardingDraft): OnboardingDraf
             name:
               typeof (item as { name?: unknown }).name === "string" &&
               (item as { name: string }).name.trim()
-                ? normalizeProviderName((item as { name: string }).name)
+                ? normalizeProviderName((item as { name: string }).name) ?? ""
                 : "",
             apiKey: "",
           };
@@ -193,6 +193,20 @@ function readPersistedSession(baseline: OnboardingDraft = INITIAL_DRAFT): Persis
   }
 }
 
+function createAttemptId(): string {
+  try {
+    const stored = window.sessionStorage.getItem("ujima-onboarding-attempt");
+    if (stored) return stored;
+    const id = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    window.sessionStorage.setItem("ujima-onboarding-attempt", id);
+    return id;
+  } catch {
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
 function isOrganizationStepComplete(draft: OnboardingDraft) {
   return Boolean(draft.organizationName.trim() && draft.workspaceRoot.trim());
 }
@@ -243,7 +257,8 @@ export function OnboardingExperience({
   const [session, setSession] = useState<PersistedOnboardingState>(() => readPersistedSession(starterDraft));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [attemptId] = useState(() => crypto.randomUUID());
+  const [providerReady, setProviderReady] = useState(false);
+  const [attemptId] = useState(() => (typeof window === "undefined" ? "pending" : createAttemptId()));
   const { activeStep, draft } = session;
 
   useEffect(() => {
@@ -297,16 +312,34 @@ export function OnboardingExperience({
       agent:
         isOwnerStepComplete(draft) &&
         isOrganizationStepComplete(draft) &&
+        providerReady &&
         draft.providers.every(isProviderDraftComplete),
       review:
         isOwnerStepComplete(draft) &&
         isOrganizationStepComplete(draft) &&
+        providerReady &&
         draft.providers.every(isProviderDraftComplete) &&
         isTeamStepComplete(draft),
     };
 
     return accessMap;
-  }, [draft]);
+  }, [draft, providerReady]);
+
+  useEffect(() => {
+    const firstIncomplete = ONBOARDING_STEPS.find((step) =>
+      step.id === "provider" ? !providerReady : !accessibleSteps[step.id],
+    );
+    if (!firstIncomplete || (accessibleSteps[activeStep] && firstIncomplete.id !== "provider")) return;
+    if (firstIncomplete.id === activeStep) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setSession((current) => ({ ...current, activeStep: firstIncomplete.id }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessibleSteps, activeStep, providerReady]);
 
   const handleStepClick = (stepId: OnboardingStepId) => {
     if (!accessibleSteps[stepId]) {
@@ -423,6 +456,9 @@ export function OnboardingExperience({
               onSubmit={() => void handleSubmit(draft)}
               isSubmitting={isSubmitting}
               submitError={submitError}
+              isStepAccessible={accessibleSteps[activeStep]}
+              providerReady={providerReady}
+              onProviderReady={setProviderReady}
             />
           </div>
         </div>

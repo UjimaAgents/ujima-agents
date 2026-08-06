@@ -369,7 +369,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       messages: runCtx.messages,
       toolDefs,
       attachedMcpServers,
-      maxIterations: Number.MAX_SAFE_INTEGER,
+      maxIterations: this.maxIterationsPerRun,
       organizationId: input.organizationId,
       runId: input.runId,
       channelId: cultureChannelId ?? input.threadId,

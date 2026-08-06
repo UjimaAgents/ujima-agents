@@ -219,4 +219,4 @@ export type {
 } from './services/index.js';
 
 export { hasCodexAccessToken, readCodexAccessToken } from './utils/codex-auth.js';
-
+export { hasClaudeCodeLogin } from './utils/claude-code-auth.js';

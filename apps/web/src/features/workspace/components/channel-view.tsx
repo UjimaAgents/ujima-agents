@@ -353,6 +353,18 @@ interface ChannelViewProps {
   onOrgShellApprovalModeChange?: (value: ShellApprovalMode) => Promise<void> | void;
 }
 
+function readReplyDraft(key: string): ChatMessageData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(`ujima.replyDraft.${key}`) ?? "null") as Partial<ChatMessageData> | null;
+    return value && typeof value.id === "string" && typeof value.name === "string" && typeof value.content === "string"
+      ? { id: value.id, name: value.name, content: value.content, role: value.role ?? "", time: value.time ?? "", kind: value.kind }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ChannelView({
   bootstrap,
   conversation,
@@ -372,7 +384,8 @@ export function ChannelView({
   const [resolvingQuestions, setResolvingQuestions] = useState<Record<string, boolean>>({});
   const [questionErrors, setQuestionErrors] = useState<Record<string, string>>({});
   const [stoppingRunId, setStoppingRunId] = useState<string | undefined>();
-  const [replyTo, setReplyTo] = useState<ChatMessageData | null>(null);
+  const replyDraftKey = `${bootstrap.organization?.id ?? ""}:${conversation.type}:${conversation.id}`;
+  const [replyTo, setReplyTo] = useState<ChatMessageData | null>(() => readReplyDraft(replyDraftKey));
   const [scheduleMode, setScheduleMode] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -382,6 +395,23 @@ export function ChannelView({
   const detailsWidth = useWorkspaceStore((state) => state.detailsWidth);
   const detailsTab = useWorkspaceStore((state) => state.detailsTab);
   const chatFontSize = useWorkspaceStore((state) => state.chatFontSize);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = `ujima.replyDraft.${replyDraftKey}`;
+    if (!replyTo) {
+      window.sessionStorage.removeItem(key);
+      return;
+    }
+    window.sessionStorage.setItem(key, JSON.stringify({
+      id: replyTo.id,
+      name: replyTo.name,
+      content: replyTo.content,
+      role: replyTo.role,
+      time: replyTo.time,
+      kind: replyTo.kind,
+    }));
+  }, [replyDraftKey, replyTo]);
 
   const {
     setActiveTab,
@@ -1376,6 +1406,7 @@ export function ChannelView({
             inlineError={feed.error}
             mentionSuggestions={mentionSuggestions}
             replyTo={replyTo}
+            draftKey={replyDraftKey}
             onCancelReply={handleCancelReply}
             stoppableRunIds={stoppableRunIds}
             onStopRuns={stopRuns}

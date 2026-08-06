@@ -1,4 +1,3 @@
-import { dirname } from 'node:path';
 import type * as ClaudeAgentSdkModule from '@anthropic-ai/claude-agent-sdk';
 import type {
   query,
@@ -254,7 +253,6 @@ function claudeEnvironment(): Record<string, string | undefined> {
   const configuredHome = process.env.CLAUDE_CODE_HOME?.trim();
   if (configuredHome) {
     env.CLAUDE_CONFIG_DIR = configuredHome;
-    env.HOME = dirname(configuredHome);
   }
   return env;
 }

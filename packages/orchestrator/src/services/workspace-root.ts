@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import {
-  createPathResolver,
+  createRoleScopedPathResolver,
   ERR_PATH_ESCAPE,
   PathEscapeError,
   type PathResolver,
@@ -154,11 +154,10 @@ export async function createMemberBoundaryPathResolver(
     memberId,
     roleName,
   );
-  return createPathResolver({
-    root: organization.workspace.root,
-    scopePaths: workspaceMember.roleScopePaths,
-    enforceRoleScopes: false,
-  });
+  return createRoleScopedPathResolver(
+    organization.workspace.root,
+    workspaceMember.roleScopePaths,
+  );
 }
 
 /** @deprecated Use {@link createMemberBoundaryPathResolver}. */

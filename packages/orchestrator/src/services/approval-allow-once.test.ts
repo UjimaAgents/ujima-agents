@@ -121,12 +121,9 @@ describe('ApprovalService allow_once regression', () => {
       reason: 'Resolved from workspace (allow_once).',
     });
 
-    // Canonical connector scope keys on serverId+toolName only; the
-    // display fields (serverDisplayName, argsPreview) are neutralized so
-    // a stored grant matches later calls regardless of args/label. The
-    // resume scope is consumed via the same canonicalization on both
-    // sides, so neutralizing here is matching-safe.
-    expect(resumedScope).toBe('connector:{"serverId":"code-review-graph","serverDisplayName":"","toolName":"get_architecture_overview","argsPreview":""}');
+    expect(resumedScope).toBe(
+      canonicalizeApprovalGrantScope(stripApprovalScopeDisplayFields(displayScope)),
+    );
     expect(resolvedReason).toBe('Resolved from workspace (allow_once).');
   });
 });
