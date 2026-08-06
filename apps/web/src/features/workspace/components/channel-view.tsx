@@ -1153,12 +1153,26 @@ export function ChannelView({
           </div>
         </div>
         {activeTab === "conversation" ? (
-          <div className="relative flex flex-1 min-h-0 flex-col">
+          <div className="relative flex flex-1 min-h-0 flex-col" aria-busy={Boolean(feed.archiving)}>
             {feed.archiving ? (
-              <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-white/70 backdrop-blur-[1px] dark:bg-zinc-950/70">
-                <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                  <Loader2 className="h-4 w-4 animate-spin text-violet-600 dark:text-violet-400" />
-                  {feed.archiving === "clear" ? "Clearing conversation…" : "Summarizing…"}
+              <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex justify-center">
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-xl border border-violet-200 bg-white/95 px-3 py-2.5 text-sm shadow-lg shadow-violet-500/10 backdrop-blur dark:border-violet-500/30 dark:bg-zinc-900/95"
+                >
+                  <Loader2
+                    className="mt-0.5 h-4 w-4 shrink-0 text-violet-600 motion-safe:animate-spin dark:text-violet-400"
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-zinc-800 dark:text-zinc-100">
+                      {feed.archiving === "clear" ? "Clearing conversation" : "Summarizing conversation"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                      Working through the transcript. You can keep reading while it runs.
+                    </p>
+                  </div>
                 </div>
               </div>
             ) : null}

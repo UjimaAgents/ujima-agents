@@ -1211,6 +1211,7 @@ function ChatInputComponent({
           onClose={() => { if (!isCommanding) { setClearConfirmation(false); setError(null); } }}
           title="Clear conversation"
           message="Older messages are summarized into one archive note and hidden from the thread. This can't be undone."
+          errorMessage={clearConfirmation ? error ?? undefined : undefined}
           confirmLabel="Clear"
           cancelLabel="Cancel"
           variant="primary"
@@ -1710,7 +1711,7 @@ function ChatInputComponent({
             </div>
           </div>
         </div>
-        {error ? (
+        {error && !clearConfirmation ? (
           <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
         ) : null}
       </div>

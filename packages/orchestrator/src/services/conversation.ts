@@ -84,7 +84,6 @@ export interface ConversationServiceOptions {
     runSteps: RunStep[],
     signal?: AbortSignal,
   ) => Promise<string>;
-  summarizeConversationTimeoutMs?: number;
   contextWindowTokens?: (organizationId: string, threadId: string) => number;
   autoCompactConversations?: boolean;
 }
@@ -94,7 +93,6 @@ export class ConversationService {
   private readonly onMemberAlerted?: (input: MemberAlertInput) => Promise<void> | void;
   private readonly onMessagePublished?: (message: Message) => void | Promise<void>;
   private readonly summarizeConversation?: ConversationServiceOptions['summarizeConversation'];
-  private readonly summarizeConversationTimeoutMs: number;
   private readonly contextWindowTokens: NonNullable<ConversationServiceOptions['contextWindowTokens']>;
   private readonly autoCompactConversations: boolean;
   private readonly mentionFanoutCap: number;
@@ -118,7 +116,6 @@ export class ConversationService {
     this.onMemberAlerted = options.onMemberAlerted;
     this.onMessagePublished = options.onMessagePublished;
     this.summarizeConversation = options.summarizeConversation;
-    this.summarizeConversationTimeoutMs = options.summarizeConversationTimeoutMs ?? 180_000;
     this.contextWindowTokens = options.contextWindowTokens ?? (() => 128_000);
     this.autoCompactConversations = options.autoCompactConversations ?? false;
     this.mentionFanoutCap = options.mentionFanoutCap ?? 10;
@@ -423,15 +420,11 @@ export class ConversationService {
       publishMessage: (message, mentions, attachmentIds, options) =>
         this.publishMessage(message, mentions as never[], attachmentIds, options),
       summarizeConversation: async (messages, mode, runSteps, signal) => {
-        if (!this.summarizeConversation) {
+        const summarizeConversation = this.summarizeConversation;
+        if (!summarizeConversation) {
           throw new Error('AI conversation summarizer is not configured.');
         }
-        return withTimeout(
-          (abortSignal) => this.summarizeConversation?.(messages, mode, runSteps, abortSignal) ?? Promise.reject(new Error('AI conversation summarizer is not configured.')),
-          this.summarizeConversationTimeoutMs,
-          'Conversation summary timed out. Try again in a moment.',
-          signal,
-        );
+        return summarizeConversation(messages, mode, runSteps, signal);
       },
       contextWindowTokens: this.contextWindowTokens,
     };
@@ -1396,27 +1389,4 @@ function mergeRankedPaginatedMessages(
 
 function uniqueMentionIds(mentions: MessageMention[]): string[] {
   return [...new Set(mentions.map((mention) => mention.memberId))];
-}
-
-function withTimeout<T>(
-  factory: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-  message: string,
-  parentSignal?: AbortSignal,
-): Promise<T> {
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  if (parentSignal?.aborted) controller.abort();
-  parentSignal?.addEventListener('abort', onAbort, { once: true });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new Error(message));
-    }, timeoutMs);
-  });
-  return Promise.race([Promise.resolve().then(() => factory(controller.signal)), timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-    parentSignal?.removeEventListener('abort', onAbort);
-  });
 }

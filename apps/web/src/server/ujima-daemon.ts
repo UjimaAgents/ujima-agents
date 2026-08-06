@@ -89,7 +89,7 @@ export async function daemonFetch(
   path: string,
   init: RequestInit = {},
   sessionToken?: string,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number | null },
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${readDaemonBearerToken()}`);
@@ -109,13 +109,14 @@ export async function daemonFetch(
   }
 
   const url = `${daemonBaseUrl()}${path}`;
-  const timeoutMs =
-    options?.timeoutMs ??
-    (Number.isFinite(DAEMON_FETCH_TIMEOUT_MS) && DAEMON_FETCH_TIMEOUT_MS > 0
-      ? DAEMON_FETCH_TIMEOUT_MS
-      : DEFAULT_DAEMON_FETCH_TIMEOUT_MS);
+  const timeoutMs = options?.timeoutMs === null
+    ? null
+    : options?.timeoutMs ??
+      (Number.isFinite(DAEMON_FETCH_TIMEOUT_MS) && DAEMON_FETCH_TIMEOUT_MS > 0
+        ? DAEMON_FETCH_TIMEOUT_MS
+        : DEFAULT_DAEMON_FETCH_TIMEOUT_MS);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = timeoutMs === null ? undefined : setTimeout(() => controller.abort(), timeoutMs);
   const upstreamSignal = init.signal;
   if (upstreamSignal) {
     if (upstreamSignal.aborted) {
@@ -147,7 +148,7 @@ export async function daemonFetch(
       `Unable to reach the Ujima daemon at ${url}. Run \`ujima start\` (npm install) or \`bun run dev:stack\` / \`bun run dev\` and ensure the API is listening on port ${DEFAULT_DAEMON_PORT}. (${reason})`,
     );
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
   }
 }
 

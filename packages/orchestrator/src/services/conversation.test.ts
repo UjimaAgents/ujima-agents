@@ -15,8 +15,7 @@ import { ConversationService } from './conversation.js';
 
 function createConversationFixture(options: {
   autoCompactConversations?: boolean;
-  summarizeConversation?: (messages: Message[], mode: 'summary' | 'archive', runSteps: RunStep[]) => Promise<string>;
-  summarizeConversationTimeoutMs?: number;
+  summarizeConversation?: (messages: Message[], mode: 'summary' | 'archive', runSteps: RunStep[], signal?: AbortSignal) => Promise<string>;
 } = {}) {
   const organization = OrganizationSchema.parse({
     id: 'org-1',
@@ -225,7 +224,6 @@ function createConversationFixture(options: {
     },
     summarizeConversation: options.summarizeConversation ?? (async (messages, mode) =>
       `${mode === 'archive' ? '[[CONVERSATION_ARCHIVE_V1]]' : '[[CONVERSATION_SUMMARY_V2]]'} # AI summarized ${messages.length} messages.`),
-    summarizeConversationTimeoutMs: options.summarizeConversationTimeoutMs,
     contextWindowTokens: () => 1_000,
     autoCompactConversations: options.autoCompactConversations,
   });
@@ -659,16 +657,19 @@ describe('ConversationService @all mentions', () => {
       mode: 'clear',
     });
 
-    expect(summarizeConversation).toHaveBeenCalledWith(expect.any(Array), 'archive', [], expect.any(AbortSignal));
+    expect(summarizeConversation).toHaveBeenCalledWith(expect.any(Array), 'archive', [], undefined);
     expect(result.summaryMessage?.content).toContain('[[CONVERSATION_ARCHIVE_V1]]');
     const source = repo.listMessages('org-1', 'general').data.find((message) => message.content === 'clear me');
     expect(source?.metadata?.compactedInto).toBe(result.summaryMessage?.id);
   });
 
-  it('times out summarize without compacting source messages', async () => {
+  it('waits for a slow summarizer before compacting source messages', async () => {
+    let resolveSummary!: (summary: string) => void;
+    const summary = new Promise<string>((resolve) => {
+      resolveSummary = resolve;
+    });
     const { repo, service } = createConversationFixture({
-      summarizeConversation: () => new Promise(() => undefined),
-      summarizeConversationTimeoutMs: 5,
+      summarizeConversation: () => summary,
     });
     service.sendMessage({
       organizationId: 'org-1',
@@ -678,16 +679,20 @@ describe('ConversationService @all mentions', () => {
       content: 'summarize me',
     });
 
-    await expect(service.archiveConversation({
+    const archive = service.archiveConversation({
       organizationId: 'org-1',
       threadId: 'general',
       memberId: 'human-1',
       mode: 'summarize',
-    })).rejects.toThrow('Conversation summary timed out');
+    });
+    await new Promise((resolve) => setImmediate(resolve));
 
     const messages = repo.listMessages('org-1', 'general').data;
     expect(messages.some((message) => message.content.startsWith('[[CONVERSATION_SUMMARY_V2]]'))).toBe(false);
     expect(messages.find((message) => message.content === 'summarize me')?.metadata?.compactedInto).toBeUndefined();
+
+    resolveSummary('[[CONVERSATION_SUMMARY_V2]] # Slow summary.');
+    await expect(archive).resolves.toMatchObject({ summaryMessage: expect.any(Object) });
   });
 
 });
