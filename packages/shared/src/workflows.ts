@@ -172,6 +172,40 @@ export const WorkflowGraphSchema = z.object({
 });
 export type WorkflowGraph = z.infer<typeof WorkflowGraphSchema>;
 
+export function workflowPortForNodeKind(kind: WorkflowNodeKind | undefined): WorkflowPort {
+  if (kind === "skill") return "ai_skill";
+  if (kind === "tool") return "ai_tool";
+  return "main";
+}
+
+/** Normalize legacy edges once before editor or runtime projection. */
+export function normalizeWorkflowGraph(input: unknown): WorkflowGraph {
+  if (!input || typeof input !== "object") {
+    return WorkflowGraphSchema.parse(input);
+  }
+  const record = input as { nodes?: unknown; edges?: unknown };
+  const nodes = z.array(WorkflowNodeSchema).parse(record.nodes);
+  const nodeKinds = new Map(nodes.map((node) => [node.id, node.kind]));
+  const rawEdges = z.array(z.record(z.unknown())).parse(record.edges);
+  const edges = rawEdges.map((rawEdge) => {
+    const targetPort = WorkflowPortSchema.safeParse(rawEdge.targetPort).success
+      ? rawEdge.targetPort as WorkflowPort
+      : undefined;
+    const sourcePort = WorkflowPortSchema.safeParse(rawEdge.sourcePort).success
+      ? rawEdge.sourcePort as WorkflowPort
+      : undefined;
+    const port = targetPort ?? sourcePort ?? workflowPortForNodeKind(
+      typeof rawEdge.source === "string" ? nodeKinds.get(rawEdge.source) : undefined,
+    );
+    return WorkflowEdgeSchema.parse({
+      ...rawEdge,
+      sourcePort: port,
+      targetPort: port,
+    });
+  });
+  return WorkflowGraphSchema.parse({nodes, edges});
+}
+
 /** A stored, named workflow definition (graph + metadata). */
 export const WorkflowDefinitionSchema = z.object({
   id: IdSchema,

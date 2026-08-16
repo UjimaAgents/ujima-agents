@@ -1,12 +1,9 @@
 import { relative, sep } from 'node:path';
 import type { AgentTeamHandle } from '@ujima/framework';
 import type { ShellApprovalMode, ToolAction, SpiritRole, WakeReason } from '@ujima/shared';
+import { resolveWorkspaceAccess } from '@ujima/shared';
 import { isSensitiveWorkspacePath } from '@ujima/shared/workspace-file-filters';
-import {
-  assertWorkspaceBoundary,
-  canonicalWorkspacePath,
-  isPathWithinScope,
-} from '@ujima/shared/workspace';
+import { canonicalWorkspacePath } from '@ujima/shared/workspace';
 import { isInScopeFileTool } from '../path-scoped-tools.js';
 import { ALWAYS_AVAILABLE_AGENT_TOOLS } from '../tools/index.js';
 import { buildPassDenialReason, resolveWakeReplyPolicy } from '../utils/wake-reply-policy.js';
@@ -217,16 +214,6 @@ export function checkToolPolicy(
 
   let inScopeFileAccess = false;
   if (resourcePath) {
-    try {
-      assertWorkspaceBoundary(team.workspace.root, resourcePath);
-    } catch (error) {
-      return {
-        allowed: false,
-        requiresApproval: false,
-        reason: (error as Error).message,
-      };
-    }
-
     if (
       (action === 'write' || toolId === 'write' || toolId === 'edit' || toolId === 'multiedit') &&
       isGoalArtifactPath(team.workspace.root, resourcePath)
@@ -234,10 +221,20 @@ export function checkToolPolicy(
       return { allowed: true, requiresApproval: false };
     }
 
-    const canonicalPath = canonicalWorkspacePath(team.workspace.root, resourcePath);
-    const pathForSensitivityCheck = canonicalPath.startsWith(team.workspace.root)
-      ? relative(team.workspace.root, canonicalPath)
-      : resourcePath;
+    const access = resolveWorkspaceAccess({
+      workspaceRoot: team.workspace.root,
+      roleScopes: role.workspaceScopes,
+      resourcePath,
+      operation: action === 'read' ? 'read' : action === 'execute' ? 'execute' : 'write',
+    });
+    if (!access.allowed) {
+      return {
+        allowed: false,
+        requiresApproval: false,
+        reason: access.reason,
+      };
+    }
+    const pathForSensitivityCheck = relative(team.workspace.root, access.canonicalPath ?? resourcePath);
     if (action === 'read' && isSensitiveWorkspacePath(pathForSensitivityCheck)) {
       return {
         allowed: true,
@@ -246,27 +243,6 @@ export function checkToolPolicy(
       };
     }
 
-    // When `role.workspaceScopes` is empty (the default for roles
-    // that didn't opt in), fall back to the workspace root for
-    // READ actions only. The product mental model is "every agent
-    // can look at the workspace"; writes still require an explicit
-    // scope to keep blast-radius bounded.
-    const effectiveScopes =
-      role.workspaceScopes.length > 0
-        ? role.workspaceScopes
-        : action === 'read'
-          ? ['.']
-          : role.workspaceScopes;
-    const inRoleScope = effectiveScopes.some((scope) =>
-      isPathWithinScope(team.workspace.root, scope, resourcePath),
-    );
-    if (!inRoleScope && action !== 'read') {
-      return {
-        allowed: true,
-        requiresApproval: true,
-        reason: `Path "${resourcePath}" is outside allowed scopes for role "${roleName}"`,
-      };
-    }
     inScopeFileAccess = isInScopeFileTool(toolId, action);
   }
 

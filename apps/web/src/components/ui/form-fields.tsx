@@ -15,7 +15,7 @@ export function FieldShell({
 }: {
   label: string;
   htmlFor: string;
-  hint?: string;
+  hint?: ReactNode;
   error?: string;
   children: ReactNode;
 }) {

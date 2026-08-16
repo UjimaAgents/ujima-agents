@@ -83,7 +83,7 @@ describe('checkToolPolicy', () => {
         'read',
         join(workspaceRoot, 'apps', 'api'),
       ),
-    ).toEqual({ allowed: true, requiresApproval: false });
+    ).toMatchObject({ allowed: false, requiresApproval: false });
   });
 
   describe('filesystem path policy', () => {
@@ -137,7 +137,7 @@ describe('checkToolPolicy', () => {
       }
     });
 
-    it('requires approval for edits outside role scope', () => {
+    it('denies edits outside role scope', () => {
       const team = teamWithRole({
         name: 'web-writer',
         title: 'Web Writer',
@@ -157,7 +157,7 @@ describe('checkToolPolicy', () => {
           'write',
           join(workspaceRoot, 'apps', 'api', 'index.ts'),
         ),
-      ).toMatchObject({ allowed: true, requiresApproval: true });
+      ).toMatchObject({ allowed: false, requiresApproval: false });
     });
 
   });

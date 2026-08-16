@@ -102,6 +102,38 @@ describe("workspace-store helpers", () => {
     expect((activity[0]?.payload as { delta?: string }).delta).toHaveLength(1_200);
   });
 
+  it("deduplicates activity events within one store instance", () => {
+    const store = useWorkspaceStore.getState();
+    store.resetConversationFeed("org:thread:dedupe");
+    const event = {
+      event_id: "duplicate",
+      type: "run_started" as const,
+      publisher: "ava",
+      timestamp: new Date().toISOString(),
+      payload: { runId: "run-1", threadId: "thread" },
+    };
+
+    store.appendActivity(event);
+    store.appendActivity(event);
+
+    expect(useWorkspaceStore.getState().activity).toHaveLength(1);
+  });
+
+  it("rejects delayed run chunks from a previous conversation", () => {
+    const event = {
+      event_id: "stale-chunk",
+      type: "run_chunk" as const,
+      publisher: "ava",
+      timestamp: new Date().toISOString(),
+      payload: { runId: "run-1", threadId: "old-thread", agentId: "ava", kind: "text", delta: "old" },
+    };
+    useWorkspaceStore.getState().resetConversationFeed("org:current");
+    useWorkspaceStore.getState().appendRunChunk(undefined, event, "org:old");
+    expect(useWorkspaceStore.getState().activity).toHaveLength(0);
+    useWorkspaceStore.getState().appendRunChunk(undefined, event, "org:current");
+    expect(useWorkspaceStore.getState().activity).toHaveLength(1);
+  });
+
   it("detects agent-only channels and DMs", () => {
     const state = {
       channels: [
@@ -119,4 +151,3 @@ describe("workspace-store helpers", () => {
   });
 
 });
-

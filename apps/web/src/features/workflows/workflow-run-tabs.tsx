@@ -25,7 +25,7 @@ export function WorkflowRunTabs({
 }) {
   const [tab, setTab] = useState<Tab>("canvas");
   const artifactCount = new Set(
-    detail.nodeRuns.filter((n) => n.outputPath).map((n) => n.outputPath),
+    detail.nodeRuns.filter((n) => n.status === "completed" && n.outputPath).map((n) => n.outputPath),
   ).size;
 
   const tabs: { id: Tab; label: string; icon: LucideIcon; badge?: number }[] = [

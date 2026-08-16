@@ -209,4 +209,30 @@ describe("approvalScopeMatches", () => {
       )
     ).toBe(false);
   });
+
+  it("uses the connector argument fingerprint instead of display preview", () => {
+    const first = buildConnectorScope({
+      serverId: "slack",
+      serverDisplayName: "Slack",
+      toolName: "post_message",
+      argsPreview: 'text: "hello"',
+      argsFingerprint: "same-call",
+    });
+    const sameCall = buildConnectorScope({
+      serverId: "slack",
+      serverDisplayName: "Slack",
+      toolName: "post_message",
+      argsPreview: 'text: [redacted]',
+      argsFingerprint: "same-call",
+    });
+    const differentCall = buildConnectorScope({
+      serverId: "slack",
+      serverDisplayName: "Slack",
+      toolName: "post_message",
+      argsPreview: 'text: "hello"',
+      argsFingerprint: "different-call",
+    });
+    expect(approvalScopeMatches(first, sameCall)).toBe(true);
+    expect(approvalScopeMatches(first, differentCall)).toBe(false);
+  });
 });

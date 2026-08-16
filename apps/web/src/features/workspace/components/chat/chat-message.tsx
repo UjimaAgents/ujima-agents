@@ -28,7 +28,7 @@ import {
 
 export { getArtifactFileCard } from "./message-cards";
 
-const SUMMARY_MARKERS = [...CONVERSATION_ROLLING_SUMMARY_MARKERS, SELF_NOTE_SUMMARY_MARKER];
+const SUMMARY_MARKERS = [CONVERSATION_ARCHIVE_MARKER, ...CONVERSATION_ROLLING_SUMMARY_MARKERS, SELF_NOTE_SUMMARY_MARKER];
 const SUMMARY_GUIDANCE = new Set([
   "> README-style compact summary -- your durable context from earlier in the conversation.",
   "> Treat these notes as your own continuity. Details that don't carry forward are safe to forget.",
@@ -426,14 +426,7 @@ function isInternalMarkerContent(content: string): boolean {
 /** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
 export function systemMessageBodyMarkdown(content: string): string | null {
   if (hasAnyMessageMarker(content, SUMMARY_MARKERS)) {
-    const rest = content
-      .split("\n")
-      .slice(1)
-      .filter((line) => !SUMMARY_GUIDANCE.has(line.trim()))
-      .map((line) => line.startsWith("- - ") ? line.slice(2) : line)
-      .join("\n")
-      .trim();
-    return rest.length > 0 ? rest : null;
+    return null;
   }
   if (content.startsWith("[Approval needed]")) {
     const rest = content.split("\n").slice(1).join("\n").trim();

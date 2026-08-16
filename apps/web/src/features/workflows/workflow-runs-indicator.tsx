@@ -22,8 +22,15 @@ export function WorkflowRunsIndicator(): React.ReactElement | null {
   const openWorkflowRunDrawer = useWorkspaceStore((s) => s.openWorkflowRunDrawer);
 
   const poll = useCallback(async () => {
-    const active = await listWorkflowRuns("running");
-    const signature = active.map((r) => r.id).sort().join("|");
+    const [running, awaiting, paused] = await Promise.all([
+      listWorkflowRuns("running").catch(() => []),
+      listWorkflowRuns("awaiting_approval").catch(() => []),
+      listWorkflowRuns("paused").catch(() => []),
+    ]);
+    const activeMap = new Map<string, WorkflowRun>();
+    [...running, ...awaiting, ...paused].forEach((r) => activeMap.set(r.id, r));
+    const active = Array.from(activeMap.values());
+    const signature = active.map((r) => `${r.id}:${r.status}`).sort().join("|");
     if (signature === lastSignature.current) return;
     lastSignature.current = signature;
     setRuns(active);
@@ -31,7 +38,10 @@ export function WorkflowRunsIndicator(): React.ReactElement | null {
   usePolling(poll, { intervalMs: POLL_MS });
 
   if (runs.length === 0) return null;
-  const label = runs.length === 1 ? "1 workflow running" : `${runs.length} workflows running`;
+  const label =
+    runs.length === 1
+      ? `1 workflow ${runs[0].status === "running" ? "running" : "active"}`
+      : `${runs.length} active workflows`;
 
   return (
     <div className="fixed bottom-[4.75rem] right-4 z-40 flex flex-col items-end gap-2">

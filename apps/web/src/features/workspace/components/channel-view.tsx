@@ -90,6 +90,7 @@ const AGENT_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
   { id: "approvals", label: "Approvals" },
   { id: "tasks", label: "Tasks" },
+  { id: "workflows", label: "Workflows" },
   { id: "activity", label: "Activity" },
 ];
 
@@ -226,7 +227,7 @@ function FloatingStatusRail({
           key={chat.threadId}
           type="button"
           onClick={() => onOpenChat(chat.threadId, chat.name)}
-          className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
+          className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200 bg-white/90 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-200"
         >
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -237,39 +238,29 @@ function FloatingStatusRail({
               {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
             </span>
             {chat.activityText ? (
-              <span className="live-activity-shimmer block truncate text-[10px] leading-tight">
+              <span className="live-activity-shimmer block truncate text-xs leading-tight">
                 {chat.activityText}
               </span>
             ) : null}
           </span>
           {chat.pendingApprovals > 0 ? (
-            <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950">
+            <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-xs font-bold text-zinc-950">
               {chat.pendingApprovals} approval{chat.pendingApprovals === 1 ? "" : "s"}
             </span>
           ) : null}
         </button>
       ))}
       {activeTerminals.length > 0 ? (
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenTerminal}
-            className="flex items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
-          >
-            <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500 dark:text-zinc-400" />
-            <span>
-              {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenTerminal}
-            className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-zinc-200/50 bg-white/30 text-zinc-500 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-400"
-            aria-label="More terminal details"
-          >
-            <span className="text-xs font-semibold">...</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onOpenTerminal}
+          className="flex shrink-0 items-center gap-2 rounded-full border border-zinc-200 bg-white/90 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-200"
+        >
+          <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500 dark:text-zinc-400" />
+          <span>
+            {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
+          </span>
+        </button>
       ) : null}
     </div>
   );
@@ -552,7 +543,10 @@ export function ChannelView({
   );
 
   const isAgent = conversation.type === "agent";
-  const agentMember = isAgent ? memberById.get(conversation.id) : undefined;
+  const agentMember = isAgent
+    ? (memberById.get(conversation.id) ??
+       members.find((m) => m.kind === "agent" && (m.id === conversation.id || m.name === conversation.id)))
+    : undefined;
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
   const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
   const conversationColorIndex = Math.max(memberIndexById.get(conversation.id) ?? 0, 0);
@@ -1263,22 +1257,26 @@ export function ChannelView({
           )
         ) : activeTab === "tasks" ? (
           organizationId ? (
-            <ChannelGoalsBoard
-              key={currentThreadId ?? conversation.id}
-              channelId={currentThreadId ?? conversation.id}
-              members={members}
-            />
+            <TabPanel>
+              <ChannelGoalsBoard
+                key={currentThreadId ?? conversation.id}
+                channelId={currentThreadId ?? conversation.id}
+                members={members}
+              />
+            </TabPanel>
           ) : (
             <TabEmpty context="tasks" label="No organization context available." />
           )
         ) : activeTab === "workflows" ? (
-          conversation.type === "channel" && organizationId ? (
-            <ChannelWorkflowsTab
-              channelId={conversation.id}
-              threadId={currentThreadId ?? conversation.id}
-            />
+          organizationId ? (
+            <TabPanel>
+              <ChannelWorkflowsTab
+                channelId={conversation.id}
+                threadId={currentThreadId ?? conversation.id}
+              />
+            </TabPanel>
           ) : (
-            <TabEmpty context="generic" label="Workflows are available in channels." />
+            <TabEmpty context="generic" label="No organization context available." />
           )
         ) : activeTab === "culture" ? (
           (conversation.type === "channel" || conversation.type === "agent") && organizationId ? (

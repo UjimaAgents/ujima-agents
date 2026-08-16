@@ -15,6 +15,9 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { normalizeOrgShellApprovalMode, type ShellApprovalMode } from "@ujima/shared/browser";
 import { ChannelView } from "./channel-view";
 import { ChannelGoalsBoard } from "./channel-goals-board";
+import { WorkspaceTasksView } from "./tasks/workspace-tasks-view";
+import { WorkflowsList } from "@/features/workflows/workflows-list";
+import { WorkspaceTabBar, type WorkspaceTabItem } from "./workspace-tab-bar";
 import { GlobalApprovalIndicator } from "./global-approval-indicator";
 import { WorkflowRunsIndicator } from "@/features/workflows/workflow-runs-indicator";
 import { WorkflowRunDrawer } from "@/features/workflows/workflow-run-drawer";
@@ -74,7 +77,6 @@ export function WorkspaceShell(props: {
 }) {
   const { bootstrap, initialConversation } = props;
   const organizationId = bootstrap.organization?.id;
-  // Feed pending workflow gates into the shared approval queue + pending pill.
   useWorkflowApprovalsPoll();
   const workflowRunDrawerId = useWorkspaceStore((s) => s.workflowRunDrawerId);
   const closeWorkflowRunDrawer = useWorkspaceStore((s) => s.closeWorkflowRunDrawer);
@@ -132,8 +134,6 @@ export function WorkspaceShell(props: {
   const activeConversationRef = useRef<SelectedConversation | undefined>(undefined);
   const membersRef = useRef(members);
 
-  // Pull localStorage-backed prefs (chat font size, details auto-open dismissal)
-  // into the store after mount so the first render matches the SSR snapshot.
   useEffect(() => {
     hydrateClientPersisted();
   }, [hydrateClientPersisted]);
@@ -148,16 +148,215 @@ export function WorkspaceShell(props: {
   );
 
   const workspaceTasksActive = searchParams.get("view") === "tasks";
+  const workspaceWorkflowsActive = searchParams.get("view") === "workflows";
   const urlConversation = useMemo(
     () => resolveSelectedConversationFromSearchParams(searchParams, bootstrap),
     [searchParams, bootstrap],
   );
 
   const resolvedSelected = urlConversation ?? selected ?? defaultConversation;
-  const activeConversation = workspaceTasksActive ? undefined : resolvedSelected;
+  const activeConversation = workspaceTasksActive || workspaceWorkflowsActive ? undefined : resolvedSelected;
   useEffect(() => {
     activeConversationRef.current = activeConversation;
   }, [activeConversation]);
+
+  // ---------- Notion Top Tab Bar state ----------
+  const [openTabs, setOpenTabs] = useState<WorkspaceTabItem[]>(() => {
+    const list: WorkspaceTabItem[] = [];
+    if (workspaceWorkflowsActive) {
+      list.push({ id: "view:workflows", type: "workflows", title: "Workflows", targetId: "workflows" });
+    }
+    if (workspaceTasksActive) {
+      list.push({ id: "view:tasks", type: "tasks", title: "Tasks", targetId: "tasks" });
+    }
+    if (resolvedSelected) {
+      list.push({
+        id: `${resolvedSelected.type}:${resolvedSelected.id}`,
+        type: resolvedSelected.type === "channel" ? "channel" : "agent",
+        title: resolvedSelected.name,
+        targetId: resolvedSelected.id,
+        conversation: resolvedSelected,
+      });
+    }
+    if (list.length === 0) {
+      list.push({ id: "view:tasks", type: "tasks", title: "Tasks", targetId: "tasks" });
+    }
+    return list;
+  });
+
+  const activeTabId = useMemo(() => {
+    if (workspaceWorkflowsActive) return "view:workflows";
+    if (workspaceTasksActive) return "view:tasks";
+    if (activeConversation) return `${activeConversation.type}:${activeConversation.id}`;
+    return openTabs[0]?.id ?? "view:tasks";
+  }, [workspaceWorkflowsActive, workspaceTasksActive, activeConversation, openTabs]);
+
+  // History stack for < > navigation
+  const [tabHistory, setTabHistory] = useState<string[]>([activeTabId]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+
+  const pushHistory = useCallback((tabId: string) => {
+    setTabHistory((prev) => {
+      const next = prev.slice(0, historyIndex + 1);
+      if (next[next.length - 1] === tabId) return prev;
+      return [...next, tabId];
+    });
+    setHistoryIndex((prev) => prev + 1);
+  }, [historyIndex]);
+
+  const handleNavigateBack = useCallback(() => {
+    if (historyIndex > 0) {
+      const targetId = tabHistory[historyIndex - 1];
+      setHistoryIndex(historyIndex - 1);
+      const tab = openTabs.find((t) => t.id === targetId);
+      if (tab) {
+        if (tab.type === "workflows") {
+          handleOpenWorkflowsInternal(false);
+        } else if (tab.type === "tasks") {
+          handleOpenTasksInternal(false);
+        } else if (tab.conversation) {
+          handleSelectInternal(tab.conversation, false);
+        }
+      }
+    }
+  }, [historyIndex, tabHistory, openTabs]);
+
+  const handleNavigateForward = useCallback(() => {
+    if (historyIndex < tabHistory.length - 1) {
+      const targetId = tabHistory[historyIndex + 1];
+      setHistoryIndex(historyIndex + 1);
+      const tab = openTabs.find((t) => t.id === targetId);
+      if (tab) {
+        if (tab.type === "workflows") {
+          handleOpenWorkflowsInternal(false);
+        } else if (tab.type === "tasks") {
+          handleOpenTasksInternal(false);
+        } else if (tab.conversation) {
+          handleSelectInternal(tab.conversation, false);
+        }
+      }
+    }
+  }, [historyIndex, tabHistory, openTabs]);
+
+  const handleSelectInternal = useCallback(
+    (conversation: SelectedConversation, recordHistory = true) => {
+      setSelectedConversation(conversation);
+      const tabId = `${conversation.type}:${conversation.id}`;
+
+      setOpenTabs((prev) => {
+        if (prev.some((t) => t.id === tabId)) {
+          return prev.map((t) => (t.id === tabId ? { ...t, title: conversation.name, conversation } : t));
+        }
+        return [
+          ...prev,
+          {
+            id: tabId,
+            type: conversation.type === "channel" ? "channel" : "agent",
+            title: conversation.name,
+            targetId: conversation.id,
+            conversation,
+          },
+        ];
+      });
+
+      if (recordHistory) pushHistory(tabId);
+
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("view");
+      params.delete("agent");
+      params.delete("agentId");
+      params.delete("channel");
+      params.delete("channelId");
+      if (conversation.type === "channel") {
+        params.set("channelId", conversation.id);
+      } else {
+        params.set("agentId", conversation.id);
+      }
+      router.replace(`?${params.toString()}`, { scroll: false });
+    },
+    [pushHistory, router, searchParams, setSelectedConversation]
+  );
+
+  const handleOpenTasksInternal = useCallback(
+    (recordHistory = true) => {
+      const tabId = "view:tasks";
+      setOpenTabs((prev) => {
+        if (prev.some((t) => t.id === tabId)) return prev;
+        return [...prev, { id: tabId, type: "tasks", title: "Tasks", targetId: "tasks" }];
+      });
+
+      if (recordHistory) pushHistory(tabId);
+
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("view", "tasks");
+      params.delete("channelId");
+      params.delete("agentId");
+      router.replace(`?${params.toString()}`, { scroll: false });
+    },
+    [pushHistory, router, searchParams]
+  );
+
+  const handleOpenWorkflowsInternal = useCallback(
+    (recordHistory = true) => {
+      const tabId = "view:workflows";
+      setOpenTabs((prev) => {
+        if (prev.some((t) => t.id === tabId)) return prev;
+        return [...prev, { id: tabId, type: "workflows", title: "Workflows", targetId: "workflows" }];
+      });
+
+      if (recordHistory) pushHistory(tabId);
+
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("view", "workflows");
+      params.delete("channelId");
+      params.delete("agentId");
+      router.replace(`?${params.toString()}`, { scroll: false });
+    },
+    [pushHistory, router, searchParams]
+  );
+
+  const handleSelect = useCallback(
+    (conversation: SelectedConversation) => handleSelectInternal(conversation, true),
+    [handleSelectInternal]
+  );
+
+  const handleOpenTasks = useCallback(() => handleOpenTasksInternal(true), [handleOpenTasksInternal]);
+  const handleOpenWorkflows = useCallback(() => handleOpenWorkflowsInternal(true), [handleOpenWorkflowsInternal]);
+
+  const handleSelectTabItem = useCallback(
+    (tab: WorkspaceTabItem) => {
+      if (tab.type === "workflows") {
+        handleOpenWorkflows();
+      } else if (tab.type === "tasks") {
+        handleOpenTasks();
+      } else if (tab.conversation) {
+        handleSelect(tab.conversation);
+      } else if (tab.targetId && tab.type === "channel") {
+        const ch = channels.find((c) => c.id === tab.targetId);
+        if (ch) handleSelect({ type: "channel", id: ch.id, name: ch.name });
+      } else if (tab.targetId && tab.type === "agent") {
+        const ag = members.find((m) => m.id === tab.targetId);
+        if (ag) handleSelect({ type: "agent", id: ag.id, name: ag.name });
+      }
+    },
+    [channels, handleOpenTasks, handleOpenWorkflows, handleSelect, members]
+  );
+
+  const handleCloseTabItem = useCallback(
+    (tabId: string) => {
+      setOpenTabs((prev) => {
+        if (prev.length <= 1) return prev;
+        const next = prev.filter((t) => t.id !== tabId);
+        if (tabId === activeTabId && next.length > 0) {
+          const fallback = next[next.length - 1];
+          setTimeout(() => handleSelectTabItem(fallback), 0);
+        }
+        return next;
+      });
+    },
+    [activeTabId, handleSelectTabItem]
+  );
+
   const goalModeKey = useMemo(
     () =>
       activeConversation
@@ -182,32 +381,6 @@ export function WorkspaceShell(props: {
     }
     writeGoalModePreference(goalModeKey, goalMode);
   }, [goalMode, goalModeKey]);
-
-  const handleSelect = useCallback(
-    (conversation: SelectedConversation) => {
-      setSelectedConversation(conversation);
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("view");
-      params.delete("agent");
-      params.delete("agentId");
-      params.delete("channel");
-      params.delete("channelId");
-      if (conversation.type === "channel") {
-        params.set("channelId", conversation.id);
-      } else {
-        params.set("agentId", conversation.id);
-      }
-      router.replace(`?${params.toString()}`, { scroll: false });
-    },
-    [router, searchParams, setSelectedConversation],
-  );
-  const handleOpenTasks = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("view", "tasks");
-    params.delete("channelId");
-    params.delete("agentId");
-    router.replace(`?${params.toString()}`, { scroll: false });
-  }, [router, searchParams]);
 
   const handleOrgShellApprovalModeChange = useCallback(
     async (shellApprovalMode: ShellApprovalMode) => {
@@ -342,13 +515,15 @@ export function WorkspaceShell(props: {
   );
 
   useLayoutEffect(() => {
-    const conversationName = workspaceTasksActive
+    const conversationName = workspaceWorkflowsActive
+      ? "Workflows"
+      : workspaceTasksActive
       ? "Tasks"
       : activeConversation?.name?.trim();
     document.title = conversationName
       ? `Ujima Agents - ${conversationName}`
       : "Ujima Agents";
-  }, [activeConversation?.id, activeConversation?.name, activeConversation?.type, workspaceTasksActive]);
+  }, [activeConversation?.id, activeConversation?.name, activeConversation?.type, workspaceTasksActive, workspaceWorkflowsActive]);
 
   const applyBootstrap = useCallback(
     (snapshot: BootstrapResponse) => {
@@ -370,7 +545,6 @@ export function WorkspaceShell(props: {
     [replaceConversationUnreadCounts, setMemberActivity, syncWorkspace],
   );
 
-  // Cmd+K to open global search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -418,80 +592,79 @@ export function WorkspaceShell(props: {
         }
       };
       source.onmessage = (event) => {
-      const envelope = parseNotificationEnvelope(event.data);
-      if (!envelope) return;
-      if (envelope.type === "ready") {
-        if (seenReady) {
-          void (async () => {
-            const response = await fetch("/api/bootstrap");
-            const body = await response.json().catch(() => null);
-            const parsed = response.ok ? BootstrapResponseSchema.safeParse(body) : null;
-            if (parsed?.success) {
-              applyBootstrap(parsed.data);
-            }
-          })();
-        } else {
-          seenReady = true;
+        const envelope = parseNotificationEnvelope(event.data);
+        if (!envelope) return;
+        if (envelope.type === "ready") {
+          if (seenReady) {
+            void (async () => {
+              const response = await fetch("/api/bootstrap");
+              const body = await response.json().catch(() => null);
+              const parsed = response.ok ? BootstrapResponseSchema.safeParse(body) : null;
+              if (parsed?.success) {
+                applyBootstrap(parsed.data);
+              }
+            })();
+          } else {
+            seenReady = true;
+          }
+          return;
         }
-        return;
-      }
-      if (envelope.type === "error") {
-        console.warn("[notifications] server stream error", envelope.message);
-        setNotificationError(envelope.message || "Live notifications are unavailable.");
-        return;
-      }
-      if (
-        envelope.event !== SocketEventNames.approvalRequested &&
-        !isNotificationMessageEvent(envelope.event) &&
-        !isNotificationRunEvent(envelope.event)
-      ) {
-        return;
-      }
-
-      if (isNotificationRunEvent(envelope.event)) {
-        updateRunActivity(envelope.payload, membersRef.current, setMemberActivity);
-        const run = (envelope.payload as { run?: RunState })?.run;
-        if (run) {
-          upsertGlobalActiveRun(run);
+        if (envelope.type === "error") {
+          console.warn("[notifications] server stream error", envelope.message);
+          setNotificationError(envelope.message || "Live notifications are unavailable.");
+          return;
         }
-      }
-
-      const conversationId = resolveNotificationConversationId(
-        envelope.event,
-        envelope.payload,
-        currentMemberId,
-        bootstrap.channels,
-      );
-      if (!conversationId) return;
-
-      // Read from ref to avoid re-creating the EventSource when the user switches conversations.
-      const currentConversation = activeConversationRef.current;
-      if (
-        currentConversation &&
-        ((currentConversation.type === "channel" &&
-          envelope.event !== SocketEventNames.dmMessage &&
-          currentConversation.id === conversationId) ||
-          (currentConversation.type === "agent" && currentConversation.id === conversationId))
-      ) {
-        if (isNotificationMessageEvent(envelope.event)) {
-          clearConversationUnreadCount(currentConversation.id);
-          void markConversationRead(
-            organizationId,
-            getConversationThreadId(currentConversation, currentMemberId),
-          );
+        if (
+          envelope.event !== SocketEventNames.approvalRequested &&
+          !isNotificationMessageEvent(envelope.event) &&
+          !isNotificationRunEvent(envelope.event)
+        ) {
+          return;
         }
-        return;
-      }
 
-      incrementConversationUnreadCount(conversationId);
-
-      if (envelope.event === SocketEventNames.approvalRequested) {
-        const approvalId = parseApprovalId(envelope.payload);
-        if (approvalId && !seenApprovalNotifications.current.has(approvalId)) {
-          seenApprovalNotifications.current.add(approvalId);
-          playApprovalSound();
+        if (isNotificationRunEvent(envelope.event)) {
+          updateRunActivity(envelope.payload, membersRef.current, setMemberActivity);
+          const run = (envelope.payload as { run?: RunState })?.run;
+          if (run) {
+            upsertGlobalActiveRun(run);
+          }
         }
-      }
+
+        const conversationId = resolveNotificationConversationId(
+          envelope.event,
+          envelope.payload,
+          currentMemberId,
+          bootstrap.channels,
+        );
+        if (!conversationId) return;
+
+        const currentConversation = activeConversationRef.current;
+        if (
+          currentConversation &&
+          ((currentConversation.type === "channel" &&
+            envelope.event !== SocketEventNames.dmMessage &&
+            currentConversation.id === conversationId) ||
+            (currentConversation.type === "agent" && currentConversation.id === conversationId))
+        ) {
+          if (isNotificationMessageEvent(envelope.event)) {
+            clearConversationUnreadCount(currentConversation.id);
+            void markConversationRead(
+              organizationId,
+              getConversationThreadId(currentConversation, currentMemberId),
+            );
+          }
+          return;
+        }
+
+        incrementConversationUnreadCount(conversationId);
+
+        if (envelope.event === SocketEventNames.approvalRequested) {
+          const approvalId = parseApprovalId(envelope.payload);
+          if (approvalId && !seenApprovalNotifications.current.has(approvalId)) {
+            seenApprovalNotifications.current.add(approvalId);
+            playApprovalSound();
+          }
+        }
       };
     };
     connect();
@@ -563,10 +736,12 @@ export function WorkspaceShell(props: {
           memberActivity={memberActivity}
           selected={activeConversation}
           tasksActive={workspaceTasksActive}
+          workflowsActive={workspaceWorkflowsActive}
           agentEditorTargetId={agentEditorTargetId}
           conversationUnreadCounts={conversationUnreadCounts}
           onSelect={handleSelect}
           onOpenTasks={handleOpenTasks}
+          onOpenWorkflows={handleOpenWorkflows}
           onCreateChannel={handleCreateChannel}
           onCreateAgent={handleCreateAgent}
           onUpdateAgent={handleUpdateAgent}
@@ -574,15 +749,38 @@ export function WorkspaceShell(props: {
         />
       </div>
       <DragHandle onResize={setSidebarWidth} />
-      <main className="flex h-full min-w-0 flex-1 overflow-hidden bg-white dark:bg-[#09090b]">
+      <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#09090b]">
+        {/* Notion/Ramp HQ Top Workspace Tab Bar */}
+        <WorkspaceTabBar
+          openTabs={openTabs}
+          activeTabId={activeTabId}
+          onSelectTab={handleSelectTabItem}
+          onCloseTab={handleCloseTabItem}
+          onNewTab={() => setSearchPaletteOpen(true)}
+          onNavigateBack={handleNavigateBack}
+          onNavigateForward={handleNavigateForward}
+          canNavigateBack={historyIndex > 0}
+          canNavigateForward={historyIndex < tabHistory.length - 1}
+        />
+
         {notificationError ? (
-          <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-900 shadow dark:bg-amber-950 dark:text-amber-100" role="status">
+          <div
+            className="absolute left-1/2 top-14 z-30 -translate-x-1/2 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-900 shadow dark:bg-amber-950 dark:text-amber-100"
+            role="status"
+          >
             {notificationError}
           </div>
         ) : null}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {workspaceTasksActive ? (
-            <ChannelGoalsBoard key="workspace-goals" members={members} />
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden relative">
+          {workspaceWorkflowsActive ? (
+            <div className="h-full overflow-y-auto bg-white dark:bg-zinc-950">
+              <div className="mx-auto max-w-5xl p-6">
+                <WorkflowsList />
+              </div>
+            </div>
+          ) : workspaceTasksActive ? (
+            <WorkspaceTasksView key="workspace-goals" members={members} />
           ) : activeConversation ? (
             <ChannelView
               key={`${activeConversation.type}:${activeConversation.id}`}
@@ -603,14 +801,14 @@ export function WorkspaceShell(props: {
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
                 <MessageSquare className="h-7 w-7 text-zinc-400" />
               </div>
               <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-white">
                 No conversation selected
               </h3>
               <p className="mt-1 max-w-sm text-xs text-zinc-500">
-                Add a channel or agent from the sidebar to open a conversation.
+                Select a channel or agent from the sidebar to get started.
               </p>
             </div>
           )}
@@ -831,7 +1029,9 @@ function resolveDmConversationId(threadId: string, currentMemberId: string): str
 function playApprovalSound(): void {
   if (typeof window === "undefined") return;
   const AudioContextCtor =
-    window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    typeof window !== "undefined"
+      ? window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      : undefined;
   if (!AudioContextCtor) return;
   try {
     const context = new AudioContextCtor();
@@ -848,6 +1048,6 @@ function playApprovalSound(): void {
     oscillator.stop(context.currentTime + 0.2);
     void context.close().catch(() => undefined);
   } catch {
-    // Ignore browsers that block autoplay or AudioContext.
+    // Ignore
   }
 }

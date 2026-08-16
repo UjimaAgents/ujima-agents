@@ -57,10 +57,12 @@ export function useWorkflowRun(runId: string) {
   });
 
   const act = useCallback(
-    async (action: WorkflowTransitionAction) => {
-      let reason: string | undefined;
-      if (action === "reject") {
-        reason = window.prompt("Reason for rejection?") ?? undefined;
+    async (action: WorkflowTransitionAction, rejectionReason?: string) => {
+      let reason: string | undefined = rejectionReason;
+      if (action === "reject" && rejectionReason === undefined) {
+        const input = window.prompt("Reason for rejection?");
+        if (input === null) return;
+        reason = input || undefined;
       }
       setBusy(true);
       try {

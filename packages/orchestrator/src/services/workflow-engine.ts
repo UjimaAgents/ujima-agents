@@ -1,7 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {
   MAIN_FLOW_KINDS,
-  WorkflowGraphSchema,
+  normalizeWorkflowGraph,
   validateWorkflowGraph,
   type NodeOutput,
   type WorkflowDefinition,
@@ -231,6 +231,8 @@ const ACTIVE_NODE_STATUSES = new Set(['pending', 'running', 'awaiting_approval']
 const TERMINAL_DONE_STATUSES = new Set(['completed', 'skipped']);
 
 export class WorkflowEngineService {
+  /** Serialize lifecycle decisions per run; idempotency is durable, ordering is local. */
+  private readonly transitionTails = new Map<string, Promise<void>>();
   /** Throttle for stuck-run reminders (in-memory; reset on restart is fine). */
   private readonly lastReminderAt = new Map<string, number>();
   /** How many reminders each stuck run has had, so we go quiet instead of flooding. */
@@ -444,6 +446,19 @@ export class WorkflowEngineService {
 
   /** retry / skip / abort / approve / reject — single idempotent entrypoint. */
   async transition(input: TransitionInput): Promise<TransitionResult> {
+    const key = `${input.organizationId}:${input.workflowRunId}`;
+    const previous = this.transitionTails.get(key) ?? Promise.resolve();
+    const current = previous.then(() => this.transitionInternal(input));
+    const tail = current.then(() => undefined, () => undefined);
+    this.transitionTails.set(key, tail);
+    try {
+      return await current;
+    } finally {
+      if (this.transitionTails.get(key) === tail) this.transitionTails.delete(key);
+    }
+  }
+
+  private async transitionInternal(input: TransitionInput): Promise<TransitionResult> {
     const run = this.store.getWorkflowRun(input.organizationId, input.workflowRunId);
     if (!run) return {ok: false};
     if (run.lastTransitionToken && run.lastTransitionToken === input.idempotencyKey) {
@@ -905,7 +920,11 @@ export class WorkflowEngineService {
     definitionId: string | null;
   } {
     if (input.inlineGraph) {
-      return {graph: input.inlineGraph, name: input.name ?? 'workflow', definitionId: null};
+      return {
+        graph: normalizeWorkflowGraph(input.inlineGraph),
+        name: input.name ?? 'workflow',
+        definitionId: null,
+      };
     }
     // Resolve a definition by name preferring the current channel's copy, then
     // the org-wide one — so `@workflow Foo` in channel A can't pick up a
@@ -924,14 +943,14 @@ export class WorkflowEngineService {
       );
     }
     return {
-      graph: {nodes: def.nodes, edges: def.edges},
+      graph: normalizeWorkflowGraph({nodes: def.nodes, edges: def.edges}),
       name: input.name ?? def.name,
       definitionId: def.id,
     };
   }
 
   private parseGraph(run: WorkflowRun): WorkflowGraph {
-    return WorkflowGraphSchema.parse(JSON.parse(run.graphSnapshot));
+    return normalizeWorkflowGraph(JSON.parse(run.graphSnapshot));
   }
 
   private latestByNode(nodeRuns: WorkflowNodeRun[]): Map<string, WorkflowNodeRun> {

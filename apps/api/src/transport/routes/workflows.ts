@@ -6,14 +6,16 @@ import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, AuthState, WorkflowEngineService } from '@ujima/orchestrator';
 import {
   WorkflowEdgeSchema,
-  WorkflowGraphSchema,
   WorkflowNodeSchema,
+  WorkflowPortSchema,
   WorkflowTransitionActionSchema,
+  normalizeWorkflowGraph,
   validateWorkflowGraph,
   type WorkflowDefinition,
 } from '@ujima/shared';
 import { z } from 'zod';
 import { readSessionToken } from '../session-token.js';
+import { buildWorkflowApprovalView, buildWorkflowRunView } from '../workflow-run-view.js';
 
 interface WorkflowRouteDeps {
   repo: Repository;
@@ -31,7 +33,15 @@ const DefinitionInputSchema = z.object({
   description: z.string().optional(),
   channelId: z.string().min(1).nullable().optional(),
   nodes: z.array(WorkflowNodeSchema),
-  edges: z.array(WorkflowEdgeSchema),
+  // Keep ports optional until the shared graph normalizer can infer legacy
+  // capability edges from their source node kind.
+  edges: z.array(z.object({
+    id: WorkflowEdgeSchema.shape.id,
+    source: WorkflowEdgeSchema.shape.source,
+    sourcePort: WorkflowPortSchema.optional(),
+    target: WorkflowEdgeSchema.shape.target,
+    targetPort: WorkflowPortSchema.optional(),
+  })),
 });
 
 /**
@@ -86,10 +96,7 @@ function validate(
       .filter((m) => m.kind === 'agent' && !m.retiredAt)
       .map((m) => m.id),
   );
-  const result = validateWorkflowGraph(
-    { nodes: body.nodes, edges: body.edges },
-    { agentIds },
-  );
+  const result = validateWorkflowGraph(normalizeWorkflowGraph(body), { agentIds });
   return result.issues.map((i) => ({ code: i.code, message: i.message }));
 }
 
@@ -178,6 +185,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
         return reply.status(422).send({ code: 'ERR_INVALID_WORKFLOW', message: 'Invalid workflow graph', issues });
       }
       const body = parsed.data;
+      const graph = normalizeWorkflowGraph(body);
       const nowIso = new Date().toISOString();
       const def: WorkflowDefinition = {
         id: randomUUID(),
@@ -185,8 +193,8 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
         channelId: body.channelId ?? null,
         name: body.name,
         description: body.description,
-        nodes: body.nodes,
-        edges: body.edges,
+        nodes: graph.nodes,
+        edges: graph.edges,
         version: 1,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -213,6 +221,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
         });
       }
       const body = parsed.data;
+      const graph = normalizeWorkflowGraph(body);
       const issues = validate(deps, auth.user.organizationId, body);
       if (issues.length > 0) {
         return reply.status(422).send({ code: 'ERR_INVALID_WORKFLOW', message: 'Invalid workflow graph', issues });
@@ -222,8 +231,8 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
         channelId: body.channelId === undefined ? existing.channelId : body.channelId,
         name: body.name,
         description: body.description,
-        nodes: body.nodes,
-        edges: body.edges,
+        nodes: graph.nodes,
+        edges: graph.edges,
         version: existing.version + 1,
         updatedAt: new Date().toISOString(),
       };
@@ -259,92 +268,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
     if (!auth) return;
     const run = deps.repo.getWorkflowRun(auth.user.organizationId, req.params.id);
     if (!run) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Workflow run not found' });
-    const orgId = auth.user.organizationId;
-    const memberById = new Map(deps.repo.listMembers(orgId).map((member) => [member.id, member]));
-    const memberName = (id: string | null | undefined) =>
-      id ? (memberById.get(id)?.name ?? id) : undefined;
-    // Node runs carry the execution timeline; resolve the agent behind each one
-    // plus the tool calls it made, so the run view can show who did what, when —
-    // the agent's actual activity, not just its final text.
-    const rawNodeRuns = deps.repo.listWorkflowNodeRuns(run.id);
-    const childRunIds = [...new Set(rawNodeRuns.flatMap((nr) => (nr.childRunId ? [nr.childRunId] : [])))];
-    const childRuns = deps.repo.listRunsByIds?.(orgId, childRunIds) ??
-      childRunIds.map((childRunId) => deps.repo.getRun(orgId, childRunId)).filter((childRun): childRun is NonNullable<typeof childRun> => childRun !== null);
-    const childRunById = new Map(childRuns.map((childRun) => [childRun.id, childRun]));
-    const stepRows = deps.repo.listRunStepsByRunIds?.(orgId, childRunIds, 60) ??
-      childRunIds.flatMap((childRunId) => deps.repo.listRunSteps?.(orgId, childRunId)?.slice(-60) ?? []);
-    const stepsByRunId = new Map<string, typeof stepRows>();
-    for (const step of stepRows) {
-      const steps = stepsByRunId.get(step.runId) ?? [];
-      steps.push(step);
-      stepsByRunId.set(step.runId, steps);
-    }
-    const nodeRuns = rawNodeRuns.map((nr) => {
-      // The node's failureReason is generic ('agent_run_failed'); the real error
-      // lives on the child agent run's summary. Surface it so the timeline shows
-      // what actually went wrong (e.g. a context-length overflow).
-      const childSummary = nr.childRunId ? childRunById.get(nr.childRunId)?.summary : undefined;
-      return {
-        ...nr,
-        agentName: memberName(nr.agentId),
-        failureDetail:
-          nr.status === 'failed' && childSummary && childSummary !== nr.failureReason
-            ? childSummary
-            : undefined,
-        toolSteps: nr.childRunId
-          ? (stepsByRunId.get(nr.childRunId) ?? [])
-              .map((s) => ({
-                tool: s.toolId,
-                action: s.action,
-                status: s.status,
-                resourcePath: s.resourcePath || undefined,
-                at: s.createdAt,
-              }))
-          : [],
-      };
-    });
-    // A child agent run can stall on its own tool approval (a filesystem write,
-    // an MCP call). That approval lives in the isolated run thread and otherwise
-    // never reaches the operator — so the run looks "stuck". Surface it here so
-    // the run view can show + resolve it.
-    const childNodeByRun = new Map(
-      nodeRuns.filter((n) => n.childRunId).map((n) => [n.childRunId as string, n.nodeId]),
-    );
-    const blockingApprovals = deps.repo
-      .listPendingApprovals(orgId)
-      .filter((a) => a.runId && childNodeByRun.has(a.runId))
-      .map((a) => ({
-        id: a.id,
-        nodeId: childNodeByRun.get(a.runId as string),
-        agentName: memberName(a.requestedBy),
-        resourceType: a.resourceType,
-        action: a.action,
-        resourcePath: a.resourcePath,
-      }));
-    // The run executes in a dedicated thread — surface its conversation, but drop
-    // the workflow's own status cards/reminders (▶ started / ✅ completed / ⚠️
-    // needs attention). Those are channel meta, not agent interaction.
-    const isStatusNoise = (content: string) =>
-      /^\s*(▶|✅|⛔|⚠️)\s*Workflow\b/.test(content) ||
-      /^\s*\[\[CONVERSATION_SUMMARY/.test(content);
-    const messages = deps.repo
-      .listMessages(orgId, run.threadId, undefined, 100)
-      .data.slice()
-      .reverse()
-      .filter((m) => !isStatusNoise(m.content ?? ''))
-      .map((m) => ({
-        id: m.id,
-        senderName: memberName(m.senderId) ?? m.senderId,
-        senderKind: m.senderKind,
-        content: m.content,
-        createdAt: m.createdAt,
-      }));
-    return reply.status(200).send({
-      run,
-      nodeRuns,
-      messages,
-      blockingApprovals,
-    });
+    return reply.status(200).send(buildWorkflowRunView(deps.repo, run));
   });
 
   // Pending workflow approval gates for the org, shaped for the shared approval
@@ -353,81 +277,7 @@ export function registerWorkflowRoutes(api: FastifyInstance, deps: WorkflowRoute
   api.get('/workflow-approvals', async (req: FastifyRequest, reply) => {
     const auth = requireMember(deps, req, reply);
     if (!auth) return;
-    const orgId = auth.user.organizationId;
-    const memberName = (id: string | null | undefined) =>
-      id ? (deps.repo.getMember(orgId, id)?.name ?? id) : undefined;
-    const runs = deps.repo.listWorkflowRuns(orgId, 'awaiting_approval');
-    const approvals: unknown[] = [];
-    for (const run of runs) {
-      const nodeRuns = deps.repo.listWorkflowNodeRuns(run.id);
-      const gates = nodeRuns.filter((nr) => nr.status === 'awaiting_approval');
-      if (gates.length === 0) continue;
-      let promptByNode = new Map<string, string | undefined>();
-      try {
-        const graph = WorkflowGraphSchema.parse(JSON.parse(run.graphSnapshot));
-        for (const node of graph.nodes) {
-          if (node.kind === 'approval') promptByNode.set(node.id, node.config.prompt);
-        }
-      } catch {
-        promptByNode = new Map();
-      }
-      // Nearest prior output: the most recently completed step in this run.
-      const lastCompleted = nodeRuns
-        .filter((nr) => nr.status === 'completed')
-        .sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''))[0];
-      for (const gate of gates) {
-        approvals.push({
-          id: gate.approvalRequestId ?? gate.id,
-          workflowRunId: run.id,
-          workflowName: run.name,
-          nodeId: gate.nodeId,
-          prompt: promptByNode.get(gate.nodeId) ?? '',
-          priorSummary: lastCompleted?.summary ?? undefined,
-          priorOutputPath: lastCompleted?.outputPath ?? undefined,
-          channelId: run.channelId,
-          requestedBy: run.initiatedBy,
-          createdAt: gate.startedAt ?? run.createdAt,
-        });
-      }
-    }
-    // Tool approvals blocking a RUNNING run's agent step (a write/MCP the child
-    // agent needs approved). These are real ApprovalService approvals; surface
-    // them so the global pending pill shows them without opening the run.
-    const toolApprovals: unknown[] = [];
-    const pending = deps.repo.listPendingApprovals(orgId);
-    if (pending.length > 0) {
-      for (const run of deps.repo.listWorkflowRuns(orgId, 'running')) {
-        const childNodeByRun = new Map(
-          deps.repo
-            .listWorkflowNodeRuns(run.id)
-            .filter((n) => n.childRunId)
-            .map((n) => [
-              n.childRunId as string,
-              { nodeId: n.nodeId, agentId: n.agentId, agentName: memberName(n.agentId) },
-            ]),
-        );
-        for (const a of pending) {
-          const link = a.runId ? childNodeByRun.get(a.runId) : undefined;
-          if (!link) continue;
-          toolApprovals.push({
-            id: a.id,
-            workflowRunId: run.id,
-            workflowName: run.name,
-            nodeId: link.nodeId,
-            // Stable member id of the agent whose step needs the tool (for
-            // avatars/filtering); agentName is display-only.
-            requestedByMemberId: link.agentId ?? a.requestedBy,
-            agentName: link.agentName ?? memberName(a.requestedBy),
-            resourceType: a.resourceType,
-            action: a.action,
-            resourcePath: a.resourcePath,
-            channelId: run.channelId,
-            createdAt: a.createdAt,
-          });
-        }
-      }
-    }
-    return reply.status(200).send({ approvals, toolApprovals });
+    return reply.status(200).send(buildWorkflowApprovalView(deps.repo, auth.user.organizationId));
   });
 
   // Read a run's produced artifact (an agent node's output file). Scoped hard to

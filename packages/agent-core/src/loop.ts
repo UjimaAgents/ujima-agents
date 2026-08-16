@@ -148,25 +148,35 @@ function rethrowClassified(error: unknown): never {
     error instanceof SchemaTooLargeError ||
     error instanceof ContextLengthExceededError
   ) throw error;
-  const classified = classifyApiError(error);
+  const classified = classifyModelError(error);
   if (classified) throw classified;
   throw error;
 }
 
-function classifyApiError(error: unknown): Error | null {
+export function classifyModelError(error: unknown): Error | null {
   if (!error || typeof error !== 'object') return null;
-  const e = error as Record<string, unknown>;
-  const cause = e.cause && typeof e.cause === 'object' ? e.cause as Record<string, unknown> : undefined;
-  const message = [e.message, cause?.message]
+  const layers: Record<string, unknown>[] = [];
+  const seen = new Set<unknown>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    layers.push(record);
+    visit(record.cause);
+    visit(record.error);
+  };
+  visit(error);
+  const message = layers
+    .map((layer) => layer.message)
     .filter((value): value is string => typeof value === 'string')
     .join(' ');
-  const url = typeof e.url === 'string' ? e.url : typeof cause?.url === 'string' ? cause.url : '';
-  const status = typeof e.statusCode === 'number'
-    ? e.statusCode
-    : typeof cause?.statusCode === 'number'
-      ? cause.statusCode
-      : undefined;
-  const hasApiShape = e.name === 'AI_APICallError' || cause?.name === 'AI_APICallError' || status !== undefined;
+  const url = layers
+    .map((layer) => layer.url)
+    .find((value): value is string => typeof value === 'string') ?? '';
+  const status = layers
+    .map((layer) => layer.statusCode)
+    .find((value): value is number => typeof value === 'number');
+  const hasApiShape = layers.some((layer) => layer.name === 'AI_APICallError') || status !== undefined;
   const hasKnownProviderMessage = /context_length_exceeded|maximum context length|reduce the length of the (messages|prompt)|too many states for serving|is not found for API version|is not supported for generateContent/i.test(message);
   if (!hasApiShape && !hasKnownProviderMessage) return null;
 

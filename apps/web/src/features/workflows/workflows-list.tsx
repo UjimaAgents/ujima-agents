@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, Plus, Trash2, Workflow } from "lucide-react";
+import { Loader2, Plus, Search, Trash2, Workflow } from "lucide-react";
 import type { WorkflowDefinition } from "@ujima/shared";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { deleteWorkflow, listWorkflows } from "./use-workflows";
 
 export function WorkflowsList() {
@@ -12,6 +13,8 @@ export function WorkflowsList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [targetDeleteId, setTargetDeleteId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -24,8 +27,18 @@ export function WorkflowsList() {
     };
   }, []);
 
-  async function onDelete(id: string) {
-    if (!confirm("Delete this workflow? This cannot be undone.")) return;
+  const filteredWorkflows = useMemo(() => {
+    if (!searchQuery.trim()) return workflows;
+    const q = searchQuery.toLowerCase();
+    return workflows.filter(
+      (w) => w.name.toLowerCase().includes(q) || w.description?.toLowerCase().includes(q),
+    );
+  }, [workflows, searchQuery]);
+
+  async function confirmDelete() {
+    if (!targetDeleteId) return;
+    const id = targetDeleteId;
+    setTargetDeleteId(null);
     setDeletingId(id);
     try {
       await deleteWorkflow(id);
@@ -39,11 +52,11 @@ export function WorkflowsList() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Workflows</h1>
           <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
-            Author SOPs — sequenced agent pipelines that pass documents down the line.
+            Automate multi-step agent pipelines with triggers, approvals, and handoffs.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -63,6 +76,19 @@ export function WorkflowsList() {
         </div>
       </div>
 
+      {workflows.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search workflows by name or description…"
+            className="w-full rounded-lg border border-zinc-200 bg-white pl-9 pr-4 py-2 text-sm text-zinc-900 outline-none transition focus:border-violet-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+        </div>
+      )}
+
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
           {error}
@@ -78,12 +104,16 @@ export function WorkflowsList() {
           <EmptyState
             icon={Workflow}
             title="No workflows yet"
-            description="Create your first SOP — a trigger, a few agent steps with skills, an approval gate, and a goal handoff."
+            description="Create a workflow to automate multi-step tasks across your agents."
           />
+        </div>
+      ) : filteredWorkflows.length === 0 ? (
+        <div className="py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+          No workflows match &quot;{searchQuery}&quot;.
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {workflows.map((wf) => (
+          {filteredWorkflows.map((wf) => (
             <div
               key={wf.id}
               className="group relative rounded-xl border border-zinc-200 bg-white p-4 transition hover:border-violet-300 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-violet-500/40"
@@ -98,13 +128,13 @@ export function WorkflowsList() {
                 {wf.description && (
                   <p className="mt-2 line-clamp-2 text-xs text-zinc-500 dark:text-zinc-400">{wf.description}</p>
                 )}
-                <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                <p className="mt-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   {wf.nodes.length} node{wf.nodes.length === 1 ? "" : "s"}
                 </p>
               </Link>
               <button
                 type="button"
-                onClick={() => onDelete(wf.id)}
+                onClick={() => setTargetDeleteId(wf.id)}
                 disabled={deletingId === wf.id}
                 className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-lg text-zinc-300 opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 dark:text-zinc-600 dark:hover:bg-red-500/10"
                 aria-label="Delete workflow"
@@ -115,6 +145,17 @@ export function WorkflowsList() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(targetDeleteId)}
+        onClose={() => setTargetDeleteId(null)}
+        onConfirm={confirmDelete}
+        title="Delete Workflow"
+        description="Are you sure you want to delete this workflow? This action cannot be undone."
+        confirmLabel="Delete Workflow"
+        cancelLabel="Cancel"
+        variant="danger"
+      />
     </div>
   );
 }

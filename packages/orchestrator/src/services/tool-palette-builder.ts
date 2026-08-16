@@ -22,6 +22,7 @@ import {
   getDelegateKind,
 } from '../utils/delegate-turn.js';
 import { isMcpDispatchEnabled } from './feature-flags.js';
+import { chooseMcpAttachmentRoute } from './mcp-attachment-dispatch.js';
 import { buildMcpToolDefinitionsV2 } from './connector-spawn-v2.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { McpServerSummary } from './spirit-mcp-helpers.js';
@@ -150,7 +151,11 @@ export class ToolPaletteBuilder {
     taskSessionId: string;
     role: SpiritRole;
   }): Promise<{ toolSet: ToolSet; servers: McpServerSummary[]; catalogText?: string }> {
-    if (isMcpDispatchEnabled(ctx.organizationId) && this.deps.mcpPool) {
+    const route = chooseMcpAttachmentRoute({
+      dispatchEnabled: isMcpDispatchEnabled(ctx.organizationId),
+      poolAvailable: Boolean(this.deps.mcpPool),
+    });
+    if (route === 'dispatch' && this.deps.mcpPool) {
       const v2 = await buildMcpToolDefinitionsV2(
         {
           mcpPool: this.deps.mcpPool,

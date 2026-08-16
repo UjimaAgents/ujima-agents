@@ -135,7 +135,7 @@ export function useConversationSync(
   const storeMembersRef = useRef(storeMembers);
   const runsRef = useRef(runs);
   const runChunkSequenceRef = useRef(0);
-  const runChunkBatcherRef = useRef<StreamChunkBatcher | null>(null);
+  const runChunkBatcherRef = useRef<{ key: string; batcher: StreamChunkBatcher } | null>(null);
 
   useEffect(() => {
     storeMembersRef.current = storeMembers;
@@ -147,26 +147,32 @@ export function useConversationSync(
 
   useEffect(() => {
     runChunkSequenceRef.current = 0;
-    runChunkBatcherRef.current?.dispose();
-    runChunkBatcherRef.current = new StreamChunkBatcher((items) => {
-      appendRunChunkBatchToStore(items);
+    const key = conversationKey ?? "";
+    const batcher = new StreamChunkBatcher((items) => {
+      appendRunChunkBatchToStore(items, key);
     });
+    runChunkBatcherRef.current = { key, batcher };
     return () => {
-      runChunkBatcherRef.current?.dispose();
-      runChunkBatcherRef.current = null;
+      if (runChunkBatcherRef.current?.batcher === batcher) {
+        runChunkBatcherRef.current = null;
+      }
+      batcher.dispose();
     };
   }, [appendRunChunkBatchToStore, conversationKey]);
 
-  const queueRunChunk = useCallback((chunk: RunChunkEvent) => {
+  const queueRunChunk = useCallback((chunk: RunChunkEvent, expectedConversationKey: string) => {
+    const current = runChunkBatcherRef.current;
+    if (!current || current.key !== expectedConversationKey) return;
     const item = buildRunChunkItem({
       chunk,
       members: storeMembersRef.current,
       sequence: runChunkSequenceRef.current++,
     });
-    runChunkBatcherRef.current?.push(item);
+    current.batcher.push(item);
   }, []);
-  const flushRunChunks = useCallback(() => {
-    runChunkBatcherRef.current?.flushNow();
+  const flushRunChunks = useCallback((expectedConversationKey: string) => {
+    const current = runChunkBatcherRef.current;
+    if (current?.key === expectedConversationKey) current.batcher.flushNow();
   }, []);
 
   const loadConversationState = useCallback(
@@ -178,7 +184,12 @@ export function useConversationSync(
       ]);
       if (signal.aborted || currentConversationKey !== conversationKey) return;
       setError(undefined);
-      hydrateMessages(history, (message) => messageToChatMessage(message, storeMembersRef.current), messageToActivity);
+      hydrateMessages(
+        history,
+        (message) => messageToChatMessage(message, storeMembersRef.current),
+        messageToActivity,
+        currentConversationKey,
+      );
       const activeRuns = latestBootstrap?.activeRuns ?? bootstrap.activeRuns;
       const pendingApprovals = latestBootstrap?.pendingApprovals ?? bootstrap.pendingApprovals;
       const latestMembers = latestBootstrap?.members ?? bootstrap.members;
@@ -629,8 +640,8 @@ function handleStreamEvent(
   actions: {
     appendActivity(event: ActivityEvent): void;
     appendMember(member: Member): void;
-    appendRunChunk(chunk: RunChunkEvent): void;
-    flushRunChunks(): void;
+    appendRunChunk(chunk: RunChunkEvent, expectedConversationKey: string): void;
+    flushRunChunks(expectedConversationKey: string): void;
     receiveMessage(
       tempId: string | undefined,
       message: Message,
@@ -655,7 +666,7 @@ function handleStreamEvent(
 ): void {
   if (envelope.type !== "socket") return;
   if (envelope.event !== "run:chunk") {
-    actions.flushRunChunks();
+    actions.flushRunChunks(actions.expectedConversationKey);
   }
 
   switch (envelope.event) {
@@ -702,7 +713,7 @@ function handleStreamEvent(
     case "run:chunk": {
       const chunk = parseRunChunkPayload(envelope.payload);
       if (!chunk) return;
-      actions.appendRunChunk(chunk);
+      actions.appendRunChunk(chunk, actions.expectedConversationKey);
       return;
     }
     case "run:tokens": {

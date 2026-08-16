@@ -48,6 +48,14 @@ describe('validateProviderKeys', () => {
     expect(result.missingProviders).toEqual([]);
   });
 
+  it('does not fuzzy-match provider identities', () => {
+    const result = validateProviderKeys(makeTeam(), {
+      'openai-compatible': 'key',
+    });
+    expect(result.unknownProviders).toEqual(['openai-compatible']);
+    expect(result.missingProviders).toEqual(['openai']);
+  });
+
   it('uses the local Codex login for openai when authMode is chatgpt', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'ujima-codex-auth-'));
     try {

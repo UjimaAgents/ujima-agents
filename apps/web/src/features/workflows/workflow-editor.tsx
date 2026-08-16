@@ -28,6 +28,7 @@ import { NODE_KIND_STYLES, workflowNodeTypes, type FlowNode } from "./nodes";
 import { NodeInspector } from "./node-inspector";
 import { flowToGraph, graphToFlow, inferPort } from "./graph-flow";
 import { createNode } from "./node-factory";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import {
   WorkflowApiError,
   createWorkflow,
@@ -58,7 +59,7 @@ function newTriggerGraph() {
 function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const isNew = workflowId === "new";
   const [channelId, setChannelId] = useState<string | null>(
     isNew ? searchParams.get("channelId") : null,
@@ -81,6 +82,20 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   // Shared (org-wide) definitions open locked so they aren't edited by accident.
   const [readOnly, setReadOnly] = useState(false);
 
+  // Unsaved changes dirty state tracking
+  const [initialSnapshot, setInitialSnapshot] = useState<string>("");
+  const [confirmBackOpen, setConfirmBackOpen] = useState(false);
+
+  const currentSnapshot = useMemo(
+    () => JSON.stringify({ name, description, channelId, nodes, edges }),
+    [name, description, channelId, nodes, edges],
+  );
+
+  const isDirty = useMemo(
+    () => Boolean(initialSnapshot && currentSnapshot !== initialSnapshot),
+    [initialSnapshot, currentSnapshot],
+  );
+
   useEffect(() => {
     let cancelled = false;
     getWorkflowCatalog()
@@ -90,6 +105,13 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       cancelled = true;
     };
   }, []);
+
+  // Set initial snapshot for new workflow
+  useEffect(() => {
+    if (isNew) {
+      setInitialSnapshot(JSON.stringify({ name: "", description: "", channelId, nodes: initialFlow.flowNodes, edges: initialFlow.flowEdges }));
+    }
+  }, [isNew, channelId, initialFlow]);
 
   // Auto-hide the "saved" confirmation after a few seconds.
   useEffect(() => {
@@ -112,6 +134,15 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         setDescription(def.description ?? "");
         setChannelId(def.channelId ?? null);
         setReadOnly(!def.channelId); // org-wide → locked until "Edit"
+        setInitialSnapshot(
+          JSON.stringify({
+            name: def.name,
+            description: def.description ?? "",
+            channelId: def.channelId ?? null,
+            nodes: flowNodes,
+            edges: flowEdges,
+          }),
+        );
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load."))
       .finally(() => !cancelled && setLoading(false));
@@ -155,8 +186,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         const { flowNodes } = graphToFlow([node], []);
         return [...ns, ...flowNodes];
       });
+      setTimeout(() => fitView({ duration: 250, padding: 0.3 }), 50);
     },
-    [setNodes],
+    [setNodes, fitView],
   );
 
   const onDragOver = useCallback((e: DragEvent) => {
@@ -175,8 +207,9 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         const { flowNodes } = graphToFlow([node], []);
         return [...ns, ...flowNodes];
       });
+      setTimeout(() => fitView({ duration: 250, padding: 0.3 }), 50);
     },
-    [screenToFlowPosition, setNodes],
+    [screenToFlowPosition, setNodes, fitView],
   );
 
   const selectedNode = useMemo(() => nodes.find((n) => n.selected)?.data.node ?? null, [nodes]);
@@ -196,12 +229,35 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     });
   }, [setNodes, setEdges]);
 
+  // Graph validation error visualization on nodes
+  const errorNodeIds = useMemo(
+    () => new Set(issues.map((i) => i.nodeId).filter(Boolean) as string[]),
+    [issues],
+  );
+
+  const displayNodes = useMemo(
+    () =>
+      nodes.map((n) => ({
+        ...n,
+        data: { ...n.data, isError: errorNodeIds.has(n.id) },
+      })),
+    [nodes, errorNodeIds],
+  );
+
+  const handleBack = useCallback(() => {
+    if (isDirty) {
+      setConfirmBackOpen(true);
+    } else {
+      router.push("/workflows");
+    }
+  }, [isDirty, router]);
+
   const onSave = useCallback(async () => {
     setError(null);
     setIssues([]);
     setSaved(false);
     if (!name.trim()) {
-      setError("Give the workflow a name.");
+      setError("Workflow name is required.");
       return;
     }
     const graph = flowToGraph(nodes, edges);
@@ -221,6 +277,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     try {
       const savedDef = isNew ? await createWorkflow(input) : await updateWorkflow(workflowId, input);
       setSaved(true);
+      setInitialSnapshot(currentSnapshot);
       if (isNew) router.push(`/workflows/${savedDef.id}`);
       router.refresh();
     } catch (err) {
@@ -233,7 +290,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     } finally {
       setSaving(false);
     }
-  }, [name, description, channelId, nodes, edges, isNew, workflowId, router]);
+  }, [name, description, channelId, nodes, edges, isNew, workflowId, router, currentSnapshot]);
 
   if (loading) {
     return (
@@ -248,7 +305,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       <header className="flex items-center gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
         <button
           type="button"
-          onClick={() => router.push("/workflows")}
+          onClick={handleBack}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 dark:hover:bg-zinc-800"
           aria-label="Back to workflows"
         >
@@ -257,12 +314,24 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
+          disabled={readOnly}
           placeholder="Untitled workflow"
-          className="min-w-0 flex-1 bg-transparent text-base font-semibold text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
+          className="min-w-0 flex-1 bg-transparent text-base font-semibold text-zinc-900 outline-none placeholder:text-zinc-400 disabled:opacity-80 dark:text-zinc-100"
         />
-        <span className="shrink-0 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-          {channelId ? "Scoped to this channel" : "All channels"}
-        </span>
+        {!readOnly ? (
+          <select
+            value={channelId ?? ""}
+            onChange={(e) => setChannelId(e.target.value || null)}
+            className="shrink-0 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+          >
+            <option value="">All channels (Org-wide)</option>
+            {channelId && <option value={channelId}>This channel</option>}
+          </select>
+        ) : (
+          <span className="shrink-0 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            {channelId ? "Scoped to this channel" : "All channels"}
+          </span>
+        )}
         {readOnly ? (
           <button
             type="button"
@@ -288,8 +357,8 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       {readOnly && (
         <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
           <Lock className="h-3.5 w-3.5 shrink-0" />
-          This is a shared, org-wide workflow. Editing affects every channel — click{" "}
-          <span className="font-semibold">Edit</span> to modify it.
+          Shared org-wide workflow — click{" "}
+          <span className="font-semibold">Edit</span> to make changes.
         </div>
       )}
 
@@ -351,7 +420,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
         <div className="min-w-0 flex-1" onDrop={readOnly ? undefined : onDrop} onDragOver={readOnly ? undefined : onDragOver}>
           <ReactFlow
-            nodes={nodes}
+            nodes={displayNodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -382,11 +451,27 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
           <NodeInspector
             node={selectedNode}
             catalog={catalog}
+            nodes={nodes.map((n) => n.data.node)}
+            readOnly={readOnly}
             onChange={updateSelected}
             onDelete={deleteSelected}
           />
         </aside>
       </div>
+
+      <ConfirmDialog
+        open={confirmBackOpen}
+        onClose={() => setConfirmBackOpen(false)}
+        onConfirm={() => {
+          setConfirmBackOpen(false);
+          router.push("/workflows");
+        }}
+        title="Unsaved Changes"
+        description="You have unsaved changes in this workflow editor. Are you sure you want to leave without saving?"
+        confirmLabel="Discard & Leave"
+        cancelLabel="Keep Editing"
+        variant="danger"
+      />
     </div>
   );
 }

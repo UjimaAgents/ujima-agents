@@ -4,19 +4,19 @@ import {
   Check,
   ChevronDown,
   Clock,
-  Command,
+  LayoutGrid,
   CircleUserRound,
   Hash,
   KanbanSquare,
   Workflow,
   LogOut,
   Moon,
-  PanelRight,
   Plus,
   Search,
   Settings,
   Sun,
   Trash2,
+  User,
 } from "lucide-react";
 import Link from "next/link";
 import { Avatar, RunningFigureIndicator } from "./chat/primitives";
@@ -87,6 +87,8 @@ export interface WorkspaceSidebarProps {
   selected?: SelectedConversation;
   tasksActive?: boolean;
   onOpenTasks?: () => void;
+  workflowsActive?: boolean;
+  onOpenWorkflows?: () => void;
   onSelect: (conv: SelectedConversation) => void;
   onCreateChannel: (name: string) => Promise<SelectedConversation | null>;
   onCreateAgent: CreateAgentHandler;
@@ -237,6 +239,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   selected,
   tasksActive = false,
   onOpenTasks,
+  workflowsActive = false,
+  onOpenWorkflows,
   onSelect,
   onCreateChannel,
   onCreateAgent,
@@ -441,7 +445,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             className="flex w-full min-w-0 items-center gap-2 rounded-lg p-1.5 text-left transition hover:bg-zinc-100 dark:hover:bg-zinc-900"
           >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-[0_0_15px_rgba(124,58,237,0.3)]">
-              <Command className="h-5 w-5" />
+              <LayoutGrid className="h-5 w-5" />
             </div>
             <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
               {bootstrap.organization?.name || "Ujima Agents"}
@@ -451,7 +455,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           {menuOpen && bootstrap.organizations.length >= 1 ? (
             <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-zinc-800 dark:bg-[#09090b]">
               <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-                Workspaces
+                Organizations
               </p>
               <div className="space-y-0.5 max-h-60 overflow-y-auto">
                 {bootstrap.organizations.map((org) => {
@@ -513,7 +517,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-semibold text-violet-600 hover:bg-zinc-100 dark:text-violet-400 dark:hover:bg-zinc-900"
               >
                 <Plus className="h-3.5 w-3.5 shrink-0" />
-                Add Workspace
+                Add Organization
               </button>
             </div>
           ) : null}
@@ -530,9 +534,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             onChange={(e) => setSearchQuery(e.target.value)}
             className="h-8 pl-9 pr-8 text-xs bg-zinc-50/50 focus:ring-1 focus:ring-violet-500 dark:bg-zinc-900/50"
           />
-          <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800">
-            ⌘K
-          </kbd>
+
         </div>
       </div>
 
@@ -549,7 +551,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             <SidebarItem
               icon={<Workflow className="h-4 w-4" />}
               label="Workflows"
-              onClick={() => router.push("/workflows")}
+              active={workflowsActive}
+              onClick={onOpenWorkflows ?? (() => router.push("/workflows"))}
             />
           </div>
         </div>
@@ -559,7 +562,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <div className="mt-1.5 space-y-0.5">
             {filteredChannels.length === 0 ? (
               <SidebarSectionEmpty
-                message="No channels yet. Create one to start conversations."
+                message="No channels yet."
                 actionLabel="Add channel"
                 onAction={() => setIsChannelModalOpen(true)}
               />
@@ -588,7 +591,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             <button
               type="button"
               onClick={() => showMore("channels")}
-              className="mt-1 px-2 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+              className="mt-1 px-2 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-600 dark:text-zinc-400 dark:hover:text-zinc-400"
             >
               Show 10 more
             </button>
@@ -600,7 +603,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <div className="mt-1.5 space-y-0.5">
             {filteredAgents.length === 0 ? (
               <SidebarSectionEmpty
-                message="No agents yet. Add one to delegate work in this workspace."
+                message="No agents yet."
                 actionLabel="Add agent"
                 onAction={() => setIsAgentModalOpen(true)}
               />
@@ -633,7 +636,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             <button
               type="button"
               onClick={() => showMore("agents")}
-              className="mt-1 px-2 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+              className="mt-1 px-2 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-600 dark:text-zinc-400 dark:hover:text-zinc-400"
             >
               Show 10 more
             </button>
@@ -659,7 +662,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
               <button
                 type="button"
                 onClick={() => showMore("schedules")}
-                className="mt-1 px-2 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+                className="mt-1 px-2 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-600 dark:text-zinc-400 dark:hover:text-zinc-400"
               >
                 Show 10 more
               </button>
@@ -675,6 +678,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                 <CircleUserRound className="h-3.5 w-3.5" />
               </div>
               <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">{memberName}</p>
                 <p className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{memberEmail}</p>
               </div>
             </div>
@@ -700,7 +704,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                 onClick={() => setAccountMenuOpen(false)}
                 className="flex items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium text-zinc-900 transition hover:bg-zinc-100/80 dark:text-zinc-100 dark:hover:bg-zinc-900"
               >
-                <PanelRight className="h-4 w-4 text-zinc-500" />
+                <User className="h-4 w-4 text-zinc-500" />
                 <span className="flex-1">Profile</span>
               </Link>
 
@@ -845,7 +849,7 @@ export const SidebarItem = memo(function SidebarItem({
         >
           {icon}
           {status && status !== "loading" && (
-            <div className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-white dark:border-[#09090b] ${
+            <div className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-[#09090b] ${
               status === "working" ? "bg-violet-500 animate-pulse" :
               status === "online" ? "bg-emerald-500" :
               status === "idle" ? "bg-amber-500" :
@@ -854,7 +858,7 @@ export const SidebarItem = memo(function SidebarItem({
             }`} />
           )}
           {status === "loading" && (
-            <div className="absolute -bottom-0.5 -right-0.5 h-2 w-2 animate-spin rounded-full border border-violet-500 border-t-transparent bg-white dark:bg-[#09090b]" />
+            <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 animate-spin rounded-full border border-violet-500 border-t-transparent bg-white dark:bg-[#09090b]" />
           )}
         </div>
         <span
@@ -863,7 +867,7 @@ export const SidebarItem = memo(function SidebarItem({
           {label}
         </span>
         {subtitle ? (
-          <span className="hidden shrink-0 truncate text-[10px] text-zinc-400 group-hover:inline dark:text-zinc-500">
+          <span className="shrink-0 truncate text-xs text-zinc-400 dark:text-zinc-500">
             {subtitle}
           </span>
         ) : null}
@@ -898,7 +902,7 @@ export const SidebarSectionHeader = memo(function SidebarSectionHeader({
         <button
           type="button"
           onClick={onAdd}
-          className="opacity-0 group-hover/section:opacity-100 transition-opacity duration-200 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+          className="transition-opacity duration-200 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
         >
           <Plus className="h-3.5 w-3.5" />
         </button>

@@ -1,4 +1,5 @@
 import type { WorkspaceCreateSubmitInput } from "../settings/organization/components/workspaces/workspace-create-modal";
+import { clientFetchJson } from "@/lib/client-api";
 
 export interface CreatedWorkspace {
   id: string;
@@ -12,7 +13,7 @@ export interface CreatedWorkspace {
 export async function createWorkspaceApi(
   input: WorkspaceCreateSubmitInput,
 ): Promise<CreatedWorkspace> {
-  const res = await fetch("/api/workspaces", {
+  return clientFetchJson<CreatedWorkspace>("/api/workspaces", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
@@ -38,12 +39,5 @@ export async function createWorkspaceApi(
             copy_providers: input.copyProviders,
           },
     ),
-  });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.message || "Failed to create workspace");
-  }
-
-  return res.json() as Promise<CreatedWorkspace>;
+  }, "Failed to create workspace");
 }

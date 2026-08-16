@@ -1,6 +1,7 @@
 "use client";
 
 import type { Edge } from "@xyflow/react";
+import { normalizeWorkflowGraph, workflowPortForNodeKind } from "@ujima/shared";
 import type {
   WorkflowEdge,
   WorkflowNode,
@@ -16,9 +17,7 @@ import type { FlowNode } from "./nodes";
  * correct typed ports for the backend.
  */
 export function inferPort(sourceKind: WorkflowNodeKind | undefined): WorkflowPort {
-  if (sourceKind === "skill") return "ai_skill";
-  if (sourceKind === "tool") return "ai_tool";
-  return "main";
+  return workflowPortForNodeKind(sourceKind);
 }
 
 function edgeStyle(port: WorkflowPort): Edge["style"] {
@@ -30,14 +29,16 @@ export function graphToFlow(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
 ): { flowNodes: FlowNode[]; flowEdges: Edge[] } {
-  const flowNodes: FlowNode[] = nodes.map((node) => ({
+  const graph = normalizeWorkflowGraph({ nodes, edges });
+  const flowNodes: FlowNode[] = graph.nodes.map((node) => ({
     id: node.id,
     type: "workflow",
     position: node.position,
     data: { node },
   }));
-  const flowEdges: Edge[] = edges.map((edge) => {
-    const isMain = edge.targetPort === "main";
+  const flowEdges: Edge[] = graph.edges.map((edge) => {
+    const port = edge.targetPort;
+    const isMain = port === "main";
     return {
       id: edge.id,
       source: edge.source,
@@ -45,8 +46,8 @@ export function graphToFlow(
       sourceHandle: isMain ? "main-out" : "cap-out",
       targetHandle: isMain ? "main-in" : "cap-in",
       animated: isMain,
-      style: edgeStyle(edge.targetPort),
-      data: { port: edge.targetPort },
+      style: edgeStyle(port),
+      data: { port },
     };
   });
   return { flowNodes, flowEdges };

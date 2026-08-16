@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import type { WorkflowNode, WorkflowNodeKind } from "@ujima/shared";
 import { FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
@@ -7,7 +8,7 @@ import { NODE_KIND_STYLES } from "./nodes";
 import type { WorkflowCatalog } from "./use-workflows";
 
 const SELECT_CLASS =
-  "w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-violet-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+  "w-full rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-violet-500 disabled:opacity-60 disabled:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:disabled:bg-zinc-900";
 
 /** Short explanation of what each node type does + how it works. */
 const NODE_HELP: Record<WorkflowNodeKind, string> = {
@@ -30,6 +31,8 @@ const NODE_HELP: Record<WorkflowNodeKind, string> = {
 interface Props {
   node: WorkflowNode | null;
   catalog: WorkflowCatalog;
+  nodes?: WorkflowNode[];
+  readOnly?: boolean;
   onChange: (next: WorkflowNode) => void;
   onDelete: () => void;
 }
@@ -39,7 +42,59 @@ function patch(node: WorkflowNode, config: Record<string, unknown>): WorkflowNod
   return { ...node, config: { ...node.config, ...config } } as WorkflowNode;
 }
 
-export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
+function TokenHelper({
+  node,
+  nodes,
+  onInsert,
+  readOnly,
+}: {
+  node: WorkflowNode;
+  nodes?: WorkflowNode[];
+  onInsert: (token: string) => void;
+  readOnly?: boolean;
+}) {
+  if (readOnly) return null;
+  const upstreamNodes = (nodes ?? []).filter((n) => n.id !== node.id && n.kind === "agent");
+
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1 text-[11px]">
+      <span className="self-center font-medium text-zinc-400">Insert token:</span>
+      <button
+        type="button"
+        onClick={() => onInsert("{{input}}")}
+        className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+      >
+        {"{{input}}"}
+      </button>
+      <button
+        type="button"
+        onClick={() => onInsert("{{node.output}}")}
+        className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+      >
+        {"{{node.output}}"}
+      </button>
+      <button
+        type="button"
+        onClick={() => onInsert("{{workflow_run_id}}")}
+        className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+      >
+        {"{{workflow_run_id}}"}
+      </button>
+      {upstreamNodes.map((n) => (
+        <button
+          key={n.id}
+          type="button"
+          onClick={() => onInsert(`{{nodes.${n.id}.output}}`)}
+          className="rounded bg-violet-50 px-1.5 py-0.5 font-mono text-violet-700 hover:bg-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-900/60"
+        >
+          {`{{nodes.${n.id}.output}}`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function NodeInspector({ node, catalog, nodes, readOnly, onChange, onDelete }: Props) {
   if (!node) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
@@ -51,6 +106,13 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
   const style = NODE_KIND_STYLES[node.kind];
   const Icon = style.icon;
 
+  const insertPromptToken = (token: string) => {
+    if (node.kind === "agent") {
+      const current = node.config.prompt ?? "";
+      onChange(patch(node, { prompt: current ? `${current} ${token}` : token }));
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
@@ -60,14 +122,16 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
           </span>
           <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{style.label}</span>
         </div>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
-          aria-label="Delete node"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
+            aria-label="Delete node"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       <p className="border-b border-zinc-200 px-4 py-2.5 text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
@@ -80,6 +144,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
             id="node-label"
             value={node.label ?? ""}
             placeholder={style.label}
+            disabled={readOnly}
             onChange={(e) => onChange({ ...node, label: e.target.value })}
           />
         </FieldShell>
@@ -90,6 +155,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
               id="trigger-source"
               className={SELECT_CLASS}
               value={node.config.source}
+              disabled={readOnly}
               onChange={(e) => onChange(patch(node, { source: e.target.value }))}
             >
               <option value="manual">Manual</option>
@@ -106,6 +172,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="agent-id"
                 className={SELECT_CLASS}
                 value={node.config.agentId}
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { agentId: e.target.value }))}
               >
                 <option value="">Select an agent…</option>
@@ -129,8 +196,10 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 rows={6}
                 value={node.config.prompt}
                 placeholder="Write a BRD for {{input}}. Save it to {{node.output}}."
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { prompt: e.target.value }))}
               />
+              <TokenHelper node={node} nodes={nodes} onInsert={insertPromptToken} readOnly={readOnly} />
             </FieldShell>
             <FieldShell
               label="Output path"
@@ -141,6 +210,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="agent-output"
                 value={node.config.outputPath ?? ""}
                 placeholder="docs/{{workflow_run_id}}/brd.md"
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { outputPath: e.target.value || undefined }))}
               />
             </FieldShell>
@@ -152,9 +222,17 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
             label="Skill"
             htmlFor="skill-name"
             hint={
-              catalog.skills.length > 0
-                ? "Attached to an agent as an ai_skill capability."
-                : "No installed skills found — type a skill name. Install skills in Settings."
+              catalog.skills.length > 0 ? (
+                "Attached to an agent as an ai_skill capability."
+              ) : (
+                <span>
+                  No installed skills found.{" "}
+                  <Link href="/settings/organization?tab=mcps" className="text-violet-600 underline hover:text-violet-700">
+                    Install skills in Settings
+                  </Link>
+                  .
+                </span>
+              )
             }
           >
             {catalog.skills.length > 0 ? (
@@ -162,6 +240,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="skill-name"
                 className={SELECT_CLASS}
                 value={node.config.skillName}
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { skillName: e.target.value }))}
               >
                 <option value="">Select a skill…</option>
@@ -179,6 +258,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="skill-name"
                 value={node.config.skillName}
                 placeholder="e.g. brd"
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { skillName: e.target.value }))}
               />
             )}
@@ -191,6 +271,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
               id="tool-id"
               className={SELECT_CLASS}
               value={node.config.toolId}
+              disabled={readOnly}
               onChange={(e) => onChange(patch(node, { toolId: e.target.value }))}
             >
               <option value="">Select a tool…</option>
@@ -226,6 +307,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="approver"
                 className={SELECT_CLASS}
                 value={node.config.approverAgentId ?? ""}
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { approverAgentId: e.target.value || undefined }))}
               >
                 <option value="">Human (approve in the run view)</option>
@@ -245,6 +327,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 rows={4}
                 value={node.config.prompt ?? ""}
                 placeholder="Approve the BRD before engineering starts?"
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { prompt: e.target.value || undefined }))}
               />
             </FieldShell>
@@ -258,6 +341,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="goal-title"
                 value={node.config.titleTemplate}
                 placeholder="{{input}}"
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { titleTemplate: e.target.value }))}
               />
             </FieldShell>
@@ -266,6 +350,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="goal-tasks-from"
                 className={SELECT_CLASS}
                 value={node.config.tasksFrom}
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { tasksFrom: e.target.value }))}
               >
                 <option value="json">Upstream node json</option>
@@ -279,6 +364,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                   rows={5}
                   value={node.config.tasksTemplate ?? ""}
                   placeholder='[{"title": "Build auth"}]'
+                  disabled={readOnly}
                   onChange={(e) => onChange(patch(node, { tasksTemplate: e.target.value || undefined }))}
                 />
               </FieldShell>
@@ -297,6 +383,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="output-format"
                 className={SELECT_CLASS}
                 value={node.config.format}
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { format: e.target.value }))}
               >
                 <option value="markdown">Markdown</option>
@@ -316,6 +403,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 rows={4}
                 value={node.config.instructions ?? ""}
                 placeholder="A table with columns: Topic | Note"
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { instructions: e.target.value || undefined }))}
               />
             </FieldShell>
@@ -328,6 +416,7 @@ export function NodeInspector({ node, catalog, onChange, onDelete }: Props) {
                 id="output-path"
                 value={node.config.outputPath ?? ""}
                 placeholder="workflows/{{workflow_run_id}}/report.md"
+                disabled={readOnly}
                 onChange={(e) => onChange(patch(node, { outputPath: e.target.value || undefined }))}
               />
             </FieldShell>

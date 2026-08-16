@@ -3,7 +3,7 @@
 import "@xyflow/react/dist/style.css";
 import { useMemo } from "react";
 import { Background, Controls, ReactFlow, type Edge } from "@xyflow/react";
-import { WorkflowGraphSchema, type WorkflowNodeRunStatus } from "@ujima/shared";
+import { normalizeWorkflowGraph, type WorkflowNodeRunStatus } from "@ujima/shared";
 import { workflowNodeTypes, type FlowNode } from "./nodes";
 import { graphToFlow } from "./graph-flow";
 import type { WorkflowRunDetail } from "./use-workflows";
@@ -23,7 +23,7 @@ export function WorkflowRunCanvas({ detail }: { detail: WorkflowRunDetail }) {
   }, [detail]);
 
   const { nodes, edges } = useMemo(() => {
-    const graph = WorkflowGraphSchema.parse(JSON.parse(detail.run.graphSnapshot));
+    const graph = normalizeWorkflowGraph(JSON.parse(detail.run.graphSnapshot));
     const { flowNodes, flowEdges } = graphToFlow(graph.nodes, graph.edges);
     return {
       nodes: flowNodes.map((n) => ({ ...n, data: { ...n.data, status: statusByNode.get(n.id)?.status } })) as FlowNode[],
