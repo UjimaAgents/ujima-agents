@@ -299,6 +299,20 @@ export const WorkflowNodeRunSchema = z.object({
 });
 export type WorkflowNodeRun = z.infer<typeof WorkflowNodeRunSchema>;
 
+/** Return the latest attempt for each workflow node. The workflow model owns this derivation. */
+export function latestNodeRuns(
+  nodeRuns: readonly WorkflowNodeRun[],
+): Map<string, WorkflowNodeRun> {
+  const latest = new Map<string, WorkflowNodeRun>();
+  for (const nodeRun of nodeRuns) {
+    const previous = latest.get(nodeRun.nodeId);
+    if (!previous || nodeRun.attempt >= previous.attempt) {
+      latest.set(nodeRun.nodeId, nodeRun);
+    }
+  }
+  return latest;
+}
+
 export const WorkflowTransitionActionSchema = z.enum([
   "retry",
   "skip",

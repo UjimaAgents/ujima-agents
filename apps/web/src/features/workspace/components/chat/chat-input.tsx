@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -45,6 +45,7 @@ import { MarkdownInline } from "../markdown";
 import { useComposerVoiceInput } from "./use-composer-voice-input";
 import { VoiceInputWaves } from "./voice-input-waves";
 import type { ConversationMessageMetadata } from "../../conversation-transport";
+import { clientFetchJson } from "@/lib/client-api";
 
 
 
@@ -482,16 +483,12 @@ async function loadWorkspaceAssetSuggestions(searchQuery: string): Promise<Menti
     if (cachedRootFolders && now - cachedRootFolders.at < CACHED_LIST_TTL_MS) {
       return cachedRootFolders.items;
     }
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) return [];
-    const results = (await res.json()) as WorkspaceAssetHit[];
+    const results = await clientFetchJson<WorkspaceAssetHit[]>(url, { credentials: "include" }).catch(() => []);
     const items = results.map(toAssetSuggestion);
     cachedRootFolders = { at: now, items };
     return items;
   }
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) return [];
-  const results = (await res.json()) as WorkspaceAssetHit[];
+  const results = await clientFetchJson<WorkspaceAssetHit[]>(url, { credentials: "include" }).catch(() => []);
   return results.map(toAssetSuggestion);
 }
 
@@ -500,9 +497,10 @@ async function loadNamedAssetSuggestions(): Promise<MentionSuggestion[]> {
   if (cachedNamedAssets && now - cachedNamedAssets.at < CACHED_LIST_TTL_MS) {
     return cachedNamedAssets.items;
   }
-  const res = await fetch("/api/workspaces/assets", { credentials: "include" });
-  if (!res.ok) return [];
-  const results = (await res.json()) as WorkspaceAssetHit[];
+  const results = await clientFetchJson<WorkspaceAssetHit[]>(
+    "/api/workspaces/assets",
+    { credentials: "include" },
+  ).catch(() => []);
   const items = results.map(({ id, name, kind, detail }) => ({
     id: id ?? name, name, kind, detail: detail ?? "",
   }));
@@ -526,6 +524,7 @@ function ChatInputComponent({
   onScheduleModeChange,
   stoppableRunIds,
   onStopRuns,
+  actions,
   readOnly = false,
   reasoningProvider,
   reasoningModelValue,
@@ -547,6 +546,7 @@ function ChatInputComponent({
   onScheduleModeChange?: (active: boolean) => void;
   stoppableRunIds?: string[];
   onStopRuns?: () => Promise<void> | void;
+  actions?: ReactNode;
   readOnly?: boolean;
   reasoningProvider?: string;
   reasoningModelValue?: string;
@@ -564,6 +564,7 @@ function ChatInputComponent({
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [clearConfirmation, setClearConfirmation] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [attachments, setAttachments] = useState<UploadedAttachment[]>(initialDraft.attachments);
@@ -719,7 +720,8 @@ function ChatInputComponent({
     if (slashQuery === null) return allSlashCommands;
     return allSlashCommands.filter((option) => option.command.startsWith(slashQuery));
   }, [allSlashCommands, slashQuery]);
-  const slashMenuOpen = slashQuery !== null && slashMenuOptions.length > 0;
+  const slashMenuOpen =
+    slashQuery !== null && !slashMenuDismissed && slashMenuOptions.length > 0;
   const isSlashBrowseMode = slashQuery === "";
   const displayedSlashOptions = useMemo(() => {
     if (!isSlashBrowseMode || slashMenuExpanded) return slashMenuOptions;
@@ -735,6 +737,7 @@ function ChatInputComponent({
   if (slashQuery !== prevSlashQuery) {
     setPrevSlashQuery(slashQuery);
     setSlashMenuExpanded(false);
+    setSlashMenuDismissed(false);
     setActiveSlashIndex(0);
   }
 
@@ -897,22 +900,11 @@ function ChatInputComponent({
       const form = new FormData();
       form.set("organizationId", organizationIdValue);
       form.set("file", file);
-      const response = await fetch("/api/attachments", {
+      const body = await clientFetchJson<unknown>("/api/attachments", {
         method: "POST",
         signal: controller.signal,
         body: form,
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(
-          body &&
-            typeof body === "object" &&
-            "message" in body &&
-            typeof body.message === "string"
-            ? body.message
-            : "Unable to upload attachment.",
-        );
-      }
+      }, "Unable to upload attachment.");
       const parsed = AttachmentSchema.safeParse(body);
       if (!parsed.success) {
         throw new Error("Unexpected attachment response.");
@@ -1488,8 +1480,7 @@ function ChatInputComponent({
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    pendingCaretRef.current = 0;
-                    setContent("");
+                    setSlashMenuDismissed(true);
                     return;
                   }
                 }
@@ -1530,6 +1521,7 @@ function ChatInputComponent({
                 }}
               />
             </div>
+            {actions}
             {!readOnly && mentionMenuOpen ? (
               <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
                 {mentionMenuSections.map((section, sectionIndex) => (

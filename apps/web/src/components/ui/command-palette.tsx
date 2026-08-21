@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Hash, MessageSquare, Search, User, File } from "lucide-react";
+import { ArrowRight, Hash, Search, User } from "lucide-react";
 import {
   listItemChevronIdle,
   listItemChevronSelected,
@@ -15,7 +15,7 @@ import {
 
 export interface SearchResult {
   id: string;
-  type: "channel" | "agent" | "message" | "file";
+  type: "channel" | "agent";
   label: string;
   subtitle?: string;
   onSelect: () => void;
@@ -30,8 +30,6 @@ interface CommandPaletteProps {
 const typeIcon: Record<SearchResult["type"], typeof Hash> = {
   channel: Hash,
   agent: User,
-  message: MessageSquare,
-  file: File,
 };
 
 export function CommandPalette({ results, open, onOpenChange }: CommandPaletteProps) {
@@ -118,7 +116,7 @@ function CommandPalettePanel({
               setSelectedIndex(0);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Search channels, agents, messages..."
+            placeholder="Search channels and agents..."
             className="h-12 w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
           />
         </div>
@@ -163,13 +161,11 @@ function CommandPalettePanel({
                         </p>
                       )}
                     </div>
-                    {(result.type === "channel" || result.type === "agent") && (
-                      <ArrowRight
-                        className={`h-3.5 w-3.5 shrink-0 ${
-                          selected ? listItemChevronSelected : listItemChevronIdle
-                        }`}
-                      />
-                    )}
+                    <ArrowRight
+                      className={`h-3.5 w-3.5 shrink-0 ${
+                        selected ? listItemChevronSelected : listItemChevronIdle
+                      }`}
+                    />
                   </button>
                 );
               })}

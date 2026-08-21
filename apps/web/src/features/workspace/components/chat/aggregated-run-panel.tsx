@@ -1,11 +1,66 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Pencil, Search, Terminal, Brain, Target, HelpCircle, BookOpen, Clock, MessageSquare } from "lucide-react";
+import { BookOpen, Brain, Clock, FileText, GitBranch, HelpCircle, MessageSquare, Pencil, Search, Settings2, Target, Terminal, Trash2, Wrench, type LucideIcon } from "lucide-react";
 import type { AggregatedOperation } from "./trace-types";
 import { Markdown } from "../markdown";
 import { TERMINAL_PANEL } from "./terminal-chrome";
 import { TerminalPane } from "./terminal-pane";
 import { SkillReadPane } from "./skill-read-pane";
 import { UnifiedDiffView } from "./unified-diff-view";
+import { Chevron, ExpandableRow } from "./primitives";
+
+const TOOL_ICONS: Record<AggregatedOperation["type"], LucideIcon> = {
+  edit: Pencil,
+  delete: Trash2,
+  read: FileText,
+  search: Search,
+  shell: Terminal,
+  tool: Wrench,
+  skill: BookOpen,
+  memory: Brain,
+  goal: Target,
+  question: HelpCircle,
+  procedure: Settings2,
+  schedule: Clock,
+  message: MessageSquare,
+  delegate: GitBranch,
+};
+
+export function ToolCallIcon({
+  type,
+  className = "h-3.5 w-3.5",
+}: {
+  type: AggregatedOperation["type"];
+  className?: string;
+}) {
+  const Icon = TOOL_ICONS[type] ?? Wrench;
+  return <Icon className={className} aria-hidden="true" />;
+}
+
+function OperationTrailItem({
+  type,
+  showMarker,
+  className = "",
+  children,
+}: {
+  type: AggregatedOperation["type"];
+  showMarker: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`flex min-w-0 items-start gap-2 ${className}`}>
+      {showMarker ? (
+        <span className="relative -left-1.5 z-[1] -my-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-background text-foreground/45">
+          <ToolCallIcon type={type} className="h-3.5 w-3.5" />
+        </span>
+      ) : (
+        <span className="h-5 w-5 shrink-0" aria-hidden="true" />
+      )}
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
 function PathBreadcrumb({ path, className = "" }: { path: string; className?: string }) {
   if (!path) return null;
   const cleaned = path.replace(/.*\/Work\/[^/]+\//, "").replace(/^\.\//, "");
@@ -27,13 +82,6 @@ function PathBreadcrumb({ path, className = "" }: { path: string; className?: st
   }
   return <span className={`font-semibold text-foreground/80 ${className}`}>{cleaned}</span>;
 }
-
-const Chevron = ({ open }: { open: boolean }) =>
-  open ? (
-    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
-  ) : (
-    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
-  );
 
 function DiffStat({ additions, deletions }: { additions: number; deletions: number }) {
   return (
@@ -158,7 +206,7 @@ function ToolHeader({ op, label }: { op: AggregatedOperation; label?: string }) 
   const { headerText } = useMemo(() => getToolHeaderAndCleanDetail(op, sections), [op, sections]);
 
   return (
-    <span className="truncate font-semibold text-xs text-foreground/85 leading-none">
+    <span className="truncate font-semibold text-xs leading-snug text-foreground/85">
       {label ? label : headerText}
     </span>
   );
@@ -201,7 +249,7 @@ function getToolHeaderAndCleanDetail(op: AggregatedOperation, sections: DetailSe
   // Build the clean verb label
   let verb = "Executed";
   if (op.type === "shell" || lowerName === "shell" || lowerName === "execute") {
-    verb = target ? `Run "${target}"` : "Run terminal";
+    verb = target ? `Ran "${target}"` : "Ran terminal";
   } else if (op.type === "memory" || lowerName.startsWith("memory.")) {
     const isWrite = lowerName.includes("write");
     const isForget = lowerName.includes("forget");
@@ -402,14 +450,14 @@ function normalizeToolInput(op: AggregatedOperation): Record<string, unknown> | 
 
 function messageToolSummary(op: AggregatedOperation): string {
   const tool = op.toolName ?? "";
-  if (tool === "channel.reply") return "Replied";
-  if (tool === "channel.dm") return "Sent direct message";
-  if (tool === "channel.post") return "Posted message";
-  if (tool === "channel.close") return "Closed thread";
-  if (tool === "channel.pass") return "Stood down";
-  if (tool === "channel.ack") return "Acknowledged";
-  if (tool === "channel.handoff") return "Handed off";
-  return "Message action";
+  if (tool === "channel.reply") return "replied";
+  if (tool === "channel.dm") return "sent a direct message";
+  if (tool === "channel.post") return "posted a message";
+  if (tool === "channel.close") return "closed a thread";
+  if (tool === "channel.pass") return "stood down";
+  if (tool === "channel.ack") return "acknowledged";
+  if (tool === "channel.handoff") return "handed off";
+  return "completed a message action";
 }
 
 function MessageToolPane({ op }: { op: AggregatedOperation }) {
@@ -675,39 +723,14 @@ export function PrettyToolDetail({
   );
 }
 
-const ROW_BUTTON_CLASS =
-  "flex w-full flex-wrap items-center gap-2 text-xs text-foreground/70 hover:text-foreground/90 text-left transition-colors";
-
-function ExpandableRow({
-  expanded,
-  onToggle,
-  header,
-  trailing,
-  children,
-}: {
-  expanded: boolean;
-  onToggle: (e: React.MouseEvent) => void;
-  header: React.ReactNode;
-  trailing?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="py-1 pl-2 animate-in fade-in duration-200">
-      <button onClick={onToggle} className={ROW_BUTTON_CLASS}>
-        <span className="flex-1 min-w-0 truncate text-left">{header}</span>
-        {trailing && <span className="shrink-0 ml-auto mr-1.5">{trailing}</span>}
-        <Chevron open={expanded} />
-      </button>
-      {expanded ? children : null}
-    </div>
-  );
-}
 
 export function AggregatedRunPanel({
   operations,
+  actorName,
   autoOpen = false,
 }: {
   operations: AggregatedOperation[];
+  actorName?: string;
   autoOpen?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState<boolean | undefined>();
@@ -727,61 +750,42 @@ export function AggregatedRunPanel({
   );
   const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
   const summaryParts = [
-    counts.edit && `Edited ${counts.edit} ${plural(counts.edit, "file")}`,
+    counts.edit && `edited ${counts.edit} ${plural(counts.edit, "file")}`,
     counts.delete && `deleted ${counts.delete} ${plural(counts.delete, "file")}`,
     counts.read && `explored ${counts.read} ${plural(counts.read, "file")}`,
-    counts.search && `${counts.search} ${plural(counts.search, "search", "searches")}`,
-    counts.shell && `run terminal ${counts.shell} ${plural(counts.shell, "time")}`,
+    counts.search && `searched ${counts.search} ${plural(counts.search, "time")}`,
+    counts.shell && `ran terminal ${counts.shell} ${plural(counts.shell, "time")}`,
     counts.skill && `read ${counts.skill} ${plural(counts.skill, "skill")}`,
     counts.memory && `used memory ${counts.memory} ${plural(counts.memory, "time")}`,
     counts.goal && `updated goals ${counts.goal} ${plural(counts.goal, "time")}`,
     counts.question && `asked ${counts.question} ${plural(counts.question, "question")}`,
     counts.procedure && `updated procedures ${counts.procedure} ${plural(counts.procedure, "time")}`,
     counts.schedule && `updated schedules ${counts.schedule} ${plural(counts.schedule, "time")}`,
-    counts.message && `${counts.message} ${plural(counts.message, "message action")}`,
+    counts.message && `sent ${counts.message} ${plural(counts.message, "message action")}`,
     counts.tool && `called ${counts.tool} ${plural(counts.tool, "tool")}`,
   ].filter(Boolean);
   const summaryText =
     operations.length === 1 && operations[0]?.type === "message"
       ? messageToolSummary(operations[0])
       : summaryParts.join(", ");
+  const displaySummary = summaryText || "completed tool actions";
 
   const toggle = (id: string) => (e: React.MouseEvent) => {
     e.stopPropagation();
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const Icon =
-    counts.edit + counts.delete > 0
-      ? Pencil
-      : counts.goal > 0
-        ? Target
-      : counts.question > 0
-        ? HelpCircle
-        : counts.skill + counts.procedure > 0
-          ? BookOpen
-            : counts.schedule > 0
-              ? Clock
-              : counts.message > 0
-                ? MessageSquare
-                : counts.memory > 0
-                  ? Brain
-                  : counts.search > 0 && counts.shell === 0
-                    ? Search
-                    : Terminal;
-
   return (
     <div className="w-full">
       <button
         onClick={() => setIsOpen(!panelOpen)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2 text-left text-xs font-medium text-foreground/75 shadow-sm transition-all hover:bg-foreground/[0.04] active:bg-foreground/[0.06]"
+        className="flex w-full cursor-pointer items-start justify-between gap-2 rounded-md p-0 text-left text-xs font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.04] hover:text-foreground active:bg-foreground/[0.06] active:text-foreground/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/20"
       >
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          {Icon !== Terminal ? (
-            <Icon className="h-3.5 w-3.5 shrink-0 self-center translate-y-px text-foreground/50" />
-          ) : null}
+        <span className="flex min-w-0 flex-1 items-start">
           <span className="min-w-0 flex-1 whitespace-normal break-words leading-5">
-            {summaryText || "Executed tool actions"}
+            {actorName ? <span className="font-semibold text-foreground">{actorName}</span> : null}
+            {actorName ? " " : null}
+            <span className={actorName ? "font-normal text-foreground/75" : ""}>{displaySummary}</span>
           </span>
           {counts.edit + counts.delete > 0 && !panelOpen ? (
             <span className="shrink-0">
@@ -793,16 +797,20 @@ export function AggregatedRunPanel({
       </button>
 
       {panelOpen && operations.length > 0 && (
-        <div className="mt-2 pl-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+        <div
+          className="relative mt-1 space-y-1 py-0.5 animate-in fade-in slide-in-from-top-1 duration-200"
+          style={{ marginLeft: "-1.5rem" }}
+        >
           {operations.map((op, index) => {
             const autoExpandOperation = autoOpen && (op.status === "running" || index === operations.length - 1);
             const isExpanded = expanded[op.id] ?? autoExpandOperation;
+            const showMarker = index > 0 && operations[index - 1]?.type !== op.type;
 
             if (op.type === "edit" || op.type === "delete") {
               const verb = op.type === "edit" ? "Edited" : "Deleted";
               return (
-                <ExpandableRow
-                  key={op.id}
+                  <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
+                    <ExpandableRow
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}
                   header={
@@ -814,39 +822,44 @@ export function AggregatedRunPanel({
                   trailing={!isExpanded ? <DiffStat additions={op.additions} deletions={op.deletions} /> : null}
                 >
                   <DiffBody op={op} />
-                </ExpandableRow>
-              );
+                    </ExpandableRow>
+                  </OperationTrailItem>
+                );
             }
 
             if (op.type === "read") {
               return (
-                <div key={op.id} className="py-1 text-xs text-foreground/60 pl-2 truncate flex items-center gap-1">
-                  <span className="shrink-0">Read</span>
-                  <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
-                  {op.lines ? <span className="inline-block ml-1 text-foreground/40 font-medium shrink-0">(lines {op.lines})</span> : null}
-                </div>
+                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker} className="py-1 text-xs leading-snug text-foreground/60">
+                  <div className="flex min-w-0 items-center gap-1 truncate">
+                    <span className="shrink-0">Read</span>
+                    <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
+                    {op.lines ? <span className="ml-1 inline-block shrink-0 text-foreground/40 font-medium">(lines {op.lines})</span> : null}
+                  </div>
+                </OperationTrailItem>
               );
             }
 
             if (op.type === "search") {
               return (
-                <div key={op.id} className="py-1 text-xs text-foreground/70 pl-2 truncate flex items-center gap-1">
-                  <span className="shrink-0">Searched for</span>
-                  <span className="font-mono text-[11px] text-foreground/80 truncate max-w-[8rem]">&ldquo;{op.query}&rdquo;</span>
-                  {op.file ? (
-                    <>
-                      <span className="shrink-0">in</span>
-                      <PathBreadcrumb path={op.file} className="min-w-0 truncate" />
-                    </>
-                  ) : null}
-                </div>
+                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker} className="py-1 text-xs leading-snug text-foreground/70">
+                  <div className="flex min-w-0 items-center gap-1 truncate">
+                    <span className="shrink-0">Searched for</span>
+                    <span className="max-w-[8rem] truncate font-mono text-[11px] text-foreground/80">&ldquo;{op.query}&rdquo;</span>
+                    {op.file ? (
+                      <>
+                        <span className="shrink-0">in</span>
+                        <PathBreadcrumb path={op.file} className="min-w-0 truncate" />
+                      </>
+                    ) : null}
+                  </div>
+                </OperationTrailItem>
               );
             }
 
             if (op.type === "shell") {
               return (
-                <ExpandableRow
-                  key={op.id}
+                  <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
+                    <ExpandableRow
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}
                   header={<ToolHeader op={op} />}
@@ -860,15 +873,17 @@ export function AggregatedRunPanel({
                       output={op.terminal.output}
                       outputPlaceholder={op.terminal.outputPlaceholder}
                       outputTone={op.terminal.outputTone}
+                      storageKey={`op:${op.id}:shell`}
                     />
                   ) : null}
-                </ExpandableRow>
+                    </ExpandableRow>
+                  </OperationTrailItem>
               );
             }
 
             if (op.type === "skill" && op.skillRead) {
               return (
-                <div key={op.id} className="pl-0">
+                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
                   <SkillReadPane
                     skillName={op.skillRead.skillName}
                     pluginName={op.skillRead.pluginName}
@@ -876,29 +891,30 @@ export function AggregatedRunPanel({
                     output={op.skillRead.output}
                     status={op.status}
                   />
-                </div>
+                </OperationTrailItem>
               );
             }
 
             if (op.type === "message") {
-              return <MessageToolPane key={op.id} op={op} />;
+              return <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}><MessageToolPane op={op} /></OperationTrailItem>;
             }
 
             if (op.type === "memory") {
-              return <MemoryToolPane key={op.id} op={op} />;
+              return <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}><MemoryToolPane op={op} /></OperationTrailItem>;
             }
 
             if (op.type === "goal" || op.type === "question" || op.type === "procedure" || op.type === "schedule" || op.type === "delegate" || op.type === "tool") {
               return (
-                <ExpandableRow
-                  key={op.id}
+                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
+                  <ExpandableRow
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}
                   header={<ToolHeader op={op} />}
                   trailing={<ToolTrailing op={op} />}
                 >
                   <PrettyToolDetailDetail op={op} />
-                </ExpandableRow>
+                  </ExpandableRow>
+                </OperationTrailItem>
               );
             }
 

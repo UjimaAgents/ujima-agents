@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WorkflowGraphSchema, type WorkflowGraph, type WorkflowNodeRun, type WorkflowRun } from '@ujima/shared';
 import { WorkflowEngineService } from './workflow-engine.js';
@@ -10,7 +10,7 @@ import { LiveWorkflowEffects } from './workflow-effects-live.js';
 class FakeRepo {
   runs = new Map<string, WorkflowRun>();
   nodeRuns = new Map<string, WorkflowNodeRun>();
-  messages: { content: string; threadId: string }[] = [];
+  messages: { id?: string; content: string; threadId: string; metadata?: unknown }[] = [];
   goalStarts: { title: string; tasks: unknown[] }[] = [];
 
   transaction<T>(fn: () => T): T {
@@ -65,17 +65,18 @@ describe('LiveWorkflowEffects (integration)', () => {
   let tmp: string;
   let repo: FakeRepo;
   let engine: WorkflowEngineService;
+  let effects: LiveWorkflowEffects;
   let spawned: { runId?: string; threadId: string }[];
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), 'wf-'));
     repo = new FakeRepo();
     spawned = [];
-    const effects = new LiveWorkflowEffects({
+    effects = new LiveWorkflowEffects({
       repo: repo as never,
       conversations: {
-        publishMessage: ((msg: { content: string; threadId: string }) => {
-          repo.messages.push({ content: msg.content, threadId: msg.threadId });
+        publishMessage: ((msg: { id?: string; content: string; threadId: string; metadata?: unknown }) => {
+          repo.messages.push({ id: msg.id, content: msg.content, threadId: msg.threadId, metadata: msg.metadata });
           return msg;
         }) as never,
       },
@@ -174,5 +175,37 @@ describe('LiveWorkflowEffects (integration)', () => {
     expect(existsSync(join(tmp, nodeRun.outputPath!))).toBe(true);
     await finishAgentRun(engRunId);
     expect(repo.getWorkflowNodeRun('', nodeRun.id)!.outputSizeBytes).toBe(5);
+  });
+
+  it('keeps workflow context on the source message for the child run', async () => {
+    await effects.spawnAgentNode({
+      organizationId: 'org1',
+      workflowRunId: 'workflow-1',
+      workflowName: 'build',
+      initiatedBy: 'u1',
+      nodeRunId: 'node-1',
+      nodeId: 'eng',
+      agentId: 'eng',
+      childRunId: 'child-1',
+      channelId: 'c1',
+      threadId: 'th1',
+      prompt: 'Do the work',
+      systemPromptSuffix: 'Use workflow.advance when finished.',
+      toolIds: ['filesystem.read'],
+      skills: [],
+      outputPath: 'out.md',
+    });
+
+    expect(repo.messages[0]?.metadata).toMatchObject({
+      workflowContext: {
+        systemPromptSuffix: 'Use workflow.advance when finished.',
+        toolIds: ['filesystem.read'],
+      },
+    });
+  });
+
+  it('does not verify output outside the workspace root', async () => {
+    const outsidePath = relative(tmp, '/etc/passwd');
+    expect(await effects.statOutput({organizationId: 'org1', path: outsidePath})).toBeNull();
   });
 });

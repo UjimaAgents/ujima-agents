@@ -104,7 +104,7 @@ export class TrajectoryService {
       role: m.senderKind === 'human' ? 'user' : m.senderId === run.agentId ? 'assistant' : 'agent',
       content: m.content,
     }));
-    const steps = repo.listRunSteps?.(run.organizationId, run.id) ?? [];
+    const steps = repo.listRunSteps(run.organizationId, run.id);
     const toolCalls = steps.map((s) => ({
       toolId: s.toolId,
       action: s.action,

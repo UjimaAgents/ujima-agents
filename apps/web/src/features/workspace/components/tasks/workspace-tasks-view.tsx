@@ -24,12 +24,14 @@ import type {
 } from "@ujima/shared/browser";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { Select } from "@/components/ui/select";
+import { Modal } from "@/components/ui/modal";
 import { clientFetchJson } from "@/lib/client-api";
 import { GoalTaskBoard, type ViewMode } from "./goal-task-board";
 
 interface WorkspaceTasksViewProps {
   channelId?: string;
   members: BootstrapResponse["members"];
+  selfMemberId?: string;
 }
 
 interface GoalBoardData {
@@ -71,7 +73,7 @@ async function fetchGoalBoard(channelId?: string): Promise<GoalBoardData> {
   };
 }
 
-export function WorkspaceTasksView({ channelId, members }: WorkspaceTasksViewProps) {
+export function WorkspaceTasksView({ channelId, members, selfMemberId }: WorkspaceTasksViewProps) {
   const [loading, setLoading] = useState(true);
   const [board, setBoard] = useState<GoalBoardData>(EMPTY_BOARD);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +81,8 @@ export function WorkspaceTasksView({ channelId, members }: WorkspaceTasksViewPro
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [hasUserSelected, setHasUserSelected] = useState(false);
   const [subView, setSubView] = useState<"board" | "list" | "my_tasks">("board");
+  const [handoverModalTask, setHandoverModalTask] = useState<{ task: GoalTask; newStatus: GoalTaskStatus } | null>(null);
+  const [handoverText, setHandoverText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
   const storageKey = `goalSwitcher:${channelId ?? "__workspace__"}`;
@@ -211,27 +215,43 @@ export function WorkspaceTasksView({ channelId, members }: WorkspaceTasksViewPro
       const hasDependents = tasks.some(
         (candidate) => candidate.dependsOnTaskId === task.id
       );
-      const handoverSummary =
-        newStatus === "completed" && hasDependents
-          ? window.prompt("Handover summary for dependent tasks")
-          : undefined;
-      if (handoverSummary === null) return;
+      if (newStatus === "completed" && hasDependents) {
+        setHandoverText("");
+        setHandoverModalTask({ task, newStatus });
+        return;
+      }
       return runAction(
         task.id,
         () =>
           clientFetchJson(`/api/goal-tasks/${encodeURIComponent(task.id)}/status`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              status: newStatus,
-              ...(handoverSummary ? { handoverSummary } : {}),
-            }),
+            body: JSON.stringify({ status: newStatus }),
           }, "Failed to update status."),
         "Failed to update status."
       );
     },
     [runAction, tasks]
   );
+
+  const executeHandoverCompletion = useCallback(() => {
+    if (!handoverModalTask) return;
+    const { task, newStatus } = handoverModalTask;
+    setHandoverModalTask(null);
+    void runAction(
+      task.id,
+      () =>
+        clientFetchJson(`/api/goal-tasks/${encodeURIComponent(task.id)}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: newStatus,
+            ...(handoverText ? { handoverSummary: handoverText } : {}),
+          }),
+        }, "Failed to update status."),
+      "Failed to update status."
+    );
+  }, [handoverModalTask, handoverText, runAction]);
 
   const handleAnswerQuestion = useCallback(
     async (questionId: string, option: string) => {
@@ -268,11 +288,10 @@ export function WorkspaceTasksView({ channelId, members }: WorkspaceTasksViewPro
   const filteredTasks = useMemo(() => {
     let list = activeGoalId ? tasks.filter((t) => t.goalId === activeGoalId) : tasks;
     if (subView === "my_tasks") {
-      // Show unassigned or assigned tasks
-      list = list.filter((t) => t.assigneeId);
+      list = list.filter((t) => t.assigneeId && t.assigneeId === selfMemberId);
     }
     return list;
-  }, [tasks, activeGoalId, subView]);
+  }, [tasks, activeGoalId, subView, selfMemberId]);
 
   const pendingQuestions = questions.filter(
     (q) => q.status === "pending" && (!q.goalId || q.goalId === activeGoalId)
@@ -438,6 +457,41 @@ export function WorkspaceTasksView({ channelId, members }: WorkspaceTasksViewPro
           onAnswerQuestion={handleAnswerQuestion}
         />
       )}
+
+      <Modal
+        isOpen={Boolean(handoverModalTask)}
+        onClose={() => setHandoverModalTask(null)}
+        title="Task Handover Summary"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            This task has dependent tasks waiting on it. Provide a handover summary for dependent steps.
+          </p>
+          <textarea
+            value={handoverText}
+            onChange={(e) => setHandoverText(e.target.value)}
+            placeholder="Handover summary..."
+            rows={3}
+            className="w-full rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 outline-none focus:border-violet-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setHandoverModalTask(null)}
+              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={executeHandoverCompletion}
+              className="rounded-lg bg-violet-600 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500"
+            >
+              Complete Task
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

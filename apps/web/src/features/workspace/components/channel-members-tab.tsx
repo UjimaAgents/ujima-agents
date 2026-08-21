@@ -5,6 +5,7 @@ import { ChevronDown, Save } from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import type { ChannelMemberMode } from "@ujima/shared";
 import { Avatar } from "./chat";
+import { clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 type Channel = BootstrapResponse["channels"][number];
 type Member = BootstrapResponse["members"][number];
@@ -100,11 +101,11 @@ export function ChannelMembersTab({
     setLoadingModes(true);
     void (async () => {
       try {
-        const res = await fetch(
+        const modes = await clientFetchJson<MemberMode[]>(
           `/api/orgs/${encodeURIComponent(organizationId)}/channels/${encodeURIComponent(channel.id)}/modes`,
+          {},
+          "Unable to load channel member modes.",
         );
-        if (!res.ok) return;
-        const modes: MemberMode[] = await res.json().catch(() => []);
         setMemberModes(new Map(modes.map((m) => [m.memberId, m.mode])));
       } finally {
         setLoadingModes(false);
@@ -116,15 +117,15 @@ export function ChannelMembersTab({
     if (!organizationId) return;
     setSavingMode(memberId);
     try {
-      const res = await fetch(
+      await clientFetchVoid(
         `/api/orgs/${encodeURIComponent(organizationId)}/channels/${encodeURIComponent(channel.id)}/modes`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ memberId, mode }),
         },
+        "Unable to update channel member mode.",
       );
-      if (!res.ok) return;
       setMemberModes((prev) => {
         const next = new Map(prev);
         next.set(memberId, mode);
@@ -153,18 +154,15 @@ export function ChannelMembersTab({
     setError(undefined);
     const nextMemberIds = normalizeMemberIds(draftMemberIds);
     try {
-      const response = await fetch(
+      const body = await clientFetchJson<Channel>(
         `/api/orgs/${encodeURIComponent(organizationId)}/channels/${encodeURIComponent(channel.id)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ memberIds: nextMemberIds }),
         },
+        "Unable to update channel members.",
       );
-      const body = (await response.json().catch(() => null)) as Channel | null;
-      if (!response.ok || !body) {
-        throw new Error("Unable to update channel members.");
-      }
       const nextSavedMemberIds = normalizeMemberIds(body.memberIds);
       setDraftMemberIds(nextSavedMemberIds);
       onSaved(nextSavedMemberIds);

@@ -26,6 +26,21 @@ function createSpiritRunService(
   return service;
 }
 
+async function createRunFromState(service: SpiritService, run: RunState): Promise<RunState> {
+  const result = await service.createRun({
+    organizationId: run.organizationId,
+    agentId: run.agentId,
+    threadId: run.threadId ?? '',
+    runId: run.id,
+    summary: run.summary,
+    wakeReason: run.wakeReason,
+    sourceMessageId: run.sourceMessageId,
+    byMemberId: run.byMemberId,
+  });
+  Object.assign(run, result);
+  return result;
+}
+
 describe('SpiritService run path', () => {
   it('emits one running start event for a new run', async () => {
     const organizationId = 'org-1';
@@ -61,6 +76,7 @@ describe('SpiritService run path', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listRunSteps: () => [],
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
@@ -130,6 +146,7 @@ describe('SpiritService run path', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listRunSteps: () => [],
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
@@ -176,7 +193,7 @@ describe('SpiritService run path', () => {
       startedAt: '2026-05-04T19:07:08.071Z',
     };
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('completed');
     expect(result.summary).toBe('Here are the last 10 backend commits.');
@@ -267,7 +284,7 @@ describe('SpiritService run path', () => {
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('completed');
     expect(messages).toHaveLength(1);
@@ -371,7 +388,7 @@ describe('SpiritService run path', () => {
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('completed');
     expect(messages).toHaveLength(1);
@@ -411,6 +428,7 @@ describe('SpiritService run path', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listRunSteps: () => [],
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
@@ -450,7 +468,7 @@ describe('SpiritService run path', () => {
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('completed');
     expect(
@@ -578,7 +596,7 @@ describe('SpiritService run path', () => {
     );
     resumeAfterApproval = service.resumeAfterApproval.bind(service);
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(calls).toEqual(['tool-call-1']);
     expect(result.status).toBe('completed');
@@ -741,6 +759,7 @@ describe('SpiritService run path', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listRunSteps: () => [],
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
@@ -787,7 +806,7 @@ describe('SpiritService run path', () => {
       startedAt: '2026-05-04T19:07:08.071Z',
     };
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('failed');
     expect(result.summary).toBe('Approval rejected by user');
@@ -925,7 +944,7 @@ describe('SpiritService run path', () => {
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('completed');
     expect(result.summary).toBe('I checked the file before the block.');
@@ -1036,7 +1055,7 @@ describe('SpiritService run path', () => {
       } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('completed');
     expect(result.terminatingTool).toBe('channel.pass');
@@ -1091,6 +1110,7 @@ describe('SpiritService run path', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listRunSteps: () => [],
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
@@ -1131,7 +1151,7 @@ describe('SpiritService run path', () => {
       } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('failed');
     const mustReply = emitted.find((e) => e.event === 'member.must_reply_failed');
@@ -1189,6 +1209,7 @@ describe('SpiritService run path', () => {
       },
       getThread: () => ({ channelId: 'channel-1' }),
       listPendingApprovals: () => (approval.status === 'pending' ? [approval] : []),
+      listRunSteps: () => [],
       resolveApproval: (_organizationId: string, approvalId: string, status: string, reason?: string) => {
         if (approvalId !== approval.id) return null;
         approval = {
@@ -1269,6 +1290,7 @@ describe('SpiritService run path', () => {
       getWorkspaceSetting: () => null,
       listMembers: () => [],
       listPendingApprovals: () => [],
+      listRunSteps: () => [],
       listMessages: () => ({ data: [], hasMore: false }),
       getLatestHumanMessageInThread: () => null,
       getSpiritByRunId: () => null,
@@ -1299,7 +1321,7 @@ describe('SpiritService run path', () => {
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('cancelled');
     expect(messages[0].content).toBe('I changed the skeleton primitive.');
@@ -1368,7 +1390,7 @@ describe('SpiritService run path', () => {
       { allowRun: () => undefined, invoke: async () => ({ ok: true }) } as never,
     );
 
-    const result = await (service as any).advanceRun(run);
+    const result = await createRunFromState(service, run);
 
     expect(result.status).toBe('cancelled');
     expect(messages).toHaveLength(0);

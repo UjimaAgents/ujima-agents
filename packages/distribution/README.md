@@ -7,35 +7,35 @@
 
 ---
 
-**Ujima Agents** is a framework for building Slack-like teams of AI agents, with roles and workspace-bounded execution.
+Ujima Agents is a framework for building teams of persistent AI agents. Agents have roles, work in channels, and run inside a workspace you control.
 
-Define persistent agent members, assign roles, and work in channels — the same collaboration model as a team chat app, backed by a local runtime that enforces approvals and keeps every tool call inside your workspace root.
+Define the team in code, connect the providers you want to use, and let agents work through a chat-style interface. The local runtime keeps tool calls inside the organization's workspace root and pauses sensitive actions for approval.
 
-**Product surfaces** (via `@ujima/agents` on npm):
+The `@ujima/agents` package includes:
 
-- **Web** — Slack-like UI for channels, DMs, mentions, approvals, and task runs
-- **CLI** — Initialize your org and start the local API + web stack (`ujima init`, `ujima start`)
-- **Codex** — Use Ujima with Codex for workspace-aware agent teams, approvals, and MCP-backed work
-- **VS Code extension** — Same team in your editor (coming soon)
-
----
-
-## Core Concepts
-
-- **Organization** — Team with a name, workspace root, and persistent agent members
-- **Roles** — Typed roles (`backend-engineer`, `frontend-engineer`, `code-reviewer`, `pm`, etc.) with system instructions, tool access, and workspace scope
-- **Channels** — Named channels, threads, DMs, and private self-channels; agents respond when `@mentioned`
-- **Task runs** — Focused work in dedicated `task-run` channels with visible progress; summaries link back to conversation
-- **Approvals** — Sensitive actions (file writes, shell commands, git) gated behind human approval
-- **Workspace Bounds** — All execution hard-sandboxed to your organization root
-- **Skills** — Agents equipped with `SKILL.md` capabilities loaded into their context
-- **Owner Sessions** — Onboarding creates durable owner credentials; returning restores your signed-in workspace
+- Web UI for channels, DMs, mentions, approvals, and task runs
+- CLI commands to initialize an organization and start the local API and web stack
+- Codex support for workspace-aware agent teams, approvals, and MCP tools
+- A VS Code extension, currently in development
 
 ---
 
-## Quick Start (npm)
+## Core concepts
 
-**Prerequisites:** Node.js 20+ or Bun 1.3+, plus an LLM provider — either a hosted API key (Anthropic, OpenAI, DeepSeek) **or a local OpenAI-compatible server** (Ollama, vLLM, LM Studio, llama.cpp's server)
+- An organization has a name, workspace root, and persistent agent members.
+- A role defines an agent's instructions, tools, and workspace scope. Built-in examples include `backend-engineer`, `frontend-engineer`, `code-reviewer`, and `pm`.
+- Channels support threads, DMs, and private self-channels. Agents respond when someone mentions them.
+- Task runs use dedicated `task-run` channels and show progress as the work happens.
+- File writes, shell commands, and git actions can wait for human approval.
+- The runtime resolves execution inside the organization's `workspaceRoot` and rejects path escapes.
+- Agents can load capabilities from `SKILL.md` files.
+- Onboarding creates owner credentials that let you return to the same workspace.
+
+---
+
+## Quick start with npm
+
+You need Node.js 20+ or Bun 1.3+, plus an LLM provider. Use a hosted API key from Anthropic, OpenAI, or DeepSeek, or connect a local OpenAI-compatible server such as Ollama, vLLM, LM Studio, or llama.cpp's server.
 
 ```bash
 npm install -g @ujima/agents
@@ -48,13 +48,13 @@ ujima start
 ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --owner-password "securepass123" --workspace "$(pwd)"
 ```
 
-Open **[http://localhost:3452](http://localhost:3452)** (web UI). API listens on **http://127.0.0.1:7511**.
+Open **[http://localhost:3452](http://localhost:3452)** for the web UI. The API listens on **http://127.0.0.1:7511**.
 
 > **Note:** `ujima start` runs in the foreground. Use two terminals, or run `ujima start &` in background.
 
 ---
 
-## Provider API Keys
+## Provider API keys
 
 Pass keys at init (stored locally in daemon, never sent to web UI):
 
@@ -78,15 +78,13 @@ export OPENAI_API_KEY=sk-...
 
 ---
 
-## Local & self-hosted models
+## Local and self-hosted models
 
-Ujima talks to any **OpenAI-compatible** endpoint, so your team can run on local
-inference servers instead of (or alongside) hosted APIs. The flow is the same
-for **Ollama**, **vLLM**, **LM Studio**, **llama.cpp's server**, or any remote
-OpenAI-compatible service: start the server, then add it through the web UI as
-a provider.
+Ujima can connect to any **OpenAI-compatible** endpoint. Run a local inference
+server alongside a hosted provider, or use one on its own. Start the server,
+then add it through the web UI as a provider.
 
-### Walkthrough — Ollama (easiest)
+### Ollama
 
 **1. Install Ollama and pull a model**
 
@@ -111,13 +109,13 @@ curl http://127.0.0.1:11434/v1/models
 
 **2. Wire it into Ujima**
 
-Open `http://localhost:3452` → **Settings → Organization → Providers** → **Add**:
+Open `http://localhost:3452`, then choose **Settings → Organization → Providers → Add**:
 
 - **Provider**: Ollama
-- **API key**: any string (Ollama doesn't validate it — `ollama` is fine)
+- **API key**: any string. Ollama does not validate it, so `ollama` is fine.
 - **Base URL**: `http://127.0.0.1:11434/v1`
 
-Click **Test** — you should see "Connected".
+Click **Test**. You should see "Connected".
 
 **3. Assign it to an agent**
 
@@ -130,7 +128,7 @@ one), and set:
 
 Save, DM the agent, and you should get a response generated on your machine.
 
-### Walkthrough — vLLM (production self-host)
+### vLLM
 
 **1. Start vLLM with an OpenAI-compatible name and an API key**
 
@@ -143,14 +141,13 @@ vllm serve <hf-repo-or-local-path> \
   --port 8000
 ```
 
-`--served-model-name` is what shows up in Ujima's Model dropdown — keep it
-short and readable.
+`--served-model-name` appears in Ujima's Model dropdown. Keep it short and readable.
 
 **2. Wire it into Ujima**
 
-**Settings → Providers → Add**:
+Open **Settings → Providers → Add**:
 
-- **Provider**: Ollama (we use the same OpenAI-compat kind for any custom endpoint)
+- **Provider**: Ollama. Ujima uses this OpenAI-compatible provider type for custom endpoints too.
 - **API key**: the Bearer token you passed as `--api-key`
 - **Base URL**: `http://127.0.0.1:8000/v1`
 
@@ -158,17 +155,16 @@ Test the connection, then assign the model to an agent the same way as above.
 
 ### Notes
 
-- Everything else (channels, approvals, workspace-bounded execution, MCP
-  tools, role scoping) works identically against local models.
-- You can mix and match — e.g. local Qwen for routine agents, Claude for
-  your `code-reviewer`. Each agent picks its own provider + model in the
-  edit modal.
-- Discovery falls back to the static catalog if your server is offline or
-  doesn't expose `/v1/models`, so the UI never gets stuck.
+- Channels, approvals, workspace bounds, MCP tools, and role scopes work the
+  same way with local models.
+- Each agent can use its own provider and model. For example, use a local Qwen
+  model for routine work and Claude for a `code-reviewer`.
+- If a server is offline or does not expose `/v1/models`, Ujima uses its static
+  model catalog instead.
 
 ---
 
-## Environment Variables
+## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -181,7 +177,7 @@ Test the connection, then assign the model to an agent the same way as above.
 
 ---
 
-## `ujima init` Reference
+## `ujima init` reference
 
 ```bash
 ujima init [options]
@@ -211,7 +207,7 @@ echo "securepass123" | ujima init --name "Acme" --owner "Alex" --owner-email "a@
 
 ---
 
-## Team Config (`ujima.config.ts`)
+## Team config (`ujima.config.ts`)
 
 Create in workspace root or pass `--config`:
 
@@ -260,15 +256,15 @@ export default team;
 
 ---
 
-## What's Next After `ujima init`
+## After `ujima init`
 
-1. Open web UI at http://localhost:3452 — sign in with owner email/password from `init`
-2. Invite team members — Settings → Members → Invite (magic link email)
-3. Create channels — `#general` exists; add more via channel list or `/create-channel`
-4. Mention agents — `@backend-engineer` in any channel to assign work
-5. Run tasks — agents execute in task-run channels with live progress; approvals in sidebar
+1. Open http://localhost:3452 and sign in with the owner email and password from `init`.
+2. Invite team members from **Settings → Members → Invite**.
+3. Add channels from the channel list or with `/create-channel`. `#general` already exists.
+4. Mention an agent, such as `@backend-engineer`, in a channel.
+5. Start a task. Ujima shows progress in a task-run channel and puts approval requests in the sidebar.
 
-### Common Commands
+### Common commands
 
 ```bash
 # First-time setup (two terminals):
@@ -294,19 +290,19 @@ ujima update --force                     # Force reinstall
 |-------|-----|
 | `ujima init`: "no token found" | Run `ujima start` first to generate daemon token, then `init` |
 | Port already in use | Change `UJIMA_PORT`/`WEB_PORT` or kill process on that port |
-| Web UI won't load | Check `UJIMA_BIND_HOST`/`WEB_HOST` — use `0.0.0.0` for Docker/remote |
+| Web UI won't load | Check `UJIMA_BIND_HOST`/`WEB_HOST`. Use `0.0.0.0` for Docker or remote hosts. |
 | Agent not responding | Verify agent is channel member; role has needed tools |
 | Approvals not showing | Ensure `requireApprovalForWrites`/`requireApprovalForShell` are `true` |
 | Lost owner session | Delete `$UJIMA_HOME/token` and re-run `ujima init` |
 
 ---
 
-## Security Model
+## Security model
 
-- **Secrets stay local** — Provider keys in local daemon; web UI/extension never store or transmit them
-- **Workspace-bounded execution** — Filesystem, shell, git actions resolved under org `workspaceRoot`; path escapes rejected
-- **Approvals** — Writes, shell commands, sensitive ops wait for confirmation in web UI, Codex, or VS Code
-- **Role scopes** — Restrict agents to subtrees for monorepo separation
+- Provider keys stay in the local daemon. The web UI and extension do not store or transmit them.
+- Filesystem, shell, and git actions resolve under the organization's `workspaceRoot`. Ujima rejects path escapes.
+- Writes, shell commands, and other sensitive actions wait for confirmation in the web UI, Codex, or VS Code.
+- Role scopes can restrict agents to subtrees in a monorepo.
 
 ---
 
@@ -343,9 +339,9 @@ ujima update --force                     # Force reinstall
 
 ---
 
-## Source & Development
+## Source and development
 
-Full source and local dev setup in this repository.
+This repository contains the full source and local development setup.
 
 ## Contact
 

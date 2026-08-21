@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useRef, useState, forwardRef, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
+import { memo, useCallback, useEffect, useRef, useState, forwardRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode, type UIEventHandler } from "react";
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Download, ListTodo, Loader2, Maximize2, Play, Sparkles, X, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, Copy, CornerDownRight, Download, ListTodo, Loader2, Maximize2, Play, Reply, Sparkles, X, XCircle } from "lucide-react";
 import {
   CONVERSATION_ARCHIVE_MARKER,
   CONVERSATION_ROLLING_SUMMARY_MARKERS,
@@ -128,8 +128,24 @@ export const ChatMessage = memo(function ChatMessage({
   onOpenWorkflowRun?: (runId: string) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const dragged = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(message.content).catch(() => undefined);
+    setCopied(true);
+    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+  }, [message.content]);
 
   const handleContextMenu = useCallback((event: MouseEvent) => {
     event.preventDefault();
@@ -158,6 +174,28 @@ export const ChatMessage = memo(function ChatMessage({
   const handleMouseUp = useCallback(() => {
     dragStart.current = null;
   }, []);
+
+  const handleRowKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onClick?.();
+        return;
+      }
+      if (
+        (event.key === "r" || event.key === "R") &&
+        onReply &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        onReply(message);
+      }
+    },
+    [message, onClick, onReply],
+  );
 
   useEffect(() => {
     if (!menu) return;
@@ -190,6 +228,15 @@ export const ChatMessage = memo(function ChatMessage({
       card.kind !== "task.promotion-confirm",
   );
   const cardActions = { members, onOpenTasksTab, onNavigateChannel };
+  const duplicateMovedNudge =
+    message.taskNudge?.reason === "moved" &&
+    inlineCards.some(
+      (card) =>
+        card.kind === "goal.task.updated" &&
+        card.taskId === message.taskNudge?.taskId,
+    );
+  const hasTaskEventContent =
+    Boolean(message.taskNudge) || inlineCards.some((card) => card.kind === "goal.task.updated");
   const showBody =
     message.content.trim().length > 0 &&
     !(artifactFile && isInternalMarkerContent(message.content)) &&
@@ -263,12 +310,14 @@ export const ChatMessage = memo(function ChatMessage({
     <>
       <div
         onClick={onClick}
+        onKeyDown={handleRowKeyDown}
+        tabIndex={0}
         onContextMenu={handleContextMenu}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`relative group animate-in flex gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer select-none ${
+        className={`relative group flex w-full animate-in gap-3 rounded-xl px-3 py-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 dark:focus-visible:ring-violet-500/40 ${
           message.kind === "system" ? "items-center" : "items-start"
         } ${
           active
@@ -278,21 +327,25 @@ export const ChatMessage = memo(function ChatMessage({
       >
         {message.kind === "system" ? (
           <>
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300">
-              <Sparkles className="h-3.5 w-3.5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                <p className="min-w-0 max-w-full truncate text-sm font-bold text-zinc-900 dark:text-white">
-                  {systemLabel}
-                </p>
-                <p className="shrink-0 text-[11px] text-zinc-400">{message.time}</p>
+            {!hasTaskEventContent ? (
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300">
+                <Sparkles className="h-3.5 w-3.5" />
               </div>
+            ) : null}
+            <div className="flex-1 min-w-0">
+              {!hasTaskEventContent ? (
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                  <p className="min-w-0 max-w-full truncate text-sm font-bold text-zinc-900 dark:text-white">
+                    {systemLabel}
+                  </p>
+                  <p className="shrink-0 text-[11px] text-zinc-400">{message.time}</p>
+                </div>
+              ) : null}
               {artifactFile ? <ArtifactFilePreview artifact={artifactFile} /> : null}
               {inlineCards.length > 0 ? (
                 <MessageCardsView cards={inlineCards} {...cardActions} />
               ) : null}
-              {message.taskNudge ? (
+              {message.taskNudge && !duplicateMovedNudge ? (
                 <TaskNudgeCardView nudge={message.taskNudge} onOpenTasksTab={onOpenTasksTab} />
               ) : null}
               {approvalShellTerminal ? (
@@ -300,6 +353,7 @@ export const ChatMessage = memo(function ChatMessage({
                   className="mt-1.5"
                   cwd={approvalShellTerminal.cwd}
                   commandLine={approvalShellTerminal.commandLine}
+                  storageKey={`msg:${message.id}:shell`}
                 />
               ) : approvalFsTerminal ? (
                 <FilesystemToolPane
@@ -308,8 +362,9 @@ export const ChatMessage = memo(function ChatMessage({
                   resourcePath={approvalFsTerminal.resourcePath}
                   meta={approvalFsTerminal.meta}
                   body={approvalFsTerminal.body}
+                  storageKey={`msg:${message.id}:fs`}
                 />
-              ) : systemBodyMarkdown !== null ? (
+              ) : !hasTaskEventContent && systemBodyMarkdown !== null ? (
                 <div className={`${artifactFile || inlineCards.length > 0 ? "mt-3" : "mt-1"} chat-message-content`}>
                   <Markdown
                     content={systemBodyMarkdown}
@@ -348,7 +403,7 @@ export const ChatMessage = memo(function ChatMessage({
               {inlineCards.length > 0 ? (
                 <MessageCardsView cards={inlineCards} {...cardActions} />
               ) : null}
-              {message.taskNudge ? (
+              {message.taskNudge && !duplicateMovedNudge ? (
                 <TaskNudgeCardView nudge={message.taskNudge} onOpenTasksTab={onOpenTasksTab} />
               ) : null}
               <div className={`${artifactFile || inlineCards.length > 0 || message.taskNudge ? "mt-3" : "mt-1"} chat-message-content`}>
@@ -387,11 +442,37 @@ export const ChatMessage = memo(function ChatMessage({
             </div>
           </>
         )}
+        <div className="relative z-10 ml-auto flex shrink-0 self-start items-center gap-0.5 rounded-lg border border-zinc-200 bg-white/95 p-0.5 opacity-0 shadow-sm pointer-events-none backdrop-blur transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 dark:border-zinc-700 dark:bg-zinc-900/95">
+          {onReply ? (
+            <button
+              type="button"
+              aria-label="Reply"
+              title="Reply"
+              onClick={() => onReply?.(message)}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 focus-visible:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              <Reply className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-label={copied ? "Copied" : "Copy text"}
+            title={copied ? "Copied" : "Copy text"}
+            onClick={handleCopy}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 focus-visible:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            {copied ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </div>
         {active && (
           <div className="absolute -left-0.5 top-1/2 -translate-y-1/2 h-8 w-0.5 rounded-full bg-violet-600" />
         )}
         {message.status === "success" && (
-          <CheckCircle2 className="absolute right-3 top-3 h-4 w-4 text-emerald-500" />
+          <CheckCircle2 className="absolute right-3 top-3 h-4 w-4 text-emerald-500 transition-opacity group-hover:opacity-0" />
         )}
       </div>
       {menu && (
@@ -426,7 +507,14 @@ function isInternalMarkerContent(content: string): boolean {
 /** Body below the title line for system messages that carry multi-line context (e.g. approval relay). */
 export function systemMessageBodyMarkdown(content: string): string | null {
   if (hasAnyMessageMarker(content, SUMMARY_MARKERS)) {
-    return null;
+    const body = content
+      .split("\n")
+      .slice(1)
+      .filter((line) => !SUMMARY_GUIDANCE.has(line.trim()))
+      .join("\n")
+      .trim()
+      .replace(/^(\s*)-\s+-\s+/gm, "$1- ");
+    return body.length > 0 ? body : null;
   }
   if (content.startsWith("[Approval needed]")) {
     const rest = content.split("\n").slice(1).join("\n").trim();

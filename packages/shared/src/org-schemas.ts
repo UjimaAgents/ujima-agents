@@ -314,6 +314,13 @@ export const ReasoningEffortSchema = z.enum([
 ]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
+export const WorkflowRunMarkerSchema = z.object({
+  workflowRunId: IdSchema,
+  workflowName: z.string().min(1),
+  phase: z.enum(["started", "completed", "failed"]),
+});
+export type WorkflowRunMarker = z.infer<typeof WorkflowRunMarkerSchema>;
+
 export const MessageMetadataSchema = z
   .object({
     goalMode: z.boolean().optional(),
@@ -370,13 +377,7 @@ export const MessageMetadataSchema = z
      * link can't be a plain markdown link (system messages render their body
      * as a bold label, and relative URLs are stripped), so it rides on metadata.
      */
-    workflowRunMarker: z
-      .object({
-        workflowRunId: IdSchema,
-        workflowName: z.string().min(1),
-        phase: z.enum(["started", "completed", "failed"]),
-      })
-      .optional(),
+    workflowRunMarker: WorkflowRunMarkerSchema.optional(),
     /**
      * Set by the `channel.handoff` tool. `complete: true` signals
      * the chain terminated (replaces the old `'Acknowledged.'`
@@ -385,6 +386,13 @@ export const MessageMetadataSchema = z
     handoff: HandoffMetadataSchema.optional(),
     /** Correlates persisted agent replies with in-flight `run:chunk` streaming bubbles. */
     runId: IdSchema.optional(),
+    /** Durable execution context for a workflow child run. */
+    workflowContext: z
+      .object({
+        systemPromptSuffix: z.string().optional(),
+        toolIds: z.array(z.string().min(1)).optional(),
+      })
+      .optional(),
     runProgress: z.boolean().optional(),
     wakeContext: z.boolean().optional(),
     failedTrace: z.boolean().optional(),

@@ -1,19 +1,19 @@
 "use client";
 
-import { useMemo } from "react";
 import {
   ChevronLeft,
   ChevronRight,
   FolderKanban,
   Hash,
+  Menu,
   Plus,
   Workflow,
   X,
   MessageSquare,
+  PanelRight,
 } from "lucide-react";
 import { Avatar } from "./chat/primitives";
 import type { SelectedConversation } from "../types";
-import type { BootstrapResponse } from "@ujima/api-schema";
 
 export interface WorkspaceTabItem {
   id: string; // e.g. "view:tasks", "channel:c1", "agent:a1", "view:workflows"
@@ -33,6 +33,10 @@ interface WorkspaceTabBarProps {
   onNavigateForward?: () => void;
   canNavigateBack?: boolean;
   canNavigateForward?: boolean;
+  showDetails?: boolean;
+  onToggleDetails?: () => void;
+  /** Mobile-only hamburger that opens the sidebar as an overlay drawer. */
+  onToggleSidebar?: () => void;
 }
 
 export function WorkspaceTabBar({
@@ -45,9 +49,24 @@ export function WorkspaceTabBar({
   onNavigateForward,
   canNavigateBack = false,
   canNavigateForward = false,
+  showDetails = false,
+  onToggleDetails,
+  onToggleSidebar,
 }: WorkspaceTabBarProps) {
   return (
-    <div className="flex items-center h-10 w-full border-b border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-100/60 dark:bg-zinc-950/80 px-2 select-none overflow-x-auto shrink-0 z-20">
+    <div className="flex h-10 w-full shrink-0 select-none items-center overflow-hidden border-b border-zinc-200/80 bg-zinc-100/60 px-2 dark:border-zinc-800/80 dark:bg-zinc-950/80 z-20">
+      {/* Mobile sidebar toggle */}
+      {onToggleSidebar ? (
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          aria-label="Open sidebar"
+          title="Open sidebar"
+          className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-200/60 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 md:hidden"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+      ) : null}
       {/* Navigation history controls */}
       <div className="flex items-center gap-0.5 pr-2 shrink-0 border-r border-zinc-200/60 dark:border-zinc-800/60 mr-1">
         <button
@@ -136,6 +155,25 @@ export function WorkspaceTabBar({
           </button>
         )}
       </div>
+
+      {onToggleDetails ? (
+        <div className="ml-1 flex shrink-0 items-center border-l border-zinc-200/60 pl-1 dark:border-zinc-800/60">
+          <button
+            type="button"
+            onClick={onToggleDetails}
+            aria-label={showDetails ? "Hide details sidebar" : "Show details sidebar"}
+            aria-pressed={showDetails}
+            title={showDetails ? "Hide details sidebar" : "Show details sidebar"}
+            className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+              showDetails
+                ? "bg-zinc-200/70 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                : "text-zinc-400 hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            }`}
+          >
+            <PanelRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

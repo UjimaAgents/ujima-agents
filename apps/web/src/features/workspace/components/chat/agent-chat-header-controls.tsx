@@ -12,6 +12,8 @@ import {
   parseConfiguredProviderModelValue,
   resolveMemberModelSelection,
 } from "@ujima/shared/browser";
+import { clientFetchJson } from "@/lib/client-api";
+import { ApprovalModeOptionRow, MEMBER_APPROVAL_OPTIONS } from "./approval-mode-options";
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
@@ -20,12 +22,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   google: "Google",
 };
-const APPROVAL_OPTIONS: { value: MemberShellApprovalMode; label: string }[] = [
-  { value: "inherit", label: "Use org default" },
-  { value: "always_review", label: "Ask for approval" },
-  { value: "auto_review", label: "Approve for me" },
-  { value: "allow_all", label: "Full access" },
-];
+const APPROVAL_OPTIONS = MEMBER_APPROVAL_OPTIONS;
 
 export function AgentChatHeaderControls({
   orgId,
@@ -119,19 +116,15 @@ export function AgentChatHeaderControls({
   }) => {
     setSaving(true);
     try {
-      const response = await fetch(
+      const updated = await clientFetchJson<Member>(
         `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(member.id)}/preferences`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
+        "Unable to update agent preferences.",
       );
-      if (!response.ok) {
-        const err = await response.json().catch(() => null);
-        throw new Error(err?.message ?? "Unable to update agent preferences.");
-      }
-      const updated = (await response.json()) as Member;
       onMemberUpdated(updated);
     } catch (err) {
       console.error(err);
@@ -141,25 +134,25 @@ export function AgentChatHeaderControls({
   };
 
   return (
-    <div className="flex flex-col gap-3 text-left">
+    <div className="flex flex-col gap-1.5 text-left">
       {modelOptions.length > 0 ? (
         <div className="flex flex-col">
           <button
             type="button"
             disabled={saving}
             onClick={() => setModelOpen((open) => !open)}
-            className="grid w-full grid-cols-[1.25rem_minmax(4.5rem,1fr)_minmax(0,12rem)_1rem] items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[15px] font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            className="grid w-full grid-cols-[1rem_minmax(4.5rem,1fr)_minmax(0,12rem)_0.875rem] items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
             aria-expanded={modelOpen}
           >
-            <Cpu className="h-5 w-5 text-zinc-500 dark:text-zinc-300" />
+            <Cpu className="h-4 w-4 text-zinc-500 dark:text-zinc-300" />
             <span className="min-w-0 truncate">Model</span>
-            <span className="min-w-0 truncate text-right text-sm text-zinc-400">
+            <span className="min-w-0 truncate text-right text-xs text-zinc-400">
               {selectedModelOptions.find((option) => option.value === selectedModelValue)?.selectedLabel ?? "Select model"}
             </span>
-            <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${modelOpen ? "rotate-180" : ""}`} />
+            <ChevronDown className={`h-3.5 w-3.5 text-zinc-400 transition-transform ${modelOpen ? "rotate-180" : ""}`} />
           </button>
           {modelOpen ? (
-            <div className="mt-1 flex max-h-64 flex-col overflow-y-auto pl-10">
+            <div className="mt-0.5 flex max-h-56 flex-col overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150">
               {selectedModelOptions.map((option) => {
                 const parsed = parseConfiguredProviderModelValue(option.value);
                 return (
@@ -171,10 +164,14 @@ export function AgentChatHeaderControls({
                       if (!parsed) return;
                       void patchPreferences({ llm: parsed.provider, model: parsed.model });
                     }}
-                    className="flex items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[16px] font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-60 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-normal transition disabled:opacity-60 ${
+                      option.value === selectedModelValue
+                        ? "bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-white"
+                        : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                    }`}
                   >
                     <span className="min-w-0 flex-1 truncate">{option.selectedLabel}</span>
-                    {option.value === selectedModelValue ? <Check className="ml-auto h-4 w-4 text-zinc-900 dark:text-white" /> : null}
+                    {option.value === selectedModelValue ? <Check className="ml-auto h-3.5 w-3.5 text-zinc-900 dark:text-white" /> : null}
                   </button>
                 );
               })}
@@ -185,10 +182,10 @@ export function AgentChatHeaderControls({
 
       <div className="flex flex-col">
         {goalMode ? (
-          <div className="grid grid-cols-[1.25rem_minmax(4.5rem,1fr)_minmax(0,12rem)] items-center gap-3 rounded-lg px-2.5 py-2 text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
-            <Shield className="h-5 w-5 text-zinc-500 dark:text-zinc-300" />
-            <span className="min-w-0 truncate">Shell approvals</span>
-            <span className="min-w-0 truncate text-right text-sm text-amber-300">
+          <div className="grid grid-cols-[1rem_minmax(4.5rem,1fr)_minmax(0,12rem)] items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            <Shield className="h-4 w-4 text-zinc-500 dark:text-zinc-300" />
+            <span className="min-w-0 truncate">Approvals</span>
+            <span className="min-w-0 truncate text-right text-xs text-amber-300">
               Goal mode · Auto review
             </span>
           </div>
@@ -198,29 +195,26 @@ export function AgentChatHeaderControls({
               type="button"
               disabled={saving}
               onClick={() => setApprovalOpen((open) => !open)}
-              className="grid w-full grid-cols-[1.25rem_minmax(7rem,1fr)_minmax(0,10rem)_1rem] items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[15px] font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              className="grid w-full grid-cols-[1rem_minmax(7rem,1fr)_minmax(0,10rem)_0.875rem] items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
               aria-expanded={approvalOpen}
             >
-              <Shield className="h-5 w-5 text-zinc-500 dark:text-zinc-300" />
-              <span className="min-w-0 truncate">Shell approvals</span>
-              <span className="min-w-0 truncate text-right text-sm text-zinc-400">
+              <Shield className="h-4 w-4 text-zinc-500 dark:text-zinc-300" />
+              <span className="min-w-0 truncate">Approvals</span>
+              <span className="min-w-0 truncate text-right text-xs text-zinc-400">
                 {APPROVAL_OPTIONS.find((option) => option.value === (member.shellApprovalMode ?? "inherit"))?.label}
               </span>
-              <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${approvalOpen ? "rotate-180" : ""}`} />
+              <ChevronDown className={`h-3.5 w-3.5 text-zinc-400 transition-transform ${approvalOpen ? "rotate-180" : ""}`} />
             </button>
             {approvalOpen ? (
-              <div className="mt-1 flex flex-col pl-10">
+              <div className="mt-0.5 flex flex-col animate-in fade-in slide-in-from-top-1 duration-150">
                 {APPROVAL_OPTIONS.map((option) => (
-                  <button
+                  <ApprovalModeOptionRow
                     key={option.value}
-                    type="button"
+                    option={option}
+                    selected={option.value === (member.shellApprovalMode ?? "inherit")}
                     disabled={saving}
-                    onClick={() => void patchPreferences({ shellApprovalMode: option.value })}
-                    className="flex items-center rounded-lg px-2.5 py-2 text-left text-[16px] font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-60 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
-                  >
-                    {option.label}
-                    {option.value === (member.shellApprovalMode ?? "inherit") ? <Check className="ml-auto h-4 w-4 text-zinc-900 dark:text-white" /> : null}
-                  </button>
+                    onSelect={() => void patchPreferences({ shellApprovalMode: option.value })}
+                  />
                 ))}
               </div>
             ) : null}

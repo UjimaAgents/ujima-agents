@@ -1,7 +1,7 @@
 "use client";
 
 import "@xyflow/react/dist/style.css";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Background, Controls, MiniMap, ReactFlow, type Edge } from "@xyflow/react";
 import {
@@ -34,6 +34,17 @@ function latestByNode(nodeRuns: WorkflowNodeRun[]): Map<string, WorkflowNodeRun>
   return map;
 }
 
+/** Current time, re-read on an interval only while `active` is true. */
+function useTickingNow(active: boolean, intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [active, intervalMs]);
+  return now;
+}
+
 export function WorkflowRunView({ runId }: { runId: string }) {
   const router = useRouter();
   const { detail, loading, error, busy, act, reload } = useWorkflowRun(runId);
@@ -43,19 +54,21 @@ export function WorkflowRunView({ runId }: { runId: string }) {
     [detail],
   );
 
+  const runActive = detail ? detail.run.status !== "completed" && detail.run.status !== "failed" : false;
+  const now = useTickingNow(runActive);
   const durationSecs = useMemo(() => {
     if (!detail) return null;
     const start = new Date(detail.run.createdAt).getTime();
     const end =
       detail.run.status === "completed" || detail.run.status === "failed"
         ? new Date(detail.run.updatedAt).getTime()
-        : Date.now();
+        : now;
     const seconds = Math.max(0, Math.floor((end - start) / 1000));
     if (seconds < 60) return `${seconds}s`;
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}m ${secs}s`;
-  }, [detail]);
+  }, [detail, now]);
 
   const { nodes, edges } = useMemo(() => {
     if (!detail) return { nodes: [] as FlowNode[], edges: [] as Edge[] };

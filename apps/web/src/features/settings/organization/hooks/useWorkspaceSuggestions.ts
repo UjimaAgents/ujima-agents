@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkspaceSuggestionWorkspace } from "@ujima/api-schema";
+import { ClientApiError, clientFetchJson } from "@/lib/client-api";
 
 export function useWorkspaceSuggestions(currentOrgId: string) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSuggestionWorkspace[]>([]);
@@ -17,18 +18,17 @@ export function useWorkspaceSuggestions(currentOrgId: string) {
     setFetching(true);
     setError(null);
     try {
-      const res = await fetch("/api/workspaces/suggestions");
-      if (!res.ok) {
-        if (res.status === 401) {
-          setWorkspaces([]);
-          return;
-        }
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Failed to fetch suggestions");
-      }
-      const data = (await res.json()) as { workspaces: WorkspaceSuggestionWorkspace[] };
+      const data = await clientFetchJson<{ workspaces: WorkspaceSuggestionWorkspace[] }>(
+        "/api/workspaces/suggestions",
+        {},
+        "Failed to fetch suggestions",
+      );
       setWorkspaces(data.workspaces ?? []);
     } catch (err) {
+      if (err instanceof ClientApiError && err.status === 401) {
+        setWorkspaces([]);
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to fetch suggestions");
       setWorkspaces([]);
     } finally {

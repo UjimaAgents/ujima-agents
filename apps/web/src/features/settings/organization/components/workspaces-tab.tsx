@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useMemo, memo } from "react";
+import { useRouter } from "next/navigation";
 import { Copy, FolderKanban, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
 import { SettingsErrorAlert, SettingsLoading } from "@/features/settings/shared/settings-alert";
@@ -18,6 +19,7 @@ import {
 } from "./workspaces/workspace-create-modal";
 import { createWorkspaceApi } from "@/features/workspace/workspace-api";
 import type { ProviderStatus } from "@ujima/api-schema";
+import { clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 interface Workspace {
   id: string;
@@ -51,6 +53,7 @@ export const WorkspacesTab = memo(function WorkspacesTab({
   currentWorkspaceRoot,
   configuredProviders = [],
 }: WorkspacesTabProps) {
+  const router = useRouter();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +68,11 @@ export const WorkspacesTab = memo(function WorkspacesTab({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/workspaces");
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Unable to fetch workspaces");
-      }
-      const data = await res.json();
+      const data = await clientFetchJson<{ workspaces?: Workspace[] }>(
+        "/api/workspaces",
+        {},
+        "Unable to fetch workspaces",
+      );
       setWorkspaces(data.workspaces ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load workspaces");
@@ -106,24 +108,20 @@ export const WorkspacesTab = memo(function WorkspacesTab({
     setSwitchingId(workspaceId);
     setError(null);
     try {
-      await switchToWorkspace(workspaceId);
+      await switchToWorkspace(router, workspaceId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to switch workspace");
       setSwitchingId(null);
     }
-  }, []);
+  }, [router]);
 
   const handleDelete = useCallback(async (workspaceId: string) => {
     setDeletingId(workspaceId);
     setError(null);
     try {
-      const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+      await clientFetchVoid(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
         method: "DELETE",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Failed to delete workspace");
-      }
+      }, "Failed to delete workspace");
       setWorkspaces((prev) => prev.filter((ws) => ws.id !== workspaceId));
       setDeleteTarget(null);
     } catch (err) {

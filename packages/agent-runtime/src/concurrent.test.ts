@@ -11,8 +11,7 @@ import {
   type LLMProvider,
 } from '@ujima/llm/legacy';
 import { runConcurrent } from './concurrent';
-import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
-import { makeFakeMCPConnection } from './test-helpers';
+import { createLanguageModelFromLegacyProvider, makeFakeMCPConnection } from './test-helpers';
 
 const srAgent: AgentDef = {
   id: 'sr-designer',

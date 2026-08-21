@@ -12,6 +12,7 @@ import type { BootstrapResponse } from "@ujima/api-schema";
 import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { GoalTaskBoard } from "./tasks/goal-task-board";
+import { ClientApiError, clientFetchJson } from "@/lib/client-api";
 
 interface ChannelGoalsBoardProps {
   channelId?: string;
@@ -27,28 +28,32 @@ interface GoalBoardData {
 const EMPTY_BOARD: GoalBoardData = { goals: [], tasks: [], questions: [] };
 
 async function fetchGoalBoard(channelId?: string): Promise<GoalBoardData> {
-  const res = await fetch(
-    channelId
-      ? `/api/goals?channelId=${encodeURIComponent(channelId)}`
-      : "/api/goals"
-  );
-  if (res.status === 404) return EMPTY_BOARD;
-  if (!res.ok) throw new Error("Failed to fetch goals.");
-  const data = (await res.json()) as { goals?: Goal[] };
+  let data: { goals?: Goal[] };
+  try {
+    data = await clientFetchJson<{ goals?: Goal[] }>(
+      channelId
+        ? `/api/goals?channelId=${encodeURIComponent(channelId)}`
+        : "/api/goals",
+      {},
+      "Failed to fetch goals.",
+    );
+  } catch (error) {
+    if (error instanceof ClientApiError && error.status === 404) return EMPTY_BOARD;
+    throw error;
+  }
   const goals = data.goals ?? [];
   if (goals.length === 0) return EMPTY_BOARD;
 
   const details = await Promise.all(
     goals.map(async (goal) => {
-      const detailRes = await fetch(
-        `/api/goals/${encodeURIComponent(goal.id)}`
-      );
-      if (!detailRes.ok) throw new Error("Failed to fetch goal details.");
-      return (await detailRes.json()) as {
+      const detail = await clientFetchJson<{
         goal: Goal;
         tasks?: GoalTask[];
         questions?: InteractiveQuestion[];
-      };
+      }>(
+        `/api/goals/${encodeURIComponent(goal.id)}`
+      );
+      return detail;
     })
   );
   return {
@@ -166,18 +171,12 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
   const runAction = useCallback(
     async (
       key: string,
-      fn: () => Promise<Response>,
+      fn: () => Promise<unknown>,
       fallbackMessage: string
     ) => {
       setActionLoading(key);
       try {
-        const res = await fn();
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            message?: string;
-          } | null;
-          throw new Error(body?.message || fallbackMessage);
-        }
+        await fn();
         await refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : fallbackMessage);
@@ -193,10 +192,10 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
       runAction(
         `implement:${goal.id}`,
         () =>
-          fetch(`/api/goals/${encodeURIComponent(goal.id)}/implement`, {
+          clientFetchJson<unknown>(`/api/goals/${encodeURIComponent(goal.id)}/implement`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-          }),
+          }, "Failed to implement plan."),
         "Failed to implement plan."
       ),
     [runAction]
@@ -207,14 +206,14 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
       return runAction(
         task.id,
         () =>
-          fetch(`/api/goal-tasks/${encodeURIComponent(task.id)}/status`, {
+          clientFetchJson<unknown>(`/api/goal-tasks/${encodeURIComponent(task.id)}/status`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               status: newStatus,
               ...(handoverSummary ? { handoverSummary } : {}),
             }),
-          }),
+          }, "Failed to update status."),
         "Failed to update status."
       );
     },
@@ -248,20 +247,15 @@ export const ChannelGoalsBoard = memo(function ChannelGoalsBoard({
         ),
       }));
       try {
-        const res = await fetch(
+        await clientFetchJson<unknown>(
           `/api/questions/${encodeURIComponent(questionId)}/answer`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ selectedOption: option }),
-          }
+          },
+          "Failed to submit answer.",
         );
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            message?: string;
-          } | null;
-          throw new Error(body?.message || "Failed to submit answer.");
-        }
         await refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to submit answer.");

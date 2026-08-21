@@ -1,11 +1,16 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService } from '@ujima/orchestrator';
-import { readSessionToken } from '../session-token.js';
 import {
   ListSelfImprovementReviewsResponseSchema,
   GetSelfImprovementReviewResponseSchema,
 } from '@ujima/api-schema';
+import { httpError } from './route-errors.js';
+import {
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 interface SelfImprovementRouteDeps {
   repo: Repository;
@@ -13,39 +18,43 @@ interface SelfImprovementRouteDeps {
 }
 
 export function registerSelfImprovementRoutes(api: FastifyInstance, deps: SelfImprovementRouteDeps): void {
-  api.get('/self-improvement/reviews', {
+  const app = api.withTypeProvider<ZodTypeProvider>();
+
+  const register = (spec: RouteSpec) => registerRoute(app, spec, deps);
+
+  register({
+    method: 'get',
+    path: '/self-improvement/reviews',
+    auth: { kind: 'user' },
     schema: {
       description: 'List all self-improvement reviews',
       tags: ['Self-Improvement'],
       response: { 200: ListSelfImprovementReviewsResponseSchema },
     },
-  }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(readSessionToken(req));
-    if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    }
-    const limit = req.query && typeof (req.query as Record<string, unknown>).limit === 'string'
-      ? Math.min(Number((req.query as Record<string, unknown>).limit), 100)
-      : 50;
-    const reviews = deps.repo.listSelfImprovementReviews(authState.user.organizationId, limit);
-    return reply.status(200).send({ reviews });
+    handler: async (req, { organizationId }) => {
+      const limit = req.query && typeof (req.query as Record<string, unknown>).limit === 'string'
+        ? Math.min(Number((req.query as Record<string, unknown>).limit), 100)
+        : 50;
+      const reviews = deps.repo.listSelfImprovementReviews(organizationId, limit);
+      return { reviews };
+    },
   });
 
-  api.get('/self-improvement/reviews/:id', {
+  register({
+    method: 'get',
+    path: '/self-improvement/reviews/:id',
+    auth: { kind: 'user' },
     schema: {
       description: 'Get a single self-improvement review',
       tags: ['Self-Improvement'],
       response: { 200: GetSelfImprovementReviewResponseSchema },
     },
-  }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(readSessionToken(req));
-    if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    }
-    const review = deps.repo.getSelfImprovementReview(authState.user.organizationId, req.params.id);
-    if (!review) {
-      return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Review not found' });
-    }
-    return reply.status(200).send({ review });
+    handler: async (req, { organizationId }) => {
+      const review = deps.repo.getSelfImprovementReview(organizationId, req.params.id);
+      if (!review) {
+        throw httpError(404, 'Review not found');
+      }
+      return { review };
+    },
   });
 }

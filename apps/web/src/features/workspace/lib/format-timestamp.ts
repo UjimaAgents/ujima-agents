@@ -1,16 +1,17 @@
 const DAY = 24 * 60 * 60 * 1000;
 
+const timeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
 export function formatTimestamp(iso: string, reference = new Date()): string {
   const parsed = Date.parse(iso);
-  if (Number.isNaN(parsed)) return "now";
+  if (Number.isNaN(parsed)) return "unknown";
 
   const date = new Date(parsed);
   const days = differenceInCalendarDays(reference, date);
-  const time = date.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  const time = timeFormatter.format(date);
 
   if (days <= 0) return time;
   if (days === 1) return `Yesterday, ${time}`;

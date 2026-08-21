@@ -1,4 +1,5 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Repository } from '@ujima/runtime-core';
 import {
   createScheduledJobRecord,
@@ -6,7 +7,7 @@ import {
   type AuthService,
 } from '@ujima/orchestrator';
 import { ScheduledJobSchema } from '@ujima/shared';
-import { readSessionToken } from '../session-token.js';
+import { z } from 'zod';
 import {
   CreateScheduledJobRequestSchema,
   CreateScheduledJobResponseSchema,
@@ -14,9 +15,12 @@ import {
   GetScheduledJobResponseSchema,
   UpdateScheduledJobRequestSchema,
   UpdateScheduledJobResponseSchema,
-  type CreateScheduledJobRequest,
-  type UpdateScheduledJobRequest,
 } from '@ujima/api-schema';
+import { httpError } from './route-errors.js';
+import {
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 interface ScheduleRouteDeps {
   repo: Repository;
@@ -24,119 +28,123 @@ interface ScheduleRouteDeps {
 }
 
 export function registerScheduleRoutes(api: FastifyInstance, deps: ScheduleRouteDeps): void {
-  api.post('/schedules', {
+  const app = api.withTypeProvider<ZodTypeProvider>();
+
+  const register = (spec: RouteSpec) => registerRoute(app, spec, deps);
+
+  register({
+    method: 'post',
+    path: '/schedules',
+    auth: { kind: 'member' },
     schema: {
       description: 'Create a new scheduled job',
       tags: ['Schedules'],
       body: CreateScheduledJobRequestSchema,
       response: { 201: CreateScheduledJobResponseSchema },
     },
-  }, async (req: FastifyRequest<{ Body: CreateScheduledJobRequest }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(readSessionToken(req));
-    if (!authState.member || !authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    }
-    let job;
-    try {
-      job = createScheduledJobRecord({
-        organizationId: authState.user.organizationId,
-        memberId: authState.member.id,
-        name: req.body.name,
-        cronExpression: req.body.cronExpression,
-        prompt: req.body.prompt,
-        channelId: req.body.channelId,
-      });
-    } catch (error) {
-      return reply.status(400).send({
-        code: 'ERR_BAD_REQUEST',
-        message: error instanceof Error ? error.message : 'Invalid cron expression.',
-      });
-    }
-    deps.repo.saveScheduledJob(job);
-    return reply.status(201).send({ job });
+    handler: async (req, { organizationId, memberId, reply }) => {
+      let job;
+      try {
+        job = createScheduledJobRecord({
+          organizationId,
+          memberId,
+          name: req.body.name,
+          cronExpression: req.body.cronExpression,
+          prompt: req.body.prompt,
+          channelId: req.body.channelId,
+        });
+      } catch (error) {
+        return reply.status(400).send({
+          code: 'ERR_BAD_REQUEST',
+          message: error instanceof Error ? error.message : 'Invalid cron expression.',
+        });
+      }
+      deps.repo.saveScheduledJob(job);
+      return reply.status(201).send({ job });
+    },
   });
 
-  api.get('/schedules', {
+  register({
+    method: 'get',
+    path: '/schedules',
+    auth: { kind: 'user' },
     schema: {
       description: 'List all scheduled jobs',
       tags: ['Schedules'],
       response: { 200: ListScheduledJobsResponseSchema },
     },
-  }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(readSessionToken(req));
-    if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    }
-    const jobs = deps.repo.listScheduledJobs(authState.user.organizationId);
-    return reply.status(200).send({ jobs });
+    handler: async (_req, { organizationId }) => {
+      const jobs = deps.repo.listScheduledJobs(organizationId);
+      return { jobs };
+    },
   });
 
-  api.get('/schedules/:id', {
+  register({
+    method: 'get',
+    path: '/schedules/:id',
+    auth: { kind: 'user' },
     schema: {
       description: 'Get a single scheduled job',
       tags: ['Schedules'],
       response: { 200: GetScheduledJobResponseSchema },
     },
-  }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(readSessionToken(req));
-    if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    }
-    const job = deps.repo.getScheduledJob(authState.user.organizationId, req.params.id);
-    if (!job) {
-      return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Scheduled job not found' });
-    }
-    return reply.status(200).send({ job });
+    handler: async (req, { organizationId }) => {
+      const job = deps.repo.getScheduledJob(organizationId, req.params.id);
+      if (!job) {
+        throw httpError(404, 'Scheduled job not found');
+      }
+      return { job };
+    },
   });
 
-  api.patch('/schedules/:id', {
+  register({
+    method: 'patch',
+    path: '/schedules/:id',
+    auth: { kind: 'user' },
     schema: {
       description: 'Update a scheduled job',
       tags: ['Schedules'],
       body: UpdateScheduledJobRequestSchema,
       response: { 200: UpdateScheduledJobResponseSchema },
     },
-  }, async (req: FastifyRequest<{ Params: { id: string }; Body: UpdateScheduledJobRequest }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(readSessionToken(req));
-    if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    }
-    const existing = deps.repo.getScheduledJob(authState.user.organizationId, req.params.id);
-    if (!existing) {
-      return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Scheduled job not found' });
-    }
-    const now = new Date();
-    const nextRunAt = resolveScheduledJobNextRunAt(existing, req.body, now);
-    const cronChanged = req.body.cronExpression !== undefined;
-    const activating = (req.body.status ?? existing.status) === 'active' && existing.status !== 'active';
-    if ((cronChanged || activating) && !nextRunAt) {
-      return reply.status(400).send({
-        code: 'ERR_BAD_REQUEST',
-        message: 'Invalid cron expression.',
+    handler: async (req, { organizationId, reply }) => {
+      const existing = deps.repo.getScheduledJob(organizationId, req.params.id);
+      if (!existing) {
+        throw httpError(404, 'Scheduled job not found');
+      }
+      const now = new Date();
+      const nextRunAt = resolveScheduledJobNextRunAt(existing, req.body, now);
+      const cronChanged = req.body.cronExpression !== undefined;
+      const activating = (req.body.status ?? existing.status) === 'active' && existing.status !== 'active';
+      if ((cronChanged || activating) && !nextRunAt) {
+        return reply.status(400).send({
+          code: 'ERR_BAD_REQUEST',
+          message: 'Invalid cron expression.',
+        });
+      }
+      const updated = ScheduledJobSchema.parse({
+        ...existing,
+        ...req.body,
+        nextRunAt,
+        updatedAt: now.toISOString(),
       });
-    }
-    const updated = ScheduledJobSchema.parse({
-      ...existing,
-      ...req.body,
-      nextRunAt,
-      updatedAt: now.toISOString(),
-    });
-    deps.repo.saveScheduledJob(updated);
-    return reply.status(200).send({ job: updated });
+      deps.repo.saveScheduledJob(updated);
+      return { job: updated };
+    },
   });
 
-  api.delete('/schedules/:id', {
+  register({
+    method: 'delete',
+    path: '/schedules/:id',
+    auth: { kind: 'user' },
     schema: {
       description: 'Delete a scheduled job',
       tags: ['Schedules'],
-      response: { 204: { type: 'null' } },
+      response: { 204: z.null() },
     },
-  }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const authState = deps.auth.getAuthState(readSessionToken(req));
-    if (!authState.user) {
-      return reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    }
-    deps.repo.deleteScheduledJob(authState.user.organizationId, req.params.id);
-    return reply.status(204).send();
+    successStatus: 204,
+    handler: async (req, { organizationId }) => {
+      deps.repo.deleteScheduledJob(organizationId, req.params.id);
+    },
   });
 }

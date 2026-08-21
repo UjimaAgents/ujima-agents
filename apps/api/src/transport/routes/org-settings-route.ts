@@ -1,13 +1,19 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeAny } from 'zod';
 import { ApiErrorSchema } from '@ujima/api-schema';
 import type { AuthService } from '@ujima/orchestrator';
-import { requireOrgSession } from './org-auth.js';
-import { apiError } from './route-errors.js';
+import { apiError, errorMessage } from './route-errors.js';
+import {
+  registerRoute,
+  withTypeProvider,
+  type RouteContext,
+  type SettingsApp,
+} from './route-registry.js';
 
-type SettingsApp = ReturnType<FastifyInstance['withTypeProvider']>;
-type HttpMethod = 'get' | 'post' | 'put' | 'delete' | 'patch';
+export { withTypeProvider };
+export type { RouteContext, SettingsApp };
+
+export type HttpMethod = 'get' | 'post' | 'put' | 'delete' | 'patch';
 
 interface OrgRouteConfig {
   description: string;
@@ -24,10 +30,11 @@ interface OrgRouteConfig {
   respond?: (reply: FastifyReply, result: unknown) => FastifyReply;
 }
 
-function settingsError(reply: FastifyReply, err: unknown, status: 404 | 503): FastifyReply {
-  return apiError(reply, status, err instanceof Error ? err.message : String(err));
-}
-
+/**
+ * Backward-compatible registration helper for settings-style routes. Each
+ * call expands to a {@link RouteSpec} and rides the shared route registry,
+ * which owns the org-session preamble and error mapping.
+ */
 export function registerOrgSettingsRoute(
   app: SettingsApp,
   method: HttpMethod,
@@ -35,35 +42,29 @@ export function registerOrgSettingsRoute(
   auth: AuthService,
   config: OrgRouteConfig,
 ): void {
-  app[method](path, {
+  const successStatus = config.successStatus;
+  registerRoute(app, {
+    method,
+    path,
+    auth: { kind: 'org-session', organizationId: config.organizationId },
     schema: {
       description: config.description,
       tags: config.tags ?? ['Settings'],
-      ...(config.querystring ? { querystring: config.querystring } : {}),
-      ...(config.body ? { body: config.body } : {}),
-      ...(config.params ? { params: config.params } : {}),
+      querystring: config.querystring,
+      body: config.body,
+      params: config.params,
       response: config.response,
     },
-  }, async (req, reply) => {
-    try {
-      const organizationId = config.organizationId(req);
-      const forbidden = requireOrgSession(auth, req, reply, organizationId);
-      if (forbidden) return forbidden;
-      const result = await config.handler(req, organizationId);
-      if (config.successStatus) {
-        return reply.status(config.successStatus).send();
-      }
-      if (config.respond) {
-        return config.respond(reply, result);
-      }
-      return result;
-    } catch (err) {
-      if (config.onError) {
-        return config.onError(reply, err);
-      }
-      return settingsError(reply, err, config.errorStatus ?? 404);
-    }
-  });
+    respond: successStatus !== undefined
+      ? (reply) => {
+          reply.status(successStatus as number).send();
+          return reply;
+        }
+      : config.respond,
+    onError: config.onError ??
+      ((reply, err) => apiError(reply, config.errorStatus ?? 404, errorMessage(err))),
+    handler: (req, ctx: RouteContext) => config.handler(req, ctx.organizationId),
+  }, { auth });
 }
 
 export const settingsAuthErrors = {
@@ -76,7 +77,3 @@ export const settingsServerErrors = {
   ...settingsAuthErrors,
   500: ApiErrorSchema,
 };
-
-export function withTypeProvider(fastify: FastifyInstance): SettingsApp {
-  return fastify.withTypeProvider<ZodTypeProvider>();
-}

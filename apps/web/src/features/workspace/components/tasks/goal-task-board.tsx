@@ -19,6 +19,7 @@ import type {
 } from "@ujima/shared/browser";
 import { goalTaskColumnLabel } from "@ujima/shared/browser";
 import { Avatar, StatusBadge } from "../chat/primitives";
+import { TASK_STATUS_PILL_CLASS } from "../../lib/status-tones";
 import { QuestionCard } from "../chat/question-card";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { isLiveRun } from "../../feed-selectors";
@@ -142,6 +143,8 @@ export interface TaskCardProps {
   refresh: () => Promise<void>;
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
+  /** Keyboard/touch alternative to dragging: move the card to a column. */
+  onMoveTo?: (colId: ColumnId) => void;
 }
 
 export function TaskCard({
@@ -154,12 +157,37 @@ export function TaskCard({
   refresh,
   onDragStart,
   onDragEnd,
+  onMoveTo,
 }: TaskCardProps) {
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(task.title);
   const [editAssigneeId, setEditAssigneeId] = useState(task.assigneeId);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [moveMenuOpen, setMoveMenuOpen] = useState(false);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+
+  const currentColumn = STATUS_TO_COLUMN[task.status];
+  const moveTargets = useMemo(
+    () => COLUMNS.filter((col) => col.id !== currentColumn),
+    [currentColumn],
+  );
+
+  useEffect(() => {
+    if (!moveMenuOpen) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      if (!moveMenuRef.current?.contains(event.target as Node)) setMoveMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoveMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [moveMenuOpen]);
 
   const handleSave = useCallback(async () => {
     if (editTitle.trim().length === 0) return;
@@ -292,6 +320,13 @@ export function TaskCard({
               <span className="truncate text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                 {assigneeName}
               </span>
+              {task.status !== COLUMN_TO_STATUS[STATUS_TO_COLUMN[task.status]] ? (
+                <span
+                  className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${TASK_STATUS_PILL_CLASS[task.status]}`}
+                >
+                  {goalTaskColumnLabel(task.status)}
+                </span>
+              ) : null}
               {task.handoverSummary && (
                 <div
                   className="text-zinc-400 dark:text-zinc-500 cursor-help shrink-0"
@@ -301,7 +336,49 @@ export function TaskCard({
                 </div>
               )}
             </div>
-            <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600 group-hover:text-zinc-400 dark:group-hover:text-zinc-500 transition-colors" />
+            <div className="relative shrink-0" ref={moveMenuRef}>
+              {onMoveTo && moveTargets.length > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Move task to another column"
+                    aria-haspopup="menu"
+                    aria-expanded={moveMenuOpen}
+                    title="Move task"
+                    disabled={actionLoading}
+                    onClick={() => setMoveMenuOpen((v) => !v)}
+                    className="flex h-5 w-5 items-center justify-center rounded text-zinc-300 transition-colors hover:bg-zinc-100 hover:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 dark:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                  >
+                    <GripVertical className="h-3.5 w-3.5" />
+                  </button>
+                  {moveMenuOpen ? (
+                    <div
+                      role="menu"
+                      aria-label="Move task"
+                      className="absolute bottom-7 right-0 z-20 w-40 overflow-hidden rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                    >
+                      {moveTargets.map((col) => (
+                        <button
+                          key={col.id}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMoveMenuOpen(false);
+                            onMoveTo(col.id);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:focus-visible:bg-zinc-800"
+                        >
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${col.color}`} />
+                          Move to {col.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <GripVertical className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600" />
+              )}
+            </div>
           </div>
         </>
       )}
@@ -334,6 +411,7 @@ export function GoalTaskBoard({
 }: GoalTaskBoardProps) {
   const dragTaskId = useRef<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<ColumnId | null>(null);
+  const [showCancelled, setShowCancelled] = useState(false);
 
   const memberById = useMemo(
     () => new Map(members.map((m) => [m.id, m])),
@@ -344,8 +422,13 @@ export function GoalTaskBoard({
     [tasks]
   );
 
+  const cancelledCount = useMemo(
+    () => tasks.filter((t) => t.status === "cancelled").length,
+    [tasks]
+  );
+
   const filteredTasks = useMemo(() => {
-    let result = tasks.filter(isVisibleBoardTask);
+    let result = showCancelled ? tasks : tasks.filter(isVisibleBoardTask);
     if (searchQuery.trim().length > 0) {
       const q = searchQuery.toLowerCase();
       result = result.filter((t) => {
@@ -355,7 +438,7 @@ export function GoalTaskBoard({
       });
     }
     return result;
-  }, [tasks, searchQuery, memberById]);
+  }, [tasks, searchQuery, memberById, showCancelled]);
 
   const columnTasks = useMemo(() => {
     const groups: Record<ColumnId, GoalTask[]> = {
@@ -413,9 +496,34 @@ export function GoalTaskBoard({
     [tasks, onUpdateStatus]
   );
 
+  const onMoveTo = useCallback(
+    (task: GoalTask, colId: ColumnId) => {
+      const currentCol = STATUS_TO_COLUMN[task.status];
+      if (currentCol === colId) return;
+      onUpdateStatus(task, COLUMN_TO_STATUS[colId]);
+    },
+    [onUpdateStatus]
+  );
+
   if (viewMode === "list") {
     return (
       <div className="flex flex-col flex-1 min-h-0 w-full p-4 overflow-y-auto">
+        {cancelledCount > 0 && (
+          <div className="flex justify-end pb-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowCancelled((v) => !v)}
+              aria-pressed={showCancelled}
+              className={`rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                showCancelled
+                  ? "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                  : "border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:border-zinc-700"
+              }`}
+            >
+              {showCancelled ? "Hide cancelled" : `Show cancelled (${cancelledCount})`}
+            </button>
+          </div>
+        )}
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 overflow-hidden shadow-sm">
           <div className="grid grid-cols-[auto_1fr_160px_140px] items-center gap-4 px-4 py-3 bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
             <span className="w-5" />
@@ -480,13 +588,7 @@ export function GoalTaskBoard({
                     </div>
                     <div>
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
-                          task.status === "completed"
-                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
-                            : task.status === "in_progress"
-                              ? "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
-                              : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
-                        }`}
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${TASK_STATUS_PILL_CLASS[task.status]}`}
                       >
                         {task.status.replace(/_/g, " ")}
                       </span>
@@ -517,6 +619,23 @@ export function GoalTaskBoard({
         </div>
       )}
 
+      {cancelledCount > 0 && (
+        <div className="flex justify-end px-4 pt-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowCancelled((v) => !v)}
+            aria-pressed={showCancelled}
+            className={`rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              showCancelled
+                ? "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                : "border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:border-zinc-700"
+            }`}
+          >
+            {showCancelled ? "Hide cancelled" : `Show cancelled (${cancelledCount})`}
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 flex-1 min-h-0 overflow-y-auto">
         {COLUMNS.map((col) => {
           const colTasksList = columnTasks[col.id];
@@ -525,6 +644,8 @@ export function GoalTaskBoard({
           return (
             <div
               key={col.id}
+              role="list"
+              aria-label={`${col.label} tasks`}
               onDragOver={(e) => onDragOver(e, col.id)}
               onDragLeave={(e) => onDragLeave(e, col.id)}
               onDrop={() => onDrop(col.id)}
@@ -573,6 +694,7 @@ export function GoalTaskBoard({
                         refresh={refresh}
                         onDragStart={onDragStart}
                         onDragEnd={onDragEnd}
+                        onMoveTo={(colId) => onMoveTo(task, colId)}
                       />
                     );
                   })

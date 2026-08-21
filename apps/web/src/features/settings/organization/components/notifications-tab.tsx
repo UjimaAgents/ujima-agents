@@ -4,6 +4,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { Bell, ExternalLink, Plus, Trash2, RefreshCw, AlertCircle, MessageSquare, ShieldCheck } from "lucide-react";
 import { TextInput } from "@/components/ui/form-fields";
 import { Modal } from "@/components/ui/modal";
+import { clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 interface NotificationChannel {
   id: string;
@@ -47,9 +48,11 @@ export function NotificationsTab() {
   const fetchChannels = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res = await fetch("/api/notifications/channels");
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message || "Failed to fetch");
-      const data = await res.json();
+      const data = await clientFetchJson<{ channels?: NotificationChannel[] }>(
+        "/api/notifications/channels",
+        {},
+        "Failed to fetch",
+      );
       setChannels(data.channels ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
@@ -78,12 +81,11 @@ export function NotificationsTab() {
     }
     setSaving(true); setError(null);
     try {
-      const res = await fetch("/api/notifications/channels", {
+      await clientFetchJson<unknown>("/api/notifications/channels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: formProvider, config }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message || "Failed to create");
+      }, "Failed to create");
       resetNotificationForm();
       await fetchChannels();
     } catch (err) {
@@ -93,8 +95,7 @@ export function NotificationsTab() {
 
   const deleteChannel = async (id: string) => {
     try {
-      const res = await fetch(`/api/notifications/channels/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete");
+      await clientFetchVoid(`/api/notifications/channels/${id}`, { method: "DELETE" }, "Failed to delete");
       setChannels((prev) => prev.filter((c) => c.id !== id));
       setDeleteConfirm(null);
     } catch (err) {
@@ -106,12 +107,11 @@ export function NotificationsTab() {
     const ch = channels.find((c) => c.id === id);
     if (!ch) return;
     try {
-      const res = await fetch(`/api/notifications/channels/${id}`, {
+      await clientFetchJson<unknown>(`/api/notifications/channels/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: !ch[key] }),
-      });
-      if (!res.ok) throw new Error("Failed to update");
+      }, "Failed to update");
       setChannels((prev) => prev.map((c) => c.id === id ? { ...c, [key]: !c[key] } : c));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update failed");

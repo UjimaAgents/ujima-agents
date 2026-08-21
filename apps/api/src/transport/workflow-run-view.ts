@@ -1,80 +1,38 @@
+import {
+  WorkflowApprovalsResponseSchema,
+  WorkflowRunViewSchema,
+  type WorkflowApprovalView,
+  type WorkflowApprovalsResponse,
+  type WorkflowRunView,
+  type WorkflowToolApprovalView,
+} from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
-import { normalizeWorkflowGraph, type WorkflowNodeRun, type WorkflowRun } from '@ujima/shared';
+import { normalizeWorkflowGraph, type WorkflowRun } from '@ujima/shared';
 
-export interface WorkflowToolStepView {
-  tool: string;
-  action: string;
-  status: string;
-  resourcePath?: string;
-  at: string;
-}
-
-export type WorkflowNodeRunView = WorkflowNodeRun & {
-  agentName?: string;
-  failureDetail?: string;
-  toolSteps: WorkflowToolStepView[];
-};
-
-export interface WorkflowRunMessageView {
-  id: string;
-  senderName: string;
-  senderKind: string;
-  content: string;
-  createdAt: string;
-}
-
-export interface WorkflowBlockingApprovalView {
-  id: string;
-  nodeId?: string;
-  agentName?: string;
-  resourceType: string;
-  action: string;
-  resourcePath: string;
-}
-
-export interface WorkflowRunView {
-  run: WorkflowRun;
-  nodeRuns: WorkflowNodeRunView[];
-  messages: WorkflowRunMessageView[];
-  blockingApprovals: WorkflowBlockingApprovalView[];
-}
-
-export interface WorkflowApprovalView {
-  id: string;
-  workflowRunId: string;
-  workflowName: string;
-  nodeId: string;
-  prompt: string;
-  priorSummary?: string;
-  priorOutputPath?: string;
-  channelId: string;
-  requestedBy: string;
-  createdAt: string;
-}
-
-export interface WorkflowToolApprovalView {
-  id: string;
-  workflowRunId: string;
-  workflowName: string;
-  nodeId: string;
-  requestedByMemberId?: string;
-  agentName: string;
-  resourceType: string;
-  action: string;
-  resourcePath: string;
-  channelId: string;
-  createdAt: string;
-}
+export type {
+  WorkflowApprovalView,
+  WorkflowApprovalsResponse,
+  WorkflowBlockingApprovalView,
+  WorkflowNodeRunView,
+  WorkflowRunMessageView,
+  WorkflowToolApprovalView,
+  WorkflowToolStepView,
+  WorkflowRunView,
+} from '@ujima/api-schema';
 
 const WORKFLOW_STATUS_CARD = /^\s*(▶|✅|⛔|⚠️)\s*Workflow\b/;
 const CONVERSATION_SUMMARY = /^\s*\[\[CONVERSATION_SUMMARY/;
 
+function makeMemberNameResolver(repo: Repository, organizationId: string) {
+  const memberById = new Map(repo.listMembers(organizationId).map((member) => [member.id, member]));
+  return (id: string | null | undefined) =>
+    id ? (memberById.get(id)?.name ?? id) : undefined;
+}
+
 /** Build the bounded run snapshot consumed by every run-detail surface. */
 export function buildWorkflowRunView(repo: Repository, run: WorkflowRun): WorkflowRunView {
   const organizationId = run.organizationId;
-  const memberById = new Map(repo.listMembers(organizationId).map((member) => [member.id, member]));
-  const memberName = (id: string | null | undefined) =>
-    id ? (memberById.get(id)?.name ?? id) : undefined;
+  const memberName = makeMemberNameResolver(repo, organizationId);
 
   const rawNodeRuns = repo.listWorkflowNodeRuns(run.id);
   const childRunIds = [...new Set(rawNodeRuns.flatMap((nodeRun) =>
@@ -86,7 +44,7 @@ export function buildWorkflowRunView(repo: Repository, run: WorkflowRun): Workfl
       .filter((childRun): childRun is NonNullable<typeof childRun> => childRun !== null);
   const childRunById = new Map(childRuns.map((childRun) => [childRun.id, childRun]));
   const stepRows = repo.listRunStepsByRunIds?.(organizationId, childRunIds, 60) ??
-    childRunIds.flatMap((childRunId) => repo.listRunSteps?.(organizationId, childRunId)?.slice(-60) ?? []);
+    childRunIds.flatMap((childRunId) => repo.listRunSteps(organizationId, childRunId).slice(-60));
   const stepsByRunId = new Map<string, typeof stepRows>();
   for (const step of stepRows) {
     const steps = stepsByRunId.get(step.runId) ?? [];
@@ -94,7 +52,7 @@ export function buildWorkflowRunView(repo: Repository, run: WorkflowRun): Workfl
     stepsByRunId.set(step.runId, steps);
   }
 
-  const nodeRuns = rawNodeRuns.map((nodeRun): WorkflowNodeRunView => {
+  const nodeRuns = rawNodeRuns.map((nodeRun) => {
     const childSummary = nodeRun.childRunId
       ? childRunById.get(nodeRun.childRunId)?.summary
       : undefined;
@@ -148,17 +106,15 @@ export function buildWorkflowRunView(repo: Repository, run: WorkflowRun): Workfl
       createdAt: message.createdAt,
     }));
 
-  return { run, nodeRuns, messages, blockingApprovals };
+  return WorkflowRunViewSchema.parse({ run, nodeRuns, messages, blockingApprovals });
 }
 
 /** Build the bounded approval queue shared by the run surfaces and global pill. */
-export function buildWorkflowApprovalView(repo: Repository, organizationId: string): {
-  approvals: WorkflowApprovalView[];
-  toolApprovals: WorkflowToolApprovalView[];
-} {
-  const memberById = new Map(repo.listMembers(organizationId).map((member) => [member.id, member]));
-  const memberName = (id: string | null | undefined) =>
-    id ? (memberById.get(id)?.name ?? id) : undefined;
+export function buildWorkflowApprovalView(
+  repo: Repository,
+  organizationId: string,
+): WorkflowApprovalsResponse {
+  const memberName = makeMemberNameResolver(repo, organizationId);
   const approvals: WorkflowApprovalView[] = [];
 
   for (const run of repo.listWorkflowRuns(organizationId, 'awaiting_approval')) {
@@ -224,5 +180,5 @@ export function buildWorkflowApprovalView(repo: Repository, organizationId: stri
     }
   }
 
-  return { approvals, toolApprovals };
+  return WorkflowApprovalsResponseSchema.parse({ approvals, toolApprovals });
 }

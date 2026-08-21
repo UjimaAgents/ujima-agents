@@ -20,6 +20,7 @@ import {
   HeartbeatFormModal,
   type HeartbeatFormValues,
 } from "./heartbeats/heartbeat-form-modal";
+import { clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 interface Heartbeat {
   id: string;
@@ -76,12 +77,11 @@ export const HeartbeatsTab = memo(function HeartbeatsTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/heartbeats");
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Unable to fetch heartbeats");
-      }
-      const data = await res.json();
+      const data = await clientFetchJson<{ jobs?: Heartbeat[] }>(
+        "/api/heartbeats",
+        {},
+        "Unable to fetch heartbeats",
+      );
       setHeartbeats(data.jobs ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load heartbeats");
@@ -102,15 +102,11 @@ export const HeartbeatsTab = memo(function HeartbeatsTab() {
       const active = formState;
       const endpoint = active?.mode === "edit" ? `/api/heartbeats/${active.heartbeat.id}` : "/api/heartbeats";
       const method = active?.mode === "edit" ? "PATCH" : "POST";
-      const res = await fetch(endpoint, {
+      await clientFetchJson<unknown>(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || `Failed to ${active?.mode === "edit" ? "update" : "create"} heartbeat`);
-      }
+      }, `Failed to ${active?.mode === "edit" ? "update" : "create"} heartbeat`);
       await fetchHeartbeats();
     },
     [fetchHeartbeats, formState],
@@ -119,15 +115,11 @@ export const HeartbeatsTab = memo(function HeartbeatsTab() {
   const toggleStatus = useCallback(async (heartbeat: Heartbeat) => {
     const nextStatus = heartbeat.status === "active" ? "paused" : "active";
     try {
-      const res = await fetch(`/api/heartbeats/${heartbeat.id}`, {
+      await clientFetchJson<unknown>(`/api/heartbeats/${heartbeat.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Failed to update heartbeat");
-      }
+      }, "Failed to update heartbeat");
       await fetchHeartbeats();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update failed");
@@ -138,11 +130,7 @@ export const HeartbeatsTab = memo(function HeartbeatsTab() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/heartbeats/${deleteTarget.id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Failed to delete heartbeat");
-      }
+      await clientFetchVoid(`/api/heartbeats/${deleteTarget.id}`, { method: "DELETE" }, "Failed to delete heartbeat");
       setDeleteTarget(null);
       await fetchHeartbeats();
     } catch (err) {

@@ -1,4 +1,5 @@
-import { Hash, Users, UserCircle, type LucideIcon } from "lucide-react";
+import { Hash, Users, UserCircle, ChevronDown, ChevronRight, type LucideIcon } from "lucide-react";
+import { TERMINAL_PANEL, TERMINAL_SECTION } from "./terminal-chrome";
 
 /** Reusable avatar colors — consistent across channel, DM, and agent views. */
 const AVATAR_COLORS = [
@@ -132,8 +133,7 @@ export function AvatarStack({
 }
 
 /* ── Channel / DM header icon resolver ─────────────────────────────── */
-export function ConversationIcon({
-  type,
+export function ConversationIcon({  type,
   className = "h-5 w-5 text-zinc-400",
 }: {
   type: "channel" | "dm" | "group";
@@ -141,6 +141,65 @@ export function ConversationIcon({
 }) {
   const Icon: LucideIcon = type === "channel" ? Hash : type === "group" ? Users : UserCircle;
   return <Icon className={className} />;
+}
+
+/* ── Terminal-style tool pane shell (shared header/body frame) ─────── */
+export function ToolPane({
+  className = "",
+  sectionClassName = "",
+  header,
+  children,
+}: {
+  className?: string;
+  sectionClassName?: string;
+  header: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={`${TERMINAL_PANEL} ${className}`}>
+      <div className={`${TERMINAL_SECTION} ${sectionClassName}`}>{header}</div>
+      {children}
+    </div>
+  );
+}
+
+/* ── Expandable trace row (shared by run panel & skill pane) ───────── */
+export function Chevron({ open }: { open: boolean }) {
+  return open ? (
+    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+  ) : (
+    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+  );
+}
+
+const ROW_BUTTON_CLASS =
+  "flex w-full flex-wrap items-center gap-2 text-xs text-foreground/70 hover:text-foreground/90 text-left transition-colors";
+
+export function ExpandableRow({
+  expanded,
+  onToggle,
+  header,
+  trailing,
+  indent = false,
+  children,
+}: {
+  expanded: boolean;
+  onToggle: (e: React.MouseEvent) => void;
+  header: React.ReactNode;
+  trailing?: React.ReactNode;
+  indent?: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={`py-1 animate-in fade-in duration-200 ${indent ? "pl-2" : ""}`}>
+      <button type="button" onClick={onToggle} className={ROW_BUTTON_CLASS}>
+        <span className="flex-1 min-w-0 truncate text-left">{header}</span>
+        {trailing && <span className="shrink-0 ml-auto mr-1.5">{trailing}</span>}
+        <Chevron open={expanded} />
+      </button>
+      {expanded ? children : null}
+    </div>
+  );
 }
 
 export function RunningFigureIndicator() {

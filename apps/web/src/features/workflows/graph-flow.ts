@@ -1,7 +1,7 @@
 "use client";
 
 import type { Edge } from "@xyflow/react";
-import { normalizeWorkflowGraph, workflowPortForNodeKind } from "@ujima/shared";
+import { WorkflowPortSchema, workflowPortForNodeKind } from "@ujima/shared";
 import type {
   WorkflowEdge,
   WorkflowNode,
@@ -29,14 +29,30 @@ export function graphToFlow(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
 ): { flowNodes: FlowNode[]; flowEdges: Edge[] } {
-  const graph = normalizeWorkflowGraph({ nodes, edges });
-  const flowNodes: FlowNode[] = graph.nodes.map((node) => ({
+  // Keep the editor projection draft-safe. New skill/tool nodes intentionally
+  // start unconfigured; strict schema validation belongs to save/API/runtime.
+  const nodeKinds = new Map(nodes.map((node) => [node.id, node.kind] as const));
+  const normalizedEdges = edges.map((edge) => {
+    const targetPort = WorkflowPortSchema.safeParse(edge.targetPort).success
+      ? edge.targetPort
+      : undefined;
+    const sourcePort = WorkflowPortSchema.safeParse(edge.sourcePort).success
+      ? edge.sourcePort
+      : undefined;
+    const port = targetPort ?? sourcePort ?? workflowPortForNodeKind(nodeKinds.get(edge.source));
+    return {
+      ...edge,
+      sourcePort: port,
+      targetPort: port,
+    };
+  });
+  const flowNodes: FlowNode[] = nodes.map((node) => ({
     id: node.id,
     type: "workflow",
     position: node.position,
     data: { node },
   }));
-  const flowEdges: Edge[] = graph.edges.map((edge) => {
+  const flowEdges: Edge[] = normalizedEdges.map((edge) => {
     const port = edge.targetPort;
     const isMain = port === "main";
     return {

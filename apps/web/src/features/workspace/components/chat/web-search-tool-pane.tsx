@@ -21,6 +21,7 @@ export function WebSearchToolPane({
   status,
   source,
   results,
+  storageKey,
 }: {
   className?: string;
   query: string;
@@ -29,6 +30,7 @@ export function WebSearchToolPane({
   status: "streaming" | "completed";
   source: string;
   results: WebSearchResultRow[];
+  storageKey?: string;
 }) {
   return (
     <div className={`${TERMINAL_PANEL} ${className}`}>
@@ -49,7 +51,7 @@ export function WebSearchToolPane({
         </div>
       </div>
 
-      <ExpandableOutput>
+      <ExpandableOutput storageKey={storageKey}>
         <div className="px-2.5 py-1.5">
           {results.length === 0 ? (
             <div className="text-[11px] text-foreground/45">Searching…</div>

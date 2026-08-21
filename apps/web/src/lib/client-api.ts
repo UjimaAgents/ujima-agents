@@ -18,12 +18,18 @@ function messageFromBody(body: unknown, fallback: string): string {
   return fallback;
 }
 
+export function clientApiUrl(url: string): string {
+  if (!url.startsWith("/") || url.startsWith("//")) return url;
+  const basePath = process.env.NEXT_PUBLIC_SITE_BASE_PATH ?? "";
+  return `${basePath.replace(/\/$/, "")}${url}` || "/";
+}
+
 export async function clientFetchJson<T>(
   url: string,
   init: RequestInit = {},
   fallbackMessage = "Request failed",
 ): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(clientApiUrl(url), init);
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ClientApiError(messageFromBody(body, fallbackMessage), response.status, body);
@@ -36,7 +42,7 @@ export async function clientFetchVoid(
   init: RequestInit = {},
   fallbackMessage = "Request failed",
 ): Promise<void> {
-  const response = await fetch(url, init);
+  const response = await fetch(clientApiUrl(url), init);
   if (response.ok || response.status === 204) return;
   const body = await response.json().catch(() => null);
   throw new ClientApiError(messageFromBody(body, fallbackMessage), response.status, body);
