@@ -7,6 +7,7 @@ import { buildHistoricalTraceSteps } from "../reasoning-trace";
 import { groupTraceSteps } from "../trace-grouping";
 import { TraceStep } from "./chat/details-sidebar";
 import type { TraceStepData } from "./chat/trace-types";
+import { clientFetchJson } from "@/lib/client-api";
 
 const TRACE_PAGE_SIZE = 8;
 const TOP_LOAD_THRESHOLD = 40;
@@ -386,15 +387,15 @@ export function ReasoningTracePanel({
                 />
               ) : null}
               <div
-                className="absolute left-0 top-1.5 z-[1] h-2 w-2 rounded-full bg-violet-500 animate-ping"
+                className="absolute left-0 top-1.5 z-[1] h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-600"
                 aria-hidden
               />
               <div
-                className="absolute left-0 top-1.5 z-[1] h-2 w-2 rounded-full bg-violet-600 ring-[3px] ring-violet-500/20 dark:bg-violet-500"
+                className="absolute left-0 top-1.5 z-[1] h-2.5 w-2.5 rounded-full bg-zinc-400 ring-[3px] ring-zinc-400/20 dark:bg-zinc-500 dark:ring-zinc-500/20"
                 aria-hidden
               />
-              <div className="flex items-center gap-2 text-[11px] font-semibold text-violet-600/90 dark:text-violet-400/90 tabular-nums">
-                <Loader2 className="h-3 w-3 animate-spin shrink-0 text-violet-500" />
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-foreground/55 tabular-nums">
+                <Loader2 className="h-3 w-3 animate-spin shrink-0 text-foreground/45" />
                 <ElapsedBadge startedAtMs={startedAtMs} />
               </div>
             </div>
@@ -442,19 +443,11 @@ async function loadTracePage(input: {
   });
   if (input.cursor) params.set("cursor", input.cursor);
 
-  const response = await fetch(
+  const body = await clientFetchJson<unknown>(
     `/api/conversations/${encodeURIComponent(input.threadId)}/traces?${params.toString()}`,
     { signal: input.signal },
+    "Unable to load reasoning traces.",
   );
-  const body = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new Error(
-      body && typeof body === "object" && "message" in body && typeof body.message === "string"
-        ? body.message
-        : "Unable to load reasoning traces.",
-    );
-  }
 
   const parsed = RunTraceListResponseSchema.safeParse(body);
   if (!parsed.success) {

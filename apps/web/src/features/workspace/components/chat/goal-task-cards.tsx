@@ -1,5 +1,16 @@
 import { memo, useState, type ReactNode } from "react";
-import { ArrowRight, ChevronDown, ChevronUp, Clock, ExternalLink, KanbanSquare, Users, AlertTriangle, Zap } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  ExternalLink,
+  KanbanSquare,
+  Users,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import {
   formatGoalStatusLabel,
@@ -8,6 +19,7 @@ import {
   type MessageCard,
 } from "@ujima/shared/browser";
 import { Avatar } from "./primitives";
+import { TASK_STATUS_DOT_CLASS, TASK_STATUS_PILL_CLASS } from "../../lib/status-tones";
 
 type GoalBoardCreatedCard = Extract<MessageCard, { kind: "goal.board.created" }>;
 type GoalTaskUpdatedCard = Extract<MessageCard, { kind: "goal.task.updated" }>;
@@ -24,38 +36,8 @@ export interface GoalTaskCardActions {
   onNavigateChannel?: (channelId: string) => void;
 }
 
-const STATUS_PILL_CLASS: Record<GoalTaskStatus, string> = {
-  pending: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
-  in_progress: "bg-violet-100/90 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
-  completed: "bg-emerald-100/90 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-  blocked: "bg-amber-100/90 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
-  blocked_by_failure: "bg-amber-100/90 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
-  failed: "bg-amber-100/90 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
-  cancelled: "bg-amber-100/90 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
-};
-
-const STATUS_DOT_CLASS: Record<GoalTaskStatus, string> = {
-  pending: "bg-zinc-400",
-  in_progress: "bg-violet-500",
-  completed: "bg-emerald-500",
-  blocked: "bg-amber-500",
-  blocked_by_failure: "bg-amber-500",
-  failed: "bg-amber-500",
-  cancelled: "bg-amber-500",
-};
-
 function memberName(members: WorkspaceMember[], memberId: string): string {
   return members.find((member) => member.id === memberId)?.name ?? memberId;
-}
-
-function StatusPill({ status }: { status: GoalTaskStatus }) {
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_PILL_CLASS[status]}`}
-    >
-      {goalTaskColumnLabel(status)}
-    </span>
-  );
 }
 
 function CardShell({
@@ -81,11 +63,62 @@ function ViewBoardButton({ onOpenTasksTab }: { onOpenTasksTab?: () => void }) {
     <button
       type="button"
       onClick={onOpenTasksTab}
-      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[10px] font-semibold text-violet-700 transition hover:bg-violet-500/10 dark:text-violet-300"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-500/10 dark:text-violet-300"
     >
       <KanbanSquare className="h-3 w-3" />
       View board
     </button>
+  );
+}
+
+const TASK_EVENT_ICON_CLASS = {
+  amber: "bg-amber-100/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+  emerald: "bg-emerald-100/80 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  neutral: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+  violet: "bg-violet-100/80 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300",
+} as const;
+
+type TaskEventTone = keyof typeof TASK_EVENT_ICON_CLASS;
+
+const TASK_EVENT_EYEBROW_CLASS =
+  "text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500";
+const TASK_EVENT_META_CLASS = "text-[11px] text-zinc-500 dark:text-zinc-400";
+const TASK_EVENT_TITLE_CLASS = "break-words text-sm font-semibold leading-5 text-zinc-900 dark:text-zinc-100";
+
+function TaskEventShell({
+  action,
+  children,
+  icon: Icon,
+  tone,
+}: {
+  action?: ReactNode;
+  children: ReactNode;
+  icon: LucideIcon;
+  tone: TaskEventTone;
+}) {
+  return (
+    <div className="mt-2 overflow-hidden rounded-lg border border-zinc-200/60 bg-zinc-50/40 animate-in fade-in-50 duration-200 dark:border-zinc-800/70 dark:bg-zinc-900/20">
+      <div className="flex items-start gap-2.5 px-3 py-2.5">
+        <div
+          className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${TASK_EVENT_ICON_CLASS[tone]}`}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">{children}</div>
+        {action ? <div className="shrink-0 self-center">{action}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function TaskStatusPill({ status }: { status: GoalTaskStatus }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold ${TASK_STATUS_PILL_CLASS[status]}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+      {goalTaskColumnLabel(status)}
+    </span>
   );
 }
 
@@ -131,7 +164,7 @@ export const GoalBoardCreatedCardView = memo(function GoalBoardCreatedCardView({
       <ul className="mt-3 space-y-2">
         {visibleTasks.map((task) => (
           <li key={task.id} className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT_CLASS[task.status]}`} />
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TASK_STATUS_DOT_CLASS[task.status]}`} />
             <span className="min-w-0 flex-1 truncate text-xs text-zinc-800 dark:text-zinc-200">
               {task.title}
             </span>
@@ -156,45 +189,53 @@ export const GoalTaskUpdatedCardView = memo(function GoalTaskUpdatedCardView({
     card.actorMemberId && card.actorMemberId !== card.assigneeId
       ? memberName(members, card.actorMemberId)
       : null;
+  const assigneeName = memberName(members, card.assigneeId);
+  const statusChanged = card.previousStatus !== card.status;
 
   return (
-    <CardShell footer={<ViewBoardButton onOpenTasksTab={onOpenTasksTab} />}>
-      <p className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-        Task updated
-      </p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <StatusPill status={card.previousStatus} />
-        <ArrowRight className="h-3 w-3 text-zinc-400" />
-        <StatusPill status={card.status} />
+    <TaskEventShell
+      action={<ViewBoardButton onOpenTasksTab={onOpenTasksTab} />}
+      icon={ArrowRight}
+      tone="violet"
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+        <p className={TASK_EVENT_EYEBROW_CLASS}>{statusChanged ? "Moved" : "Updated"}</p>
+        {actorName ? <span className={TASK_EVENT_META_CLASS}>by {actorName}</span> : null}
       </div>
-      <p className="mt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{card.taskTitle}</p>
-      <div className="mt-2 flex items-center gap-2">
-        <Avatar name={memberName(members, card.assigneeId)} size="xs" />
-        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-          {memberName(members, card.assigneeId)}
+      <p className={`mt-0.5 ${TASK_EVENT_TITLE_CLASS}`}>{card.taskTitle}</p>
+      <div className={`mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 ${TASK_EVENT_META_CLASS}`}>
+        <span className="inline-flex min-w-0 items-center gap-1.5">
+          <Avatar name={assigneeName} size="xs" />
+          <span className="truncate font-medium">{assigneeName}</span>
         </span>
+        <span aria-hidden="true" className="text-zinc-400 dark:text-zinc-500">·</span>
+        {statusChanged ? (
+          <>
+            <span>{goalTaskColumnLabel(card.previousStatus)}</span>
+            <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
+          </>
+        ) : null}
+        <TaskStatusPill status={card.status} />
       </div>
-      {actorName ? (
-        <p className="mt-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">Moved by {actorName}</p>
-      ) : null}
       {card.handoverSummary ? (
         <div className="mt-2">
           <button
             type="button"
+            aria-expanded={handoverOpen}
             onClick={() => setHandoverOpen((open) => !open)}
-            className="inline-flex items-center gap-1 font-mono text-[10px] text-zinc-500 transition hover:text-zinc-800 dark:hover:text-zinc-200"
+            className={`inline-flex items-center gap-1 ${TASK_EVENT_META_CLASS} transition hover:text-zinc-800 dark:hover:text-zinc-200`}
           >
             Handover note
             {handoverOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </button>
           {handoverOpen ? (
-            <p className="mt-1.5 rounded-md border border-zinc-200/70 bg-white/80 px-2.5 py-2 text-[11px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-300">
+            <p className={`mt-1 border-l border-zinc-300 pl-2 leading-relaxed dark:border-zinc-700 ${TASK_EVENT_META_CLASS}`}>
               {card.handoverSummary}
             </p>
           ) : null}
         </div>
       ) : null}
-    </CardShell>
+    </TaskEventShell>
   );
 });
 
@@ -417,29 +458,29 @@ export const TaskNudgeCardView = memo(function TaskNudgeCardView({
 
   const config = {
     unblocked: {
-      title: "Task Unblocked",
+      title: "Unblocked",
       icon: Zap,
-      iconClass: "bg-emerald-100/80 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+      tone: "emerald" as const,
       description: nudge.completedDependencyTitle
-        ? `Dependency "${nudge.completedDependencyTitle}" completed. You can start when ready.`
-        : "All dependencies completed. You can start when ready.",
+        ? `Dependency “${nudge.completedDependencyTitle}” completed · ready to start`
+        : "All dependencies completed · ready to start",
     },
     stalled: {
-      title: "Task Stalled",
+      title: "Stalled",
       icon: AlertTriangle,
-      iconClass: "bg-amber-100/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
-      description: "This task has been in progress with no update for a while. Please post progress or update status.",
+      tone: "amber" as const,
+      description: "No progress update while in progress",
     },
     idle: {
-      title: "Task Pending",
+      title: "Pending",
       icon: Clock,
-      iconClass: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
-      description: "This task is pending and unblocked. Please proceed when ready.",
+      tone: "neutral" as const,
+      description: "Pending and unblocked · ready to start",
     },
     moved: {
-      title: "Task Moved",
+      title: "Moved",
       icon: ArrowRight,
-      iconClass: "bg-violet-100/80 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300",
+      tone: "violet" as const,
       description: nudge.previousStatus && nudge.status
         ? `Moved from ${goalTaskColumnLabel(nudge.previousStatus)} → ${goalTaskColumnLabel(nudge.status)}`
         : "Task status updated.",
@@ -449,23 +490,14 @@ export const TaskNudgeCardView = memo(function TaskNudgeCardView({
   const Icon = config.icon;
 
   return (
-    <CardShell footer={<ViewBoardButton onOpenTasksTab={onOpenTasksTab} />}>
-      <div className="flex items-start gap-2.5">
-        <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${config.iconClass}`}>
-          <Icon className="h-3.5 w-3.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-            {config.title}
-          </p>
-          <p className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100 leading-tight">
-            {nudge.taskTitle}
-          </p>
-          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-            {config.description}
-          </p>
-        </div>
-      </div>
-    </CardShell>
+    <TaskEventShell
+      action={<ViewBoardButton onOpenTasksTab={onOpenTasksTab} />}
+      icon={Icon}
+      tone={config.tone}
+    >
+      <p className={TASK_EVENT_EYEBROW_CLASS}>{config.title}</p>
+      <p className={`mt-0.5 ${TASK_EVENT_TITLE_CLASS}`}>{nudge.taskTitle}</p>
+      <p className={`mt-1 leading-4 ${TASK_EVENT_META_CLASS}`}>{config.description}</p>
+    </TaskEventShell>
   );
 });

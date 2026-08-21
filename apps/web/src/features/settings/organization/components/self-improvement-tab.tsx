@@ -9,6 +9,7 @@ import {
 import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-state";
 import { SettingsList, SettingsListRow, SettingsRowIcon } from "@/features/settings/shared/settings-list-row";
 import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
+import { clientFetchJson } from "@/lib/client-api";
 
 interface SelfImprovementReview {
   id: string;
@@ -44,12 +45,11 @@ export const SelfImprovementTab = memo(function SelfImprovementTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/self-improvement/reviews");
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Unable to fetch reviews");
-      }
-      const data = await res.json();
+      const data = await clientFetchJson<{ reviews?: SelfImprovementReview[] }>(
+        "/api/self-improvement/reviews",
+        {},
+        "Unable to fetch reviews",
+      );
       setReviews(data.reviews ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load reviews");

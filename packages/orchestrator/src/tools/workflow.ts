@@ -5,12 +5,12 @@ import type { OrchestratorTool } from './types.js';
 // ---------------------------------------------------------------------------
 // workflow.* tools
 //
-// - run / transition drive the engine (require ctx.workflowEngine, wired at
-//   the composition root).
+// - run / transition / advance drive the engine (require ctx.workflowEngine,
+//   wired at the composition root). The engine is the single authority over
+//   run state: advance passes the envelope to `engine.advance`, and the
+//   completion hook routes terminal agent runs through the engine — no tool
+//   writes node-run rows.
 // - list / view read definitions from the repo.
-// - advance is the in-node terminator: it stashes the summary / json / output
-//   path onto the current node run; the run-finalize hook then completes the
-//   node via the engine. This keeps `advance` a pure repo write.
 // ---------------------------------------------------------------------------
 
 const ENGINE_UNAVAILABLE = 'workflow engine is not available in this context';
@@ -124,20 +124,22 @@ export const workflowAdvanceTool: OrchestratorTool<typeof AdvanceSchema> = {
     bypassPermission: true,
     input: args,
   }),
-  execute: async ({ invocation, repo }) => {
+  execute: async ({ invocation, workflowEngine }) => {
+    if (!workflowEngine) return { ok: false, error: ENGINE_UNAVAILABLE };
     const input = invocation.input as z.infer<typeof AdvanceSchema>;
     const runId = invocation.runId;
     if (!runId) return { ok: false, error: 'workflow.advance can only be called inside a run' };
-    const nodeRun = repo.getWorkflowNodeRunByChildRun(runId);
-    if (!nodeRun) return { ok: false, error: 'this run is not a workflow node run' };
-    // Stash the envelope; the run-finalize hook completes the node.
-    repo.saveWorkflowNodeRun({
-      ...nodeRun,
+    const result = await workflowEngine.advance({
+      organizationId: invocation.organizationId,
+      runId,
       summary: input.summary,
-      outputJson: input.json ?? nodeRun.outputJson,
-      outputPath: input.output_path ?? nodeRun.outputPath,
+      json: input.json,
+      outputPath: input.output_path,
+      idempotencyKey: input.idempotency_key,
     });
-    return { ok: true };
+    return result.ok
+      ? { ok: true }
+      : { ok: false, error: result.error ?? 'advance failed' };
   },
 };
 

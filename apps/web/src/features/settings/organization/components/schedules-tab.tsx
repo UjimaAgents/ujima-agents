@@ -12,6 +12,7 @@ import {
 import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-state";
 import { SettingsList, SettingsListRow, SettingsRowIcon } from "@/features/settings/shared/settings-list-row";
 import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
+import { clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 interface Schedule {
   id: string;
@@ -51,12 +52,11 @@ export const SchedulesTab = memo(function SchedulesTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/schedules");
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Unable to fetch schedules");
-      }
-      const data = await res.json();
+      const data = await clientFetchJson<{ jobs?: Schedule[] }>(
+        "/api/schedules",
+        {},
+        "Unable to fetch schedules",
+      );
       setSchedules(data.jobs ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load schedules");
@@ -75,15 +75,11 @@ export const SchedulesTab = memo(function SchedulesTab() {
   const toggleStatus = useCallback(async (schedule: Schedule) => {
     const nextStatus = schedule.status === "active" ? "paused" : "active";
     try {
-      const res = await fetch(`/api/schedules/${schedule.id}`, {
+      await clientFetchJson<unknown>(`/api/schedules/${schedule.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Failed to update schedule");
-      }
+      }, "Failed to update schedule");
       setSchedules((prev) =>
         prev.map((s) => (s.id === schedule.id ? { ...s, status: nextStatus as Schedule["status"] } : s)),
       );
@@ -96,11 +92,7 @@ export const SchedulesTab = memo(function SchedulesTab() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/schedules/${deleteTarget.id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Failed to delete schedule");
-      }
+      await clientFetchVoid(`/api/schedules/${deleteTarget.id}`, { method: "DELETE" }, "Failed to delete schedule");
       setSchedules((prev) => prev.filter((s) => s.id !== deleteTarget.id));
       setDeleteTarget(null);
     } catch (err) {

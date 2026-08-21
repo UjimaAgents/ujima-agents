@@ -1,10 +1,18 @@
 "use client";
 
 import type {
+  WorkflowApprovalView,
+  WorkflowBlockingApprovalView,
+  WorkflowNodeRunView as ApiWorkflowNodeRunView,
+  WorkflowRunMessageView,
+  WorkflowRunView,
+  WorkflowToolApprovalView,
+  WorkflowToolStepView,
+} from "@ujima/api-schema";
+import type {
   WorkflowDefinition,
   WorkflowEdge,
   WorkflowNode,
-  WorkflowNodeRun,
   WorkflowRun,
   WorkflowTransitionAction,
 } from "@ujima/shared";
@@ -139,41 +147,15 @@ export async function listWorkflowRuns(status?: string): Promise<WorkflowRun[]> 
   return body.runs;
 }
 
-export interface WorkflowRunMessage {
-  id: string;
-  senderName: string;
-  senderKind: string;
-  content: string;
-  createdAt: string;
-}
-export interface WorkflowToolStep {
-  tool: string;
-  action: string;
-  status: string;
-  resourcePath?: string;
-  at: string;
-}
-export type WorkflowNodeRunView = WorkflowNodeRun & {
-  agentName?: string;
-  failureDetail?: string;
-  toolSteps?: WorkflowToolStep[];
-};
+// The run-view wire contract is defined once in @ujima/api-schema; these names
+// are kept as aliases so every consumer compiles against the single schema.
+export type WorkflowRunMessage = WorkflowRunMessageView;
+export type WorkflowToolStep = WorkflowToolStepView;
+export type WorkflowNodeRunView = ApiWorkflowNodeRunView;
 
-export interface WorkflowBlockingApproval {
-  id: string;
-  nodeId?: string;
-  agentName?: string;
-  resourceType: string;
-  action: string;
-  resourcePath: string;
-}
+export type WorkflowBlockingApproval = WorkflowBlockingApprovalView;
 
-export interface WorkflowRunDetail {
-  run: WorkflowRun;
-  nodeRuns: WorkflowNodeRunView[];
-  messages: WorkflowRunMessage[];
-  blockingApprovals: WorkflowBlockingApproval[];
-}
+export type WorkflowRunDetail = WorkflowRunView;
 
 /** Resolve a tool approval that is blocking a workflow's agent step. */
 export async function resolveBlockingApproval(
@@ -214,34 +196,10 @@ export async function getWorkflowRunArtifact(
   );
 }
 
-export interface WorkflowApproval {
-  id: string;
-  workflowRunId: string;
-  workflowName: string;
-  nodeId: string;
-  prompt: string;
-  priorSummary?: string;
-  priorOutputPath?: string;
-  channelId: string;
-  requestedBy: string;
-  createdAt: string;
-}
+export type WorkflowApproval = WorkflowApprovalView;
 
 /** A tool approval (write/MCP) blocking a running workflow's agent step. */
-export interface WorkflowToolApproval {
-  id: string;
-  workflowRunId: string;
-  workflowName: string;
-  nodeId: string;
-  /** Stable member id of the requesting agent (agentName is display-only). */
-  requestedByMemberId?: string;
-  agentName: string;
-  resourceType: string;
-  action: string;
-  resourcePath: string;
-  channelId: string;
-  createdAt: string;
-}
+export type WorkflowToolApproval = WorkflowToolApprovalView;
 
 export async function listWorkflowApprovals(): Promise<{
   approvals: WorkflowApproval[];

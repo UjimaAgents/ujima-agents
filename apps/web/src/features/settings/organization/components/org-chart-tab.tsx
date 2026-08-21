@@ -4,6 +4,7 @@ import { useMemo, useState, useCallback, memo } from "react";
 import type { OrganizationSettingsResponse } from "@ujima/api-schema";
 import { OrgChartFields } from "@/features/team/org-chart-fields";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
+import { clientFetchJson } from "@/lib/client-api";
 
 type Member = NonNullable<OrganizationSettingsResponse["members"]>[number];
 
@@ -65,17 +66,13 @@ export const OrgChartTab = memo(function OrgChartTab({
     setSuccess(false);
     setSaving(true);
     try {
-      const response = await fetch("/api/settings/organization", {
+      await clientFetchJson<unknown>("/api/settings/organization", {
         method: "PATCH",
         body: JSON.stringify({
           organizationId: orgId,
           organizationChart: { reportsTo },
         }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? "Failed to update org chart.");
-      }
+      }, "Failed to update org chart.");
       setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save.");

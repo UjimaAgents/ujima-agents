@@ -12,6 +12,7 @@ import {
 } from "./terminal-chrome";
 import { ExpandableOutput } from "./expandable-output";
 import { usePolling } from "@/hooks/use-polling";
+import { clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 const POLL_MS = 700;
 
@@ -44,22 +45,11 @@ export function BackgroundShellJobPane({
 
   const fetchSnapshot = useCallback(async () => {
     const qs = new URLSearchParams({ organizationId });
-    const res = await fetch(
+    return clientFetchJson<ShellJobDetail>(
       `/api/runs/${encodeURIComponent(runId)}/jobs/${encodeURIComponent(jobId)}?${qs.toString()}`,
       { method: "GET", credentials: "include" },
+      "Failed to load job output.",
     );
-    const body = (await res.json().catch(() => null)) as unknown;
-    if (!res.ok) {
-      const msg =
-        typeof body === "object" &&
-        body &&
-        "message" in body &&
-        typeof (body as { message?: string }).message === "string"
-          ? (body as { message: string }).message
-          : `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-    return body as ShellJobDetail;
   }, [organizationId, runId, jobId]);
 
   const load = useCallback(async () => {
@@ -91,7 +81,7 @@ export function BackgroundShellJobPane({
     setStopping(true);
     setLoadError(null);
     try {
-      const res = await fetch(
+      await clientFetchVoid(
         `/api/runs/${encodeURIComponent(runId)}/jobs/${encodeURIComponent(jobId)}/terminate`,
         {
           method: "POST",
@@ -99,11 +89,8 @@ export function BackgroundShellJobPane({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ organizationId }),
         },
+        "Stop failed.",
       );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message ?? `HTTP ${res.status}`);
-      }
       try {
         const next = await fetchSnapshot();
         setSnapshot(next);
@@ -171,7 +158,7 @@ export function BackgroundShellJobPane({
         ) : null}
       </div>
       {hasOutputContent ? (
-        <ExpandableOutput>
+        <ExpandableOutput storageKey={`bgshell:${jobId}`}>
           <div
             className={`px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
               tone === "error"

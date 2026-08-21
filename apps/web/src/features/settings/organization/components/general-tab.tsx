@@ -7,6 +7,7 @@ import type { BootstrapResponse } from "@ujima/api-schema";
 import { settingsFetchVoid } from "@/features/settings/shared/settings-api";
 import { SettingsPrimaryButton } from "@/features/settings/shared/settings-buttons";
 import { SettingsSection } from "@/features/settings/shared/settings-section";
+import { clientFetchJson } from "@/lib/client-api";
 
 export const GeneralTab = memo(function GeneralTab({
   orgId,
@@ -35,14 +36,11 @@ export const GeneralTab = memo(function GeneralTab({
     setRootPickError(null);
     setIsPickingRoot(true);
     try {
-      const response = await fetch("/api/onboarding/pick-workspace-root", { method: "POST" });
-      const body = (await response.json().catch(() => null)) as
-        | { path?: string; message?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(body?.message ?? "Unable to open folder picker.");
-      }
+      const body = await clientFetchJson<{ path?: string }>(
+        "/api/onboarding/pick-workspace-root",
+        { method: "POST" },
+        "Unable to open folder picker.",
+      );
 
       if (body?.path) {
         setRoot(body.path);

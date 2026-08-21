@@ -3,7 +3,7 @@ import type { AgentDef, TaskDef, TeamDef, UjimaEvent } from '@ujima/shared';
 import { openDb, type UjimaDb } from '@ujima/context-store';
 import { createLocalEventBus, type EventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
-import { createLanguageModelFromLegacyProvider } from '@ujima/agent-runtime';
+import { createLanguageModelFromLegacyProvider } from '../../agent-runtime/src/test-helpers.js';
 import { createMockProvider, textTurn, toolTurn, type LLMProvider } from '@ujima/llm/legacy';
 import type { LanguageModel } from 'ai';
 import { runTask, topoSortWaves } from './run-task';

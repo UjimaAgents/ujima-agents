@@ -3,6 +3,11 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { RolePresetSchema, listRoleIndustries } from '@ujima/framework';
 import { ApiErrorSchema } from '@ujima/api-schema';
 import { z } from 'zod';
+import { httpError } from './route-errors.js';
+import {
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 const IndustryParamsSchema = z.object({
   industry: z.string().min(1),
@@ -25,7 +30,12 @@ const RoleIndustriesResponseSchema = z.object({
 export function registerRoleRoutes(_app: FastifyInstance): void {
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/roles/presets', {
+  const register = (spec: RouteSpec) => registerRoute(app, spec, {});
+
+  register({
+    method: 'get',
+    path: '/roles/presets',
+    auth: { kind: 'none' },
     schema: {
       description: 'List every preset role across all industries',
       tags: ['Roles'],
@@ -33,14 +43,18 @@ export function registerRoleRoutes(_app: FastifyInstance): void {
         200: RolePresetsResponseSchema,
       },
     },
-  }, async () => {
-    const industries = listRoleIndustries();
-    return {
-      presets: industries.flatMap((group) => group.presets),
-    };
+    handler: async () => {
+      const industries = listRoleIndustries();
+      return {
+        presets: industries.flatMap((group) => group.presets),
+      };
+    },
   });
 
-  app.get('/roles/industries', {
+  register({
+    method: 'get',
+    path: '/roles/industries',
+    auth: { kind: 'none' },
     schema: {
       description: 'List the available role industries and their presets',
       tags: ['Roles'],
@@ -48,11 +62,15 @@ export function registerRoleRoutes(_app: FastifyInstance): void {
         200: RoleIndustriesResponseSchema,
       },
     },
-  }, async () => {
-    return { industries: listRoleIndustries() };
+    handler: async () => {
+      return { industries: listRoleIndustries() };
+    },
   });
 
-  app.get('/roles/industries/:industry', {
+  register({
+    method: 'get',
+    path: '/roles/industries/:industry',
+    auth: { kind: 'none' },
     schema: {
       description: 'Get the presets for a single role industry',
       tags: ['Roles'],
@@ -62,14 +80,12 @@ export function registerRoleRoutes(_app: FastifyInstance): void {
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    const industry = listRoleIndustries().find((entry) => entry.industry === req.params.industry);
-    if (!industry) {
-      return reply.code(404).send({
-        code: 'ERR_NOT_FOUND',
-        message: `Unknown role industry "${req.params.industry}"`,
-      });
-    }
-    return industry;
+    handler: async (req) => {
+      const industry = listRoleIndustries().find((entry) => entry.industry === req.params.industry);
+      if (!industry) {
+        throw httpError(404, `Unknown role industry "${req.params.industry}"`);
+      }
+      return industry;
+    },
   });
 }

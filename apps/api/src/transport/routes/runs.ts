@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Repository } from '@ujima/runtime-core';
 import { ApprovalRequestSchema, MessageSchema, RunStateSchema, RunStepSchema, createPaginatedSchema, IdSchema } from '@ujima/shared';
@@ -17,12 +17,11 @@ import {
 import type { ApprovalService, AuthService, SpiritService } from '@ujima/orchestrator';
 import { listBackgroundJobs, peekBackgroundJob, terminateBackgroundJob } from '@ujima/orchestrator';
 import { z } from 'zod';
+import { httpError } from './route-errors.js';
 import {
-  assertReadyWorkspaceRoot,
-} from './workspace-root.js';
-import { requireOrgSession } from './org-auth.js';
-import { readSessionToken } from '../session-token.js';
-import { apiError, errorMessage, workspaceRootError } from './route-errors.js';
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 const RunIdParamsSchema = z.object({ runId: IdSchema });
 const ThreadIdParamsSchema = z.object({ threadId: IdSchema });
@@ -78,7 +77,15 @@ export function registerRunRoutes(
   const { repo, runs, approvals, auth } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/runs', {
+  const register = (spec: RouteSpec) => registerRoute(app, spec, { auth, repo });
+
+  const orgQuery = (req: FastifyRequest) => (req.query as { organizationId: string }).organizationId;
+  const orgBody = (req: FastifyRequest) => (req.body as { organizationId: string }).organizationId;
+
+  register({
+    method: 'get',
+    path: '/runs',
+    auth: { kind: 'none' },
     schema: {
       description: 'List runs for an organization',
       tags: ['Runs'],
@@ -88,15 +95,15 @@ export function registerRunRoutes(
         400: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      return runs.listRuns(req.query.organizationId, req.query.cursor, req.query.limit);
-    } catch (err) {
-      return apiError(reply, 400, errorMessage(err));
-    }
+    error: { fallback: 400 },
+    handler: async (req) =>
+      runs.listRuns(req.query.organizationId, req.query.cursor, req.query.limit),
   });
 
-  app.get('/runs/:runId', {
+  register({
+    method: 'get',
+    path: '/runs/:runId',
+    auth: { kind: 'none' },
     schema: {
       description: 'Get a run by ID',
       tags: ['Runs'],
@@ -108,17 +115,18 @@ export function registerRunRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
+    error: { fallback: 400 },
+    handler: async (req) => {
       const run = runs.getRun(req.query.organizationId, req.params.runId);
-      if (!run) return apiError(reply, 404, 'Run not found');
+      if (!run) throw httpError(404, 'Run not found');
       return run;
-    } catch (err) {
-      return apiError(reply, 400, errorMessage(err));
-    }
+    },
   });
 
-  app.get('/runs/:runId/detail', {
+  register({
+    method: 'get',
+    path: '/runs/:runId/detail',
+    auth: { kind: 'none' },
     schema: {
       description: 'Get a run with its related approvals and messages',
       tags: ['Runs'],
@@ -130,17 +138,18 @@ export function registerRunRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
+    error: { fallback: 400 },
+    handler: async (req) => {
       const detail = runs.getRunDetail(req.query.organizationId, req.params.runId);
-      if (!detail) return apiError(reply, 404, 'Run not found');
+      if (!detail) throw httpError(404, 'Run not found');
       return detail;
-    } catch (err) {
-      return apiError(reply, 400, errorMessage(err));
-    }
+    },
   });
 
-  app.get('/threads/:threadId/traces', {
+  register({
+    method: 'get',
+    path: '/threads/:threadId/traces',
+    auth: { kind: 'none' },
     schema: {
       description: 'List run traces for a thread',
       tags: ['Runs'],
@@ -152,20 +161,21 @@ export function registerRunRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      return runs.listThreadTraces(
+    error: { fallback: 404 },
+    handler: async (req) =>
+      runs.listThreadTraces(
         req.query.organizationId,
         req.params.threadId,
         req.query.cursor,
         req.query.limit,
-      );
-    } catch (err) {
-      return apiError(reply, 404, errorMessage(err));
-    }
+      ),
   });
 
-  app.post('/runs', {
+  register({
+    method: 'post',
+    path: '/runs',
+    auth: { kind: 'org-session', organizationId: orgBody },
+    workspaceRoot: true,
     schema: {
       description: 'Create a run for an agent',
       tags: ['Runs'],
@@ -180,25 +190,19 @@ export function registerRunRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
-      if (forbidden) return forbidden;
-      return await runs.createRun(req.body);
-    } catch (err) {
-      const rootError = workspaceRootError(reply, err);
-      if (rootError) return rootError;
-      const message = errorMessage(err);
-      const status =
-        message.startsWith('Member not found') || message.startsWith('Organization not found')
-          ? 404
-          : 503;
-      return apiError(reply, status, message);
-    }
+    error: {
+      workspaceRoot: true,
+      byPrefix: { 'Member not found': 404, 'Organization not found': 404 },
+      fallback: 503,
+    },
+    handler: async (req) => runs.createRun(req.body),
   });
 
-  app.post('/runs/:runId/cancel', {
+  register({
+    method: 'post',
+    path: '/runs/:runId/cancel',
+    auth: { kind: 'org-session', organizationId: orgBody },
+    workspaceRoot: true,
     schema: {
       description: 'Cancel an in-flight or queued run',
       tags: ['Runs'],
@@ -213,24 +217,18 @@ export function registerRunRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
-      if (forbidden) return forbidden;
-      return runs.cancelRun(req.body.organizationId, req.params.runId);
-    } catch (err) {
-      const rootError = workspaceRootError(reply, err);
-      if (rootError) return rootError;
-      const message = errorMessage(err);
-      if (message.startsWith('Run not found')) {
-        return apiError(reply, 404, message);
-      }
-      return apiError(reply, 400, message);
-    }
+    error: {
+      workspaceRoot: true,
+      byPrefix: { 'Run not found': 404 },
+      fallback: 400,
+    },
+    handler: async (req) => runs.cancelRun(req.body.organizationId, req.params.runId),
   });
 
-  app.get('/approvals', {
+  register({
+    method: 'get',
+    path: '/approvals',
+    auth: { kind: 'none' },
     schema: {
       description: 'List pending approvals',
       tags: ['Runs'],
@@ -240,15 +238,15 @@ export function registerRunRoutes(
         400: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      return approvals.listPending(req.query.organizationId);
-    } catch (err) {
-      return apiError(reply, 400, errorMessage(err));
-    }
+    error: { fallback: 400 },
+    handler: async (req) => approvals.listPending(req.query.organizationId),
   });
 
-  app.post('/approvals/:approvalId/resolve', {
+  register({
+    method: 'post',
+    path: '/approvals/:approvalId/resolve',
+    auth: { kind: 'org-session', organizationId: orgBody },
+    workspaceRoot: true,
     schema: {
       description: 'Resolve a pending approval',
       tags: ['Runs'],
@@ -263,14 +261,13 @@ export function registerRunRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
-      if (forbidden) return forbidden;
-      const authState = auth.getAuthState(readSessionToken(req));
-      const status =
-        req.body.resolution === 'reject' ? 'rejected' : 'approved';
+    error: {
+      workspaceRoot: true,
+      byPrefix: { 'Approval not found': 404 },
+      fallback: 400,
+    },
+    handler: async (req, { authState }) => {
+      const status = req.body.resolution === 'reject' ? 'rejected' : 'approved';
       return await approvals.resolveApproval({
         organizationId: req.body.organizationId,
         approvalId: req.params.approvalId,
@@ -279,15 +276,13 @@ export function registerRunRoutes(
         reason: req.body.reason,
         resolverMemberId: authState.member?.id,
       });
-    } catch (err) {
-      const rootError = workspaceRootError(reply, err);
-      if (rootError) return rootError;
-      const message = errorMessage(err);
-      return apiError(reply, message.startsWith('Approval not found') ? 404 : 400, message);
-    }
+    },
   });
 
-  app.get('/runs/:runId/jobs', {
+  register({
+    method: 'get',
+    path: '/runs/:runId/jobs',
+    auth: { kind: 'org-session', organizationId: orgQuery },
     schema: {
       description: 'Get background shell jobs for a run',
       tags: ['Runs'],
@@ -300,20 +295,18 @@ export function registerRunRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const { organizationId } = RunDetailQuerySchema.parse(req.query);
-      const forbidden = requireOrgSession(auth, req, reply, organizationId);
-      if (forbidden) return forbidden;
+    error: { fallback: 400 },
+    handler: async (req, { organizationId }) => {
       const run = runs.getRun(organizationId, req.params.runId);
-      if (!run) return apiError(reply, 404, 'Run not found');
+      if (!run) throw httpError(404, 'Run not found');
       return listBackgroundJobs(req.params.runId);
-    } catch (err) {
-      return apiError(reply, 400, errorMessage(err));
-    }
+    },
   });
 
-  app.get('/runs/:runId/jobs/:jobId', {
+  register({
+    method: 'get',
+    path: '/runs/:runId/jobs/:jobId',
+    auth: { kind: 'org-session', organizationId: orgQuery },
     schema: {
       description: 'Peek live stdout/stderr for a background shell job (non-destructive)',
       tags: ['Runs'],
@@ -326,24 +319,22 @@ export function registerRunRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const { organizationId } = ShellJobDetailQuerySchema.parse(req.query);
-      const forbidden = requireOrgSession(auth, req, reply, organizationId);
-      if (forbidden) return forbidden;
+    error: { fallback: 400 },
+    handler: async (req, { organizationId }) => {
       const run = runs.getRun(organizationId, req.params.runId);
-      if (!run) return apiError(reply, 404, 'Run not found');
+      if (!run) throw httpError(404, 'Run not found');
       const snapshot = peekBackgroundJob(req.params.runId, req.params.jobId);
       if (!snapshot) {
-        return apiError(reply, 404, 'Background job not found');
+        throw httpError(404, 'Background job not found');
       }
       return snapshot;
-    } catch (err) {
-      return apiError(reply, 400, errorMessage(err));
-    }
+    },
   });
 
-  app.post('/runs/:runId/jobs/:jobId/terminate', {
+  register({
+    method: 'post',
+    path: '/runs/:runId/jobs/:jobId/terminate',
+    auth: { kind: 'org-session', organizationId: orgBody },
     schema: {
       description: 'Terminate a background shell job',
       tags: ['Runs'],
@@ -356,17 +347,12 @@ export function registerRunRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
-      if (forbidden) return forbidden;
-      const run = runs.getRun(req.body.organizationId, req.params.runId);
-      if (!run) return apiError(reply, 404, 'Run not found');
-
+    error: { fallback: 400 },
+    handler: async (req, { organizationId }) => {
+      const run = runs.getRun(organizationId, req.params.runId);
+      if (!run) throw httpError(404, 'Run not found');
       const success = terminateBackgroundJob(req.params.runId, req.params.jobId);
       return { success };
-    } catch (err) {
-      return apiError(reply, 400, errorMessage(err));
-    }
+    },
   });
 }

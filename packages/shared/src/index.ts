@@ -1,4 +1,4 @@
-export const UJIMA_VERSION = "0.1.0-alpha.0";
+export const UJIMA_VERSION = "0.0.71";
 export * from "./provider-kinds.js";
 export * from "./types.js";
 export * from "./messages.js";

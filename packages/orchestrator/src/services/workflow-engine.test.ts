@@ -63,13 +63,19 @@ class FakeStore implements WorkflowEngineStore {
     const nr = this.nodeRuns.get(id);
     return nr && nr.workflowRunId === runId ? nr : null;
   }
+  getWorkflowNodeRunByChildRun(childRunId: string) {
+    return [...this.nodeRuns.values()].find((nr) => nr.childRunId === childRunId) ?? null;
+  }
   listWorkflowNodeRuns(runId: string) {
     return [...this.nodeRuns.values()].filter((nr) => nr.workflowRunId === runId);
   }
 }
 
 function makeEffects(opts?: {
-  statOutput?: (i: StatOutputInput) => {sha256: string; sizeBytes: number} | null;
+  statOutput?: (i: StatOutputInput) =>
+    | {sha256: string; sizeBytes: number}
+    | null
+    | Promise<{sha256: string; sizeBytes: number} | null>;
   runStatus?: (runId: string) => string | null;
   /** Fires inside spawnAgentNode — used to simulate a child run that completes fast. */
   onSpawn?: (input: SpawnAgentNodeInput) => Promise<void> | void;
@@ -96,7 +102,7 @@ function makeEffects(opts?: {
       return {goalId: 'goal-1'};
     },
     async statOutput(input) {
-      return opts?.statOutput ? opts.statOutput(input) : {sha256: 'sha', sizeBytes: 100};
+      return opts?.statOutput ? await opts.statOutput(input) : {sha256: 'sha', sizeBytes: 100};
     },
     async notifyInitiator(input) {
       notifications.push(input);
@@ -527,5 +533,134 @@ describe('WorkflowEngineService', () => {
       [edge('t', 'pm')],
     );
     await expect(engine.startRun({...START, inlineGraph: bad, name: 'bad'})).rejects.toThrow(/Invalid workflow graph/);
+  });
+
+  it('advance stashes the envelope onto the current node run (engine-write)', async () => {
+    const {effects, spawns} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph([trigger, agent('pm')], [edge('t', 'pm')]);
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'adv'});
+
+    const childRunId = spawns[0]!.childRunId;
+    const res = await engine.advance({
+      organizationId: 'org1',
+      runId: childRunId,
+      summary: 'BRD done',
+      json: {tasks: 3},
+    });
+
+    expect(res.ok).toBe(true);
+    const pm = store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!;
+    expect(pm.summary).toBe('BRD done');
+    expect(pm.outputJson).toEqual({tasks: 3});
+    expect(pm.status).toBe('running'); // completed by the run-completed hook, not advance
+  });
+
+  it('advance errors when the calling run is not a workflow node run', async () => {
+    const {effects} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph([trigger, agent('pm')], [edge('t', 'pm')]);
+    await engine.startRun({...START, inlineGraph: g, name: 'adv'});
+
+    const res = await engine.advance({organizationId: 'org1', runId: 'foreign-run', summary: 'x'});
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('this run is not a workflow node run');
+  });
+
+  it('advance does not clobber a node that already went terminal', async () => {
+    const {effects, spawns} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph([trigger, agent('pm')], [edge('t', 'pm')]);
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'adv'});
+
+    const childRunId = spawns[0]!.childRunId;
+    await engine.handleAgentRunCompleted({organizationId: 'org1', runId: childRunId, status: 'completed'});
+    const pm = store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!;
+    expect(pm.status).toBe('completed');
+
+    // A straggler advance arriving after the completion hook must not rewrite.
+    const res = await engine.advance({organizationId: 'org1', runId: childRunId, summary: 'LATE'});
+    expect(res.ok).toBe(true);
+    expect(store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!.summary).not.toBe('LATE');
+  });
+
+  it('preserves an advance envelope while completion verifies output', async () => {
+    let statStarted!: () => void;
+    let releaseStat!: (result: {sha256: string; sizeBytes: number}) => void;
+    const statReady = new Promise<void>((resolve) => {
+      statStarted = resolve;
+    });
+    const statResult = new Promise<{sha256: string; sizeBytes: number}>((resolve) => {
+      releaseStat = resolve;
+    });
+    const {effects, spawns} = makeEffects({
+      statOutput: async () => {
+        statStarted();
+        return statResult;
+      },
+    });
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph([trigger, agent('pm')], [edge('t', 'pm')]);
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'race'});
+    const nodeRunId = spawns[0]!.nodeRunId;
+    const completion = engine.onNodeComplete({
+      organizationId: 'org1',
+      workflowRunId,
+      nodeRunId,
+    });
+    await statReady;
+
+    await engine.advance({
+      organizationId: 'org1',
+      runId: spawns[0]!.childRunId,
+      summary: 'BRD done',
+      json: {tasks: 3},
+    });
+    releaseStat({sha256: 'sha', sizeBytes: 100});
+    await completion;
+
+    const pm = store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!;
+    expect(pm.status).toBe('completed');
+    expect(pm.summary).toBe('BRD done');
+    expect(pm.outputJson).toEqual({tasks: 3});
+  });
+
+  it('handleAgentRunCompleted correlates a child run to its node and completes it', async () => {
+    const {effects, spawns, goals} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [trigger, agent('pm'), {id: 'goal', kind: 'goal_handoff', position: {x: 0, y: 0}, config: {titleTemplate: 't', tasksFrom: 'json'}}],
+      [edge('t', 'pm'), edge('pm', 'goal')],
+    );
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'hook'});
+
+    const childRunId = spawns[0]!.childRunId;
+    // Simulate the composition-root hook: the engine decides correlation + terminality.
+    await engine.advance({organizationId: 'org1', runId: childRunId, summary: 'done'});
+    await engine.handleAgentRunCompleted({organizationId: 'org1', runId: childRunId, status: 'completed'});
+
+    const pm = store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!;
+    expect(pm.status).toBe('completed');
+    expect(pm.summary).toBe('done');
+    expect(goals).toHaveLength(1); // graph stepped forward
+    expect(store.getWorkflowRun('org1', workflowRunId)!.status).toBe('completed');
+  });
+
+  it('handleAgentRunCompleted ignores non-terminal runs and non-workflow runs', async () => {
+    const {effects, spawns, goals} = makeEffects();
+    const engine = new WorkflowEngineService(store, effects);
+    const g = graph(
+      [trigger, agent('pm'), {id: 'goal', kind: 'goal_handoff', position: {x: 0, y: 0}, config: {titleTemplate: 't', tasksFrom: 'json'}}],
+      [edge('t', 'pm'), edge('pm', 'goal')],
+    );
+    const {workflowRunId} = await engine.startRun({...START, inlineGraph: g, name: 'hook'});
+
+    const childRunId = spawns[0]!.childRunId;
+    await engine.handleAgentRunCompleted({organizationId: 'org1', runId: childRunId, status: 'waiting_for_approval'});
+    expect(store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!.status).toBe('running');
+
+    await engine.handleAgentRunCompleted({organizationId: 'org1', runId: 'unrelated-run', status: 'completed'});
+    expect(store.listWorkflowNodeRuns(workflowRunId).find((n) => n.nodeId === 'pm')!.status).toBe('running');
+    expect(goals).toHaveLength(0);
   });
 });

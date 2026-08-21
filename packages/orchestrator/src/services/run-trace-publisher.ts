@@ -7,7 +7,7 @@ import { findTerminatingTool, findTerminatingToolFromRunSteps, normalizeToDotted
 import type { runAgentLoop } from './agent-loop.js';
 import { stepPausesRun } from './agent-loop.js';
 import { normalizeTokenUsage, persistMessageTokens } from './token-usage.js';
-import { composedStepToolCalls, prepareAgentStepPublication } from './agent-step-publish.js';
+import { composedStepToolCalls, buildAgentStepMessages, prepareAgentStepPublication } from './agent-step-publish.js';
 
 export { normalizeRunStepToolCalls } from '../utils/step-tool-calls.js';
 
@@ -18,6 +18,7 @@ export interface StreamedRunTrace {
 }
 export type StreamedTraceOutcome = 'failed' | 'stopped';
 type ArtifactFileToolCallLike = Parameters<typeof appendArtifactFileToolCall>[0][number];
+type RunTraceStore = Pick<ApiRepository, 'listRunSteps' | 'getThread' | 'updateMessage'>;
 const WAKEABLE_AGENT_DM_TERMINATORS = new Set(['message', 'channel.reply', 'channel.post', 'channel.handoff']);
 
 export function collectToolStatuses(result: Pick<RunReplyResult, 'toolResults' | 'steps'>): string[] {
@@ -40,12 +41,12 @@ export function collectRunStepToolResults(result: Pick<RunReplyResult, 'steps'>)
 }
 
 export async function appendArtifactFileFromRunSteps(
-  repo: ApiRepository,
+  repo: RunTraceStore,
   run: RunState,
   workspaceRoot: string,
   toolCallId?: string,
 ): Promise<MessageToolCall | undefined> {
-  const runSteps = repo.listRunSteps?.(run.organizationId, run.id) ?? [];
+  const runSteps = repo.listRunSteps(run.organizationId, run.id);
   const steps = toolCallId ? runSteps.filter((step) => step.toolCallId === toolCallId) : runSteps;
   return appendArtifactFileToolCall(
     steps.map((step) => ({
@@ -62,7 +63,7 @@ export async function appendArtifactFileFromRunSteps(
 }
 
 export async function publishRunReplyTrace(input: {
-  repo: ApiRepository;
+  repo: RunTraceStore;
   conversations?: ConversationService;
   run: RunState;
   result: Pick<RunReplyResult, 'steps' | 'toolResults' | 'usage'>;
@@ -89,7 +90,7 @@ export async function publishRunReplyTrace(input: {
   let publishedArtifactFile = input.publishedArtifactFile ?? false;
   const publishedContent = input.publishedContent ?? new Set<string>();
   let publishedAnyText = input.publishedAnyText ?? false;
-  const runSteps = input.repo.listRunSteps?.(input.run.organizationId, input.run.id) ?? [];
+  const runSteps = input.repo.listRunSteps(input.run.organizationId, input.run.id);
   const terminatingTool = findTerminatingTool(input.result) ?? findTerminatingToolFromRunSteps(runSteps);
   let sawTerminatingTool = findTerminatingToolFromRunSteps(runSteps) !== null;
 
@@ -124,21 +125,20 @@ export async function publishRunReplyTrace(input: {
         : { ...baseMetadata, runProgress: true };
     const stepPublishOptions: PublishMessageOptions | undefined =
       metadata === baseMetadata ? publishOptions : { ...publishOptions, wakePolicy: 'never' };
-    const parts = prepared.contentParts.length > 0 ? prepared.contentParts : [prepared.content];
+    const stepMessages = buildAgentStepMessages({
+      organizationId: input.run.organizationId,
+      threadId,
+      channelId,
+      senderId: input.run.agentId,
+      runId: input.run.id,
+      prepared,
+      toolCalls,
+      metadata,
+    });
     let lastPublished: ReturnType<ConversationService['publishMessage']> | undefined;
-    for (const [partIndex, content] of parts.entries()) {
-      const isLastPart = partIndex === parts.length - 1;
-      lastPublished = input.conversations?.publishMessage(buildAgentMessage({
-        organizationId: input.run.organizationId,
-        threadId,
-        channelId,
-        senderId: input.run.agentId,
-        content,
-        metadata,
-        ...(isLastPart && toolCalls.length > 0 ? { toolCalls } : {}),
-        ...(isLastPart && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
-      }), undefined, undefined, stepPublishOptions);
-      publishedContent.add(content);
+    for (const stepMessage of stepMessages) {
+      lastPublished = input.conversations?.publishMessage(stepMessage, undefined, undefined, stepPublishOptions);
+      publishedContent.add(stepMessage.content);
     }
     if (isLastStep && lastPublished) {
       persistMessageTokens(input.repo, lastPublished, usage);
@@ -193,7 +193,7 @@ export async function publishRunReplyTrace(input: {
 }
 
 export function publishStreamedTrace(input: {
-  repo: ApiRepository;
+  repo: RunTraceStore;
   conversations?: ConversationService;
   run: RunState;
   trace: StreamedRunTrace;

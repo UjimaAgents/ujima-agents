@@ -1,9 +1,6 @@
 export { Avatar, AvatarStack, StatusBadge, TagBadge, ConversationIcon, getAvatarColor, getInitials } from "./primitives";
 export type { StatusVariant, TagVariant } from "./primitives";
 
-export { ChatHeader } from "./chat-header";
-export type { ChatHeaderProps } from "./chat-header";
-
 export { ChatTabs } from "./chat-tabs";
 export type { ChatTab } from "./chat-tabs";
 
@@ -35,4 +32,3 @@ export type { DetailsSidebarProps, RunSummaryData } from "./details-sidebar";
 export type { TraceStepData } from "./trace-types";
 
 export { CollapsibleHeaderActions } from "./collapsible-header-actions";
-export { FontSizeControl } from "./font-size-control";

@@ -1,3 +1,12 @@
+// Thin shim: classification lives in @ujima/agent-core's error-classification
+// (owned by the agent loop). This module only renders messages and must keep
+// its exported `errorMessage` signature stable.
+
+import { isContextLengthExceededError } from '@ujima/agent-core';
+
+const CONTEXT_WINDOW_EXCEEDED_MESSAGE =
+  'Context window exceeded — the conversation is too long for this model. Try archiving the conversation or switching to a model with a larger context window.';
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     const cause = causeMessage(error);
@@ -8,8 +17,8 @@ export function errorMessage(error: unknown): string {
 }
 
 function causeMessage(error: Error): string | null {
-  if (error.name === 'ContextLengthExceededError') {
-    return `Context window exceeded — the conversation is too long for this model. Try archiving the conversation or switching to a model with a larger context window.`;
+  if (isContextLengthExceededError(error)) {
+    return CONTEXT_WINDOW_EXCEEDED_MESSAGE;
   }
   const cause = (error as { cause?: unknown }).cause;
   if (cause instanceof Error) {
@@ -18,9 +27,6 @@ function causeMessage(error: Error): string | null {
   if (cause && typeof cause === 'object') {
     const record = cause as Record<string, unknown>;
     if (typeof record.message === 'string' && typeof record.code === 'string') {
-      if (record.code === 'context_length_exceeded') {
-        return `Context window exceeded — the conversation is too long for this model. Try archiving the conversation or switching to a model with a larger context window.`;
-      }
       return `${record.code}: ${record.message}`;
     }
   }

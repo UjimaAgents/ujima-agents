@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { WorkflowDefinition, WorkflowNodeRun } from '@ujima/shared';
+import type { WorkflowDefinition } from '@ujima/shared';
 import {
   workflowAdvanceTool,
   workflowListTool,
@@ -25,20 +25,6 @@ function def(name: string, nodeCount: number): WorkflowDefinition {
     version: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-  };
-}
-
-function nodeRun(): WorkflowNodeRun {
-  return {
-    id: 'nr1',
-    workflowRunId: 'wr1',
-    nodeId: 'pm',
-    attempt: 1,
-    kind: 'agent',
-    agentId: 'pm',
-    childRunId: 'run-123',
-    outputPath: 'docs/brd.md',
-    status: 'running',
   };
 }
 
@@ -94,26 +80,47 @@ describe('workflow.view', () => {
 });
 
 describe('workflow.advance', () => {
-  it('stashes the envelope onto the current node run', async () => {
+  it('delegates the envelope to the engine (no repo write in the tool)', async () => {
+    const advance = vi.fn().mockResolvedValue({ ok: true });
     const save = vi.fn();
     const result = (await workflowAdvanceTool.execute(
       ctx({
         runId: 'run-123',
         input: { summary: 'BRD done', json: { tasks: 3 } },
-        repo: { getWorkflowNodeRunByChildRun: () => nodeRun(), saveWorkflowNodeRun: save },
+        repo: { saveWorkflowNodeRun: save },
+        workflowEngine: { startRun: vi.fn(), transition: vi.fn(), advance },
       }),
     )) as { ok: boolean };
     expect(result.ok).toBe(true);
-    expect(save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'nr1', summary: 'BRD done', outputJson: { tasks: 3 } }),
+    expect(advance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: 'org1',
+        runId: 'run-123',
+        summary: 'BRD done',
+        json: { tasks: 3 },
+      }),
     );
+    expect(save).not.toHaveBeenCalled();
   });
 
   it('errors when the run is not a workflow node run', async () => {
+    const advance = vi.fn().mockResolvedValue({ ok: false, error: 'this run is not a workflow node run' });
     const result = (await workflowAdvanceTool.execute(
-      ctx({ runId: 'run-x', input: { summary: 's' }, repo: { getWorkflowNodeRunByChildRun: () => null } }),
+      ctx({
+        runId: 'run-x',
+        input: { summary: 's' },
+        workflowEngine: { startRun: vi.fn(), transition: vi.fn(), advance },
+      }),
     )) as { ok: boolean };
     expect(result.ok).toBe(false);
+  });
+
+  it('errors when the engine is not wired', async () => {
+    const result = (await workflowAdvanceTool.execute(
+      ctx({ runId: 'run-x', input: { summary: 's' } }),
+    )) as { ok: boolean; error: string };
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/not available/);
   });
 });
 
@@ -121,7 +128,7 @@ describe('workflow.run', () => {
   it('starts a run via the engine', async () => {
     const startRun = vi.fn().mockResolvedValue({ workflowRunId: 'wr-9' });
     const result = (await workflowRunTool.execute(
-      ctx({ input: { name: 'build', input: 'Add auth' }, workflowEngine: { startRun, transition: vi.fn() } }),
+      ctx({ input: { name: 'build', input: 'Add auth' }, workflowEngine: { startRun, transition: vi.fn(), advance: vi.fn() } }),
     )) as { ok: boolean; workflow_run_id: string };
     expect(result.ok).toBe(true);
     expect(result.workflow_run_id).toBe('wr-9');
@@ -146,7 +153,7 @@ describe('workflow.transition', () => {
     const result = (await workflowTransitionTool.execute(
       ctx({
         input: { run_id: 'wr1', action: 'approve', idempotency_key: 'k1' },
-        workflowEngine: { startRun: vi.fn(), transition },
+        workflowEngine: { startRun: vi.fn(), transition, advance: vi.fn() },
       }),
     )) as { ok: boolean };
     expect(result.ok).toBe(true);

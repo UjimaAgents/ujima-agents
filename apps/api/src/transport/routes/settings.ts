@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AgentTeamConfigSchema, RoleConfigSchema } from '@ujima/framework';
 import type { Repository } from '@ujima/runtime-core';
@@ -24,12 +24,11 @@ import {
 } from '@ujima/api-schema';
 import type { AuthService, SettingsService } from '@ujima/orchestrator';
 import { z } from 'zod';
-import {
-  assertReadyWorkspaceRoot,
-} from './workspace-root.js';
 import { readSessionToken } from '../session-token.js';
-import { requireOrgSession } from './org-auth.js';
-import { apiError, errorMessage, routeError, workspaceRootError } from './route-errors.js';
+import {
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 const OrgIdParamsSchema = z.object({ orgId: IdSchema });
 const ProviderTestParamsSchema = z.object({ providerName: z.string().min(1) });
@@ -76,7 +75,16 @@ export function registerSettingsRoutes(
   const { repo, settings, auth } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/settings/team', {
+  const register = (spec: RouteSpec) => registerRoute(app, spec, { auth, repo });
+
+  const orgQuery = (req: FastifyRequest) => (req.query as { organizationId: string }).organizationId;
+  const orgBody = (req: FastifyRequest) => (req.body as { organizationId: string }).organizationId;
+  const orgParams = (req: FastifyRequest) => (req.params as { orgId: string }).orgId;
+
+  register({
+    method: 'get',
+    path: '/settings/team',
+    auth: { kind: 'org-session', organizationId: orgQuery },
     schema: {
       description: 'Get the current team configuration',
       tags: ['Settings'],
@@ -89,17 +97,15 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
-      if (forbidden) return forbidden;
-      return settings.getTeamSettings(req.query.organizationId) as z.infer<typeof TeamSettingsResponseSchema>;
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
-    }
+    error: { notFound: 'Organization not found', fallback: 503 },
+    handler: async (_req, { organizationId }) =>
+      settings.getTeamSettings(organizationId) as z.infer<typeof TeamSettingsResponseSchema>,
   });
 
-  app.get('/settings/providers', {
+  register({
+    method: 'get',
+    path: '/settings/providers',
+    auth: { kind: 'org-session', organizationId: orgQuery },
     schema: {
       description: 'List configured providers for an organization',
       tags: ['Settings'],
@@ -113,17 +119,15 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
-      if (forbidden) return forbidden;
-      return settings.listProviders(req.query.organizationId);
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
-    }
+    error: { notFound: 'Organization not found', fallback: 503 },
+    handler: async (_req, { organizationId }) => settings.listProviders(organizationId),
   });
 
-  app.post('/settings/providers', {
+  register({
+    method: 'post',
+    path: '/settings/providers',
+    auth: { kind: 'org-session', organizationId: orgBody },
+    workspaceRoot: true,
     schema: {
       description: 'Upsert provider keys for an organization',
       tags: ['Settings'],
@@ -138,33 +142,27 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
-      if (forbidden) return forbidden;
-      return {
-        providers: settings.upsertProviders(
-          req.body.organizationId,
-          req.body.providerKeys,
-          req.body.providerAuthModes,
-          req.body.providerBaseUrls,
-        ),
-      };
-    } catch (err) {
-      const rootError = workspaceRootError(reply, err);
-      if (rootError) return rootError;
-      const message = errorMessage(err);
-      const code = message.startsWith('Organization not found')
-        ? 404
-        : message.startsWith('Unknown provider keys')
-          ? 400
-          : 503;
-      return apiError(reply, code, message);
-    }
+    error: {
+      workspaceRoot: true,
+      byPrefix: { 'Unknown provider keys': 400 },
+      notFound: 'Organization not found',
+      fallback: 503,
+    },
+    handler: async (req, { organizationId }) => ({
+      providers: settings.upsertProviders(
+        organizationId,
+        req.body.providerKeys,
+        req.body.providerAuthModes,
+        req.body.providerBaseUrls,
+      ),
+    }),
   });
 
-  app.delete('/settings/providers/:providerName', {
+  register({
+    method: 'delete',
+    path: '/settings/providers/:providerName',
+    auth: { kind: 'org-session', organizationId: orgQuery },
+    workspaceRoot: true,
     schema: {
       description: 'Delete a provider key for an organization',
       tags: ['Settings'],
@@ -180,20 +178,16 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.query.organizationId);
-      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
-      if (forbidden) return forbidden;
-      return {
-        providers: settings.deleteProvider(req.query.organizationId, req.params.providerName),
-      };
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503, workspaceRoot: true });
-    }
+    error: { notFound: 'Organization not found', fallback: 503, workspaceRoot: true },
+    handler: async (req, { organizationId }) => ({
+      providers: settings.deleteProvider(organizationId, req.params.providerName),
+    }),
   });
 
-  app.get('/settings/organization', {
+  register({
+    method: 'get',
+    path: '/settings/organization',
+    auth: { kind: 'org-session', organizationId: orgQuery },
     schema: {
       description: 'Get organization settings',
       tags: ['Settings'],
@@ -207,17 +201,15 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
-      if (forbidden) return forbidden;
-      return settings.getOrganizationSettings(req.query.organizationId);
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
-    }
+    error: { notFound: 'Organization not found', fallback: 503 },
+    handler: async (_req, { organizationId }) => settings.getOrganizationSettings(organizationId),
   });
 
-  app.patch('/settings/organization', {
+  register({
+    method: 'patch',
+    path: '/settings/organization',
+    auth: { kind: 'org-session', organizationId: orgBody },
+    workspaceRoot: true,
     schema: {
       description: 'Update organization settings',
       tags: ['Settings'],
@@ -231,18 +223,14 @@ export function registerSettingsRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.body.organizationId);
-      const forbidden = requireOrgSession(auth, req, reply, req.body.organizationId);
-      if (forbidden) return forbidden;
-      return settings.updateOrganizationSettings(req.body);
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
-    }
+    error: { notFound: 'Organization not found', workspaceRoot: true },
+    handler: async (req) => settings.updateOrganizationSettings(req.body),
   });
 
-  app.post('/settings/providers/:providerName/test', {
+  register({
+    method: 'post',
+    path: '/settings/providers/:providerName/test',
+    auth: { kind: 'org-session', organizationId: orgQuery },
     schema: {
       description: 'Verify provider credentials with a live connectivity check',
       tags: ['Settings'],
@@ -257,17 +245,15 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
-      if (forbidden) return forbidden;
-      return await settings.testProvider(req.query.organizationId, req.params.providerName);
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
-    }
+    error: { notFound: 'Organization not found', fallback: 503 },
+    handler: async (req, { organizationId }) =>
+      await settings.testProvider(organizationId, req.params.providerName),
   });
 
-  app.get('/settings/providers/:providerName/models', {
+  register({
+    method: 'get',
+    path: '/settings/providers/:providerName/models',
+    auth: { kind: 'org-session', organizationId: orgQuery },
     schema: {
       description: 'Discover models from a provider\'s /v1/models endpoint',
       tags: ['Settings'],
@@ -283,25 +269,24 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.query.organizationId);
-      if (forbidden) return forbidden;
-      const models = await settings.discoverModels(req.query.organizationId, req.params.providerName);
-      return { models };
-    } catch (err) {
-      const message = errorMessage(err);
-      if (message.startsWith('Unknown provider') || message.startsWith('No API key configured')) {
-        return apiError(reply, 404, message);
-      }
-      if (message.startsWith('Discovery failed')) {
-        return apiError(reply, 502, message);
-      }
-      return routeError(reply, err, { notFound: 'Organization not found', fallback: 503 });
-    }
+    error: {
+      byPrefix: {
+        'Unknown provider': 404,
+        'No API key configured': 404,
+        'Discovery failed': 502,
+      },
+      notFound: 'Organization not found',
+      fallback: 503,
+    },
+    handler: async (req, { organizationId }) => ({
+      models: await settings.discoverModels(organizationId, req.params.providerName),
+    }),
   });
 
-  app.get('/orgs', {
+  register({
+    method: 'get',
+    path: '/orgs',
+    auth: { kind: 'user', unauthorizedMessage: 'session required' },
     schema: {
       description: 'List organizations',
       tags: ['Settings'],
@@ -311,20 +296,18 @@ export function registerSettingsRoutes(
         503: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
+    error: { fallback: 503 },
+    handler: async (req) => {
       const sessionToken = readSessionToken(req);
-      const authState = auth.getAuthState(sessionToken);
-      if (!authState.authenticated) {
-        return apiError(reply, 401, 'session required');
-      }
       return { organizations: auth.listAccessibleOrganizations(sessionToken) };
-    } catch (err) {
-      return routeError(reply, err, { fallback: 503 });
-    }
+    },
   });
 
-  app.post('/orgs/:orgId/members', {
+  register({
+    method: 'post',
+    path: '/orgs/:orgId/members',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Add a member to an organization',
       tags: ['Settings'],
@@ -339,14 +322,10 @@ export function registerSettingsRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      const authState = auth.getAuthState(readSessionToken(req));
+    error: { notFound: 'Organization not found', workspaceRoot: true },
+    handler: async (req, { organizationId, authState }) => {
       const member = settings.addMember({
-        organizationId: req.params.orgId,
+        organizationId,
         name: req.body.name,
         kind: req.body.kind,
         roleName: req.body.roleName,
@@ -360,18 +339,20 @@ export function registerSettingsRoutes(
       if (member.kind === AGENT_KIND && authState.member) {
         ensureDirectMessageConversation(
           repo,
-          req.params.orgId,
+          organizationId,
           authState.member,
           member,
         );
       }
       return member;
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
-    }
+    },
   });
 
-  app.patch('/orgs/:orgId/members/:memberId', {
+  register({
+    method: 'patch',
+    path: '/orgs/:orgId/members/:memberId',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Update an agent member',
       tags: ['Settings'],
@@ -386,13 +367,10 @@ export function registerSettingsRoutes(
         409: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      return settings.updateMember({
-        organizationId: req.params.orgId,
+    error: { notFound: 'Member not found', workspaceRoot: true },
+    handler: async (req, { organizationId }) =>
+      settings.updateMember({
+        organizationId,
         memberId: req.params.memberId,
         name: req.body.name,
         roleName: req.body.roleName,
@@ -402,13 +380,14 @@ export function registerSettingsRoutes(
         shellApprovalMode: req.body.shellApprovalMode,
         personalityName: req.body.personalityName,
         role: req.body.role,
-      });
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
-    }
+      }),
   });
 
-  app.delete('/orgs/:orgId/members/:memberId', {
+  register({
+    method: 'delete',
+    path: '/orgs/:orgId/members/:memberId',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Delete/retire an agent member',
       tags: ['Settings'],
@@ -422,23 +401,22 @@ export function registerSettingsRoutes(
         409: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      settings.deleteMember(req.params.orgId, req.params.memberId);
+    error: {
+      byPrefix: { 'Only agents can be deleted': 403 },
+      notFound: 'Member not found',
+      workspaceRoot: true,
+    },
+    handler: async (req, { organizationId }) => {
+      settings.deleteMember(organizationId, req.params.memberId);
       return { success: true as const };
-    } catch (err) {
-      const message = errorMessage(err);
-      if (message === 'Only agents can be deleted') {
-        return apiError(reply, 403, message);
-      }
-      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
-    }
+    },
   });
 
-  app.post('/orgs/:orgId/channels', {
+  register({
+    method: 'post',
+    path: '/orgs/:orgId/channels',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Add a channel to an organization',
       tags: ['Settings'],
@@ -453,22 +431,20 @@ export function registerSettingsRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      return settings.addChannel({
-        organizationId: req.params.orgId,
+    error: { notFound: 'Organization not found', workspaceRoot: true },
+    handler: async (req, { organizationId }) =>
+      settings.addChannel({
+        organizationId,
         name: req.body.name.trim(),
         topic: req.body.topic,
-      });
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
-    }
+      }),
   });
 
-  app.patch('/orgs/:orgId/policies', {
+  register({
+    method: 'patch',
+    path: '/orgs/:orgId/policies',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Update organization policies',
       tags: ['Settings'],
@@ -483,23 +459,20 @@ export function registerSettingsRoutes(
         409: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      return settings.updatePolicies({
-        organizationId: req.params.orgId,
+    error: { notFound: 'Organization not found', workspaceRoot: true },
+    handler: async (req, { organizationId }) =>
+      settings.updatePolicies({
+        organizationId,
         requireApprovalForWrites: req.body.requireApprovalForWrites,
         requireApprovalForShell: req.body.requireApprovalForShell,
         shellApprovalMode: req.body.shellApprovalMode,
-      });
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
-    }
+      }),
   });
 
-  app.get('/orgs/:orgId/policies/rules', {
+  register({
+    method: 'get',
+    path: '/orgs/:orgId/policies/rules',
+    auth: { kind: 'org-session', organizationId: orgParams },
     schema: {
       description: 'List all permanent allow rules from the governance policy',
       tags: ['Settings'],
@@ -512,17 +485,17 @@ export function registerSettingsRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      return { rules: settings.listAllowRules(req.params.orgId) };
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found' });
-    }
+    error: { notFound: 'Organization not found' },
+    handler: async (_req, { organizationId }) => ({
+      rules: settings.listAllowRules(organizationId),
+    }),
   });
 
-  app.delete('/orgs/:orgId/policies/rules', {
+  register({
+    method: 'delete',
+    path: '/orgs/:orgId/policies/rules',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Revoke a permanent allow rule from the governance policy',
       tags: ['Settings'],
@@ -536,24 +509,23 @@ export function registerSettingsRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
+    error: { notFound: 'Organization not found', workspaceRoot: true },
+    handler: async (req, { organizationId }) => {
       settings.revokeAllowRule(
-        req.params.orgId,
+        organizationId,
         req.body.agentId,
         req.body.mcpId,
         req.body.toolName,
       );
       return { success: true as const };
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Organization not found', workspaceRoot: true });
-    }
+    },
   });
 
-  app.patch('/orgs/:orgId/members/:memberId/preferences', {
+  register({
+    method: 'patch',
+    path: '/orgs/:orgId/members/:memberId/preferences',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Update agent shell approval mode and model preferences',
       tags: ['Settings'],
@@ -567,24 +539,22 @@ export function registerSettingsRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      return settings.patchMemberPreferences({
-        organizationId: req.params.orgId,
+    error: { notFound: 'Member not found', workspaceRoot: true },
+    handler: async (req, { organizationId }) =>
+      settings.patchMemberPreferences({
+        organizationId,
         memberId: req.params.memberId,
         shellApprovalMode: req.body.shellApprovalMode,
         llm: req.body.llm,
         model: req.body.model,
-      });
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Member not found', workspaceRoot: true });
-    }
+      }),
   });
 
-  app.patch('/orgs/:orgId/channels/:channelId', {
+  register({
+    method: 'patch',
+    path: '/orgs/:orgId/channels/:channelId',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Update a channel',
       tags: ['Settings'],
@@ -599,24 +569,22 @@ export function registerSettingsRoutes(
         409: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      return settings.updateChannel({
-        organizationId: req.params.orgId,
+    error: { notFound: 'Channel not found', workspaceRoot: true },
+    handler: async (req, { organizationId }) =>
+      settings.updateChannel({
+        organizationId,
         channelId: req.params.channelId,
         name: req.body.name,
         topic: req.body.topic,
         memberIds: req.body.memberIds,
-      });
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Channel not found', workspaceRoot: true });
-    }
+      }),
   });
 
-  app.delete('/orgs/:orgId/channels/:channelId', {
+  register({
+    method: 'delete',
+    path: '/orgs/:orgId/channels/:channelId',
+    auth: { kind: 'org-session', organizationId: orgParams },
+    workspaceRoot: true,
     schema: {
       description: 'Delete a channel',
       tags: ['Settings'],
@@ -630,15 +598,10 @@ export function registerSettingsRoutes(
         409: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      settings.deleteChannel(req.params.orgId, req.params.channelId);
+    error: { notFound: 'Channel not found', workspaceRoot: true },
+    handler: async (req, { organizationId }) => {
+      settings.deleteChannel(organizationId, req.params.channelId);
       return { success: true as const };
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Channel not found', workspaceRoot: true });
-    }
+    },
   });
 }

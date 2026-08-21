@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@ujima/shared': resolve(__dirname, '../../packages/shared/src/index.ts'),
+      '@ujima/shared': resolve(__dirname, '../../packages/shared/src/browser.ts'),
     },
   },
   build: {

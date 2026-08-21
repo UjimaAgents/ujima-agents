@@ -63,4 +63,5 @@ const WORKSPACE_EVENTS = [
   SocketEventNames.runStarted,
   SocketEventNames.runUpdated,
   SocketEventNames.runCompleted,
+  SocketEventNames.workflowRunUpdated,
 ] satisfies readonly SocketEventName[];

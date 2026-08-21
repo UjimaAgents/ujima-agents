@@ -3,6 +3,7 @@ import { FieldShell, TextInput } from "@/components/ui/form-fields";
 import { defaultModelForProvider, getModelOptionsForProvider } from "@ujima/shared/browser";
 import { PROVIDER_OPTIONS, normalizeProviderKey } from "@/features/providers/catalog";
 import { useEffect, useMemo, useState } from "react";
+import { clientFetchJson } from "@/lib/client-api";
 
 export function ProviderModelFields({
   provider,
@@ -129,16 +130,12 @@ function useDiscoveredModels(orgId: string | undefined, provider: string) {
     queueMicrotask(() => {
       setState({ models: [], loading: true, error: null });
     });
-    fetch(
+    clientFetchJson<{ models?: { id: string }[] }>(
       `/api/settings/providers/${encodeURIComponent(normalized)}/models?organizationId=${encodeURIComponent(orgId)}`,
       { signal: controller.signal, cache: "no-store" },
+      "Unable to discover models.",
     )
-      .then(async (response) => {
-        if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as { message?: string } | null;
-          throw new Error(body?.message ?? `HTTP ${response.status}`);
-        }
-        const body = (await response.json()) as { models?: { id: string }[] };
+      .then((body) => {
         const ids = (body.models ?? []).map((m) => m.id).filter(Boolean);
         setState({ models: ids, loading: false, error: null });
       })

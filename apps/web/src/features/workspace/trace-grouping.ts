@@ -104,18 +104,9 @@ type AggregatedGroup = TraceStepData & {
   aggregatedOperations: AggregatedOperation[];
 };
 
-function groupStatusLabel(status: TraceStepData["status"]): string {
-  if (status === "failed") return "failed";
-  if (status === "running") return "running";
-  return "completed";
-}
-
 /**
- * Stable continuity key for a tool group. Two consecutive tool steps
- * belong in the same card iff they share this key. Prefer `taskId`
- * (first-class child-task boundary), then `runId` (agent run), then
- * `actorId` for tool events that lack both so we still avoid the
- * cross-actor fold.
+ * Each run gets one unified activity flow. Keep the run boundary so separate
+ * attempts remain distinct, but do not expose the run status as a header.
  */
 function getGroupKey(step: TraceStepData): string {
   return step.taskId ?? step.runId ?? step.actorId;
@@ -134,7 +125,7 @@ export function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
       if (!currentGroup) {
         currentGroup = {
           id: `aggregated-run-${step.id}`,
-          title: `${step.actorName} · running`,
+          title: step.actorName,
           detail: "",
           time: step.time,
           duration: step.duration,
@@ -149,35 +140,16 @@ export function groupTraceSteps(steps: TraceStepData[]): TraceStepData[] {
         grouped.push(currentGroup);
       }
       currentGroup.aggregatedOperations.push(toolStepToOperation(step));
-      currentGroup.status = currentGroup.aggregatedOperations.some((op) => op.status === "failed")
-        ? "failed"
-        : step.status === "running"
-          ? "running"
-          : "success";
-      currentGroup.title = `${currentGroup.actorName} · ${groupStatusLabel(currentGroup.status)}`;
+      currentGroup.status = currentGroup.aggregatedOperations.some((op) => op.status === "running")
+        ? "running"
+        : "success";
+      currentGroup.time = step.time;
       currentGroup.duration = step.duration;
       continue;
     }
 
     if (step.title.startsWith("Run ·")) {
-      if (step.status === "success") {
-        continue;
-      }
-      currentGroup = {
-        id: `aggregated-run-${step.id}`,
-        title: `${step.actorName} · ${step.status}`,
-        detail: "",
-        time: step.time,
-        duration: step.duration,
-        status: step.status,
-        actorId: step.actorId,
-        actorName: step.actorName,
-        ...(step.runId ? { runId: step.runId } : {}),
-        ...(step.taskId ? { taskId: step.taskId } : {}),
-        groupKey: getGroupKey(step),
-        aggregatedOperations: [],
-      };
-      grouped.push(currentGroup);
+      currentGroup = null;
       continue;
     }
 

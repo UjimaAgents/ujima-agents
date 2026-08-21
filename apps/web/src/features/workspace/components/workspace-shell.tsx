@@ -21,7 +21,7 @@ import { WorkspaceTabBar, type WorkspaceTabItem } from "./workspace-tab-bar";
 import { GlobalApprovalIndicator } from "./global-approval-indicator";
 import { WorkflowRunsIndicator } from "@/features/workflows/workflow-runs-indicator";
 import { WorkflowRunDrawer } from "@/features/workflows/workflow-run-drawer";
-import { useWorkflowApprovalsPoll } from "../use-workflow-approvals";
+import { useWorkflowApprovalsLive } from "../use-workflow-approvals";
 import { CommandPalette, type SearchResult } from "@/components/ui/command-palette";
 import { BootstrapResponseSchema, type BootstrapResponse } from "@ujima/api-schema";
 import { resolveSelectedConversationFromSearchParams } from "../conversation-routing";
@@ -35,6 +35,8 @@ import {
   readGoalModePreference,
   writeGoalModePreference,
 } from "../goal-mode";
+import { publishWorkspaceLiveEvent } from "../live-events";
+import { clientApiUrl, clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 import { useShallow } from "zustand/react/shallow";
 
@@ -77,7 +79,7 @@ export function WorkspaceShell(props: {
 }) {
   const { bootstrap, initialConversation } = props;
   const organizationId = bootstrap.organization?.id;
-  useWorkflowApprovalsPoll();
+  useWorkflowApprovalsLive();
   const workflowRunDrawerId = useWorkspaceStore((s) => s.workflowRunDrawerId);
   const closeWorkflowRunDrawer = useWorkspaceStore((s) => s.closeWorkflowRunDrawer);
   const router = useRouter();
@@ -97,6 +99,7 @@ export function WorkspaceShell(props: {
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const sidebarWidth = useWorkspaceStore((state) => state.sidebarWidth);
+  const showDetails = useWorkspaceStore((state) => state.showDetails);
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
   const members = useWorkspaceStore((state) => state.members);
@@ -104,6 +107,7 @@ export function WorkspaceShell(props: {
   const conversationUnreadCounts = useWorkspaceStore((state) => state.conversationUnreadCounts);
   const {
     setSidebarWidth,
+    setShowDetails,
     syncWorkspace,
     replaceConversationUnreadCounts,
     setSelectedConversation,
@@ -117,6 +121,7 @@ export function WorkspaceShell(props: {
   } = useWorkspaceStore(
     useShallow((state) => ({
       setSidebarWidth: state.setSidebarWidth,
+      setShowDetails: state.setShowDetails,
       syncWorkspace: state.syncWorkspace,
       replaceConversationUnreadCounts: state.replaceConversationUnreadCounts,
       setSelectedConversation: state.setSelectedConversation,
@@ -191,56 +196,58 @@ export function WorkspaceShell(props: {
     return openTabs[0]?.id ?? "view:tasks";
   }, [workspaceWorkflowsActive, workspaceTasksActive, activeConversation, openTabs]);
 
-  // History stack for < > navigation
-  const [tabHistory, setTabHistory] = useState<string[]>([activeTabId]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  // Native-history navigation counters for < > buttons (router.push/back/forward)
+  const [navPast, setNavPast] = useState(0);
+  const [navFuture, setNavFuture] = useState(0);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const pushHistory = useCallback((tabId: string) => {
-    setTabHistory((prev) => {
-      const next = prev.slice(0, historyIndex + 1);
-      if (next[next.length - 1] === tabId) return prev;
-      return [...next, tabId];
+  const recordNav = useCallback(() => {
+    setNavPast((p) => p + 1);
+    setNavFuture(0);
+  }, []);
+
+  // Persist the open-tab working set across reloads (per organization)
+  const tabsStorageKey = `workspaceTabs:v1:${bootstrap.organization?.id ?? "none"}`;
+  const tabsHydratedRef = useRef(false);
+  useEffect(() => {
+    let raf = 0;
+    // Restore after hydration commit (pre-paint) so server HTML and first
+    // client render stay identical — persisted tabs merge in right after.
+    raf = requestAnimationFrame(() => {
+      try {
+        const raw = window.localStorage.getItem(tabsStorageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as WorkspaceTabItem[];
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setOpenTabs((prev) => {
+              const merged = [...prev];
+              for (const tab of parsed) {
+                if (!merged.some((t) => t.id === tab.id)) merged.push(tab);
+              }
+              return merged;
+            });
+          }
+        }
+      } catch {
+        /* ignore malformed persisted state */
+      }
+      tabsHydratedRef.current = true;
     });
-    setHistoryIndex((prev) => prev + 1);
-  }, [historyIndex]);
-
-  const handleNavigateBack = useCallback(() => {
-    if (historyIndex > 0) {
-      const targetId = tabHistory[historyIndex - 1];
-      setHistoryIndex(historyIndex - 1);
-      const tab = openTabs.find((t) => t.id === targetId);
-      if (tab) {
-        if (tab.type === "workflows") {
-          handleOpenWorkflowsInternal(false);
-        } else if (tab.type === "tasks") {
-          handleOpenTasksInternal(false);
-        } else if (tab.conversation) {
-          handleSelectInternal(tab.conversation, false);
-        }
-      }
+    return () => cancelAnimationFrame(raf);
+  }, [tabsStorageKey]);
+  useEffect(() => {
+    if (!tabsHydratedRef.current) return;
+    try {
+      window.localStorage.setItem(tabsStorageKey, JSON.stringify(openTabs));
+    } catch {
+      /* ignore quota errors */
     }
-  }, [historyIndex, tabHistory, openTabs]);
+  }, [openTabs, tabsStorageKey]);
 
-  const handleNavigateForward = useCallback(() => {
-    if (historyIndex < tabHistory.length - 1) {
-      const targetId = tabHistory[historyIndex + 1];
-      setHistoryIndex(historyIndex + 1);
-      const tab = openTabs.find((t) => t.id === targetId);
-      if (tab) {
-        if (tab.type === "workflows") {
-          handleOpenWorkflowsInternal(false);
-        } else if (tab.type === "tasks") {
-          handleOpenTasksInternal(false);
-        } else if (tab.conversation) {
-          handleSelectInternal(tab.conversation, false);
-        }
-      }
-    }
-  }, [historyIndex, tabHistory, openTabs]);
-
-  const handleSelectInternal = useCallback(
-    (conversation: SelectedConversation, recordHistory = true) => {
+  const handleSelect = useCallback(
+    (conversation: SelectedConversation) => {
       setSelectedConversation(conversation);
+      setMobileSidebarOpen(false);
       const tabId = `${conversation.type}:${conversation.id}`;
 
       setOpenTabs((prev) => {
@@ -259,7 +266,7 @@ export function WorkspaceShell(props: {
         ];
       });
 
-      if (recordHistory) pushHistory(tabId);
+      recordNav();
 
       const params = new URLSearchParams(searchParams.toString());
       params.delete("view");
@@ -272,56 +279,56 @@ export function WorkspaceShell(props: {
       } else {
         params.set("agentId", conversation.id);
       }
-      router.replace(`?${params.toString()}`, { scroll: false });
+      router.push(`?${params.toString()}`, { scroll: false });
     },
-    [pushHistory, router, searchParams, setSelectedConversation]
+    [recordNav, router, searchParams, setSelectedConversation]
   );
 
-  const handleOpenTasksInternal = useCallback(
-    (recordHistory = true) => {
-      const tabId = "view:tasks";
-      setOpenTabs((prev) => {
-        if (prev.some((t) => t.id === tabId)) return prev;
-        return [...prev, { id: tabId, type: "tasks", title: "Tasks", targetId: "tasks" }];
-      });
+  const handleOpenTasks = useCallback(() => {
+    const tabId = "view:tasks";
+    setOpenTabs((prev) => {
+      if (prev.some((t) => t.id === tabId)) return prev;
+      return [...prev, { id: tabId, type: "tasks", title: "Tasks", targetId: "tasks" }];
+    });
 
-      if (recordHistory) pushHistory(tabId);
+    recordNav();
 
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("view", "tasks");
-      params.delete("channelId");
-      params.delete("agentId");
-      router.replace(`?${params.toString()}`, { scroll: false });
-    },
-    [pushHistory, router, searchParams]
-  );
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", "tasks");
+    params.delete("channelId");
+    params.delete("agentId");
+    router.push(`?${params.toString()}`, { scroll: false });
+  }, [recordNav, router, searchParams]);
 
-  const handleOpenWorkflowsInternal = useCallback(
-    (recordHistory = true) => {
-      const tabId = "view:workflows";
-      setOpenTabs((prev) => {
-        if (prev.some((t) => t.id === tabId)) return prev;
-        return [...prev, { id: tabId, type: "workflows", title: "Workflows", targetId: "workflows" }];
-      });
+  const handleOpenWorkflows = useCallback(() => {
+    const tabId = "view:workflows";
+    setOpenTabs((prev) => {
+      if (prev.some((t) => t.id === tabId)) return prev;
+      return [...prev, { id: tabId, type: "workflows", title: "Workflows", targetId: "workflows" }];
+    });
 
-      if (recordHistory) pushHistory(tabId);
+    recordNav();
 
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("view", "workflows");
-      params.delete("channelId");
-      params.delete("agentId");
-      router.replace(`?${params.toString()}`, { scroll: false });
-    },
-    [pushHistory, router, searchParams]
-  );
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", "workflows");
+    params.delete("channelId");
+    params.delete("agentId");
+    router.push(`?${params.toString()}`, { scroll: false });
+  }, [recordNav, router, searchParams]);
 
-  const handleSelect = useCallback(
-    (conversation: SelectedConversation) => handleSelectInternal(conversation, true),
-    [handleSelectInternal]
-  );
+  const handleNavigateBack = useCallback(() => {
+    if (navPast <= 0) return;
+    setNavPast((p) => p - 1);
+    setNavFuture((f) => f + 1);
+    router.back();
+  }, [navPast, router]);
 
-  const handleOpenTasks = useCallback(() => handleOpenTasksInternal(true), [handleOpenTasksInternal]);
-  const handleOpenWorkflows = useCallback(() => handleOpenWorkflowsInternal(true), [handleOpenWorkflowsInternal]);
+  const handleNavigateForward = useCallback(() => {
+    if (navFuture <= 0) return;
+    setNavFuture((f) => f - 1);
+    setNavPast((p) => p + 1);
+    router.forward();
+  }, [navFuture, router]);
 
   const handleSelectTabItem = useCallback(
     (tab: WorkspaceTabItem) => {
@@ -388,19 +395,17 @@ export function WorkspaceShell(props: {
       setOrgShellApprovalMode(shellApprovalMode);
       if (!organizationId) return;
 
-      const response = await fetch(`/api/orgs/${encodeURIComponent(organizationId)}/policies`, {
+      await clientFetchJson<unknown>(`/api/orgs/${encodeURIComponent(organizationId)}/policies`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           organizationId,
           shellApprovalMode,
         }),
-      });
-      if (!response.ok) {
+      }, "Unable to update policies.").catch((error) => {
         setOrgShellApprovalMode(previous);
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? "Unable to update policies.");
-      }
+        throw error;
+      });
     },
     [organizationId, orgShellApprovalMode],
   );
@@ -410,16 +415,11 @@ export function WorkspaceShell(props: {
       if (!organizationId) {
         throw new Error("Missing organization context for channel creation.");
       }
-      const response = await fetch(`/api/orgs/${organizationId}/channels`, {
+      const channel = await clientFetchJson<WorkspaceChannel>(`/api/orgs/${organizationId}/channels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => null);
-        throw new Error(err?.message ?? "Unable to create channel.");
-      }
-      const channel = (await response.json()) as WorkspaceChannel;
+      }, "Unable to create channel.");
       appendChannel(channel);
       const created = { type: "channel" as const, id: channel.id, name: channel.name };
       handleSelect(created);
@@ -430,12 +430,10 @@ export function WorkspaceShell(props: {
 
   const refreshTeamSettings = useCallback(async () => {
     if (!organizationId) return;
-    const response = await fetch(
+    const settings = await clientFetchJson<WorkspaceTeamSettings>(
       `/api/settings/team?organizationId=${encodeURIComponent(organizationId)}`,
     ).catch(() => null);
-    if (response?.ok) {
-      setTeamSettings((await response.json()) as WorkspaceTeamSettings);
-    }
+    if (settings) setTeamSettings(settings);
   }, [organizationId]);
 
   const handleCreateAgent = useCallback(
@@ -450,19 +448,14 @@ export function WorkspaceShell(props: {
       if (!organizationId) {
         throw new Error("Missing organization context for agent creation.");
       }
-      const response = await fetch(`/api/orgs/${organizationId}/members`, {
+      const member = await clientFetchJson<WorkspaceMember>(`/api/orgs/${organizationId}/members`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...input,
           kind: "agent",
         }),
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => null);
-        throw new Error(err?.message ?? "Unable to create agent.");
-      }
-      const member = (await response.json()) as WorkspaceMember;
+      }, "Unable to create agent.");
       appendMember(member);
       await refreshTeamSettings();
       return { type: "agent" as const, id: member.id, name: member.name };
@@ -486,7 +479,7 @@ export function WorkspaceShell(props: {
       if (!organizationId) {
         throw new Error("Missing organization context for agent updates.");
       }
-      const response = await fetch(
+      const member = await clientFetchJson<WorkspaceMember>(
         `/api/orgs/${organizationId}/members/${input.memberId}`,
         {
           method: "PATCH",
@@ -501,12 +494,8 @@ export function WorkspaceShell(props: {
             role: input.role,
           }),
         },
+        "Unable to update agent.",
       );
-      if (!response.ok) {
-        const err = await response.json().catch(() => null);
-        throw new Error(err?.message ?? "Unable to update agent.");
-      }
-      const member = (await response.json()) as WorkspaceMember;
       appendMember(member);
       await refreshTeamSettings();
       return member;
@@ -572,7 +561,7 @@ export function WorkspaceShell(props: {
     const connect = () => {
       if (disposed) return;
       source = new EventSource(
-        `/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`,
+        clientApiUrl(`/api/notifications/stream?organizationId=${encodeURIComponent(organizationId)}`),
       );
       source.onopen = () => {
         console.info("[notifications] stream connected");
@@ -597,9 +586,8 @@ export function WorkspaceShell(props: {
         if (envelope.type === "ready") {
           if (seenReady) {
             void (async () => {
-              const response = await fetch("/api/bootstrap");
-              const body = await response.json().catch(() => null);
-              const parsed = response.ok ? BootstrapResponseSchema.safeParse(body) : null;
+              const body = await clientFetchJson<unknown>("/api/bootstrap").catch(() => null);
+              const parsed = BootstrapResponseSchema.safeParse(body);
               if (parsed?.success) {
                 applyBootstrap(parsed.data);
               }
@@ -614,6 +602,7 @@ export function WorkspaceShell(props: {
           setNotificationError(envelope.message || "Live notifications are unavailable.");
           return;
         }
+        publishWorkspaceLiveEvent(envelope.event, envelope.payload);
         if (
           envelope.event !== SocketEventNames.approvalRequested &&
           !isNotificationMessageEvent(envelope.event) &&
@@ -721,10 +710,14 @@ export function WorkspaceShell(props: {
   }, [channels, members, handleSelect]);
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="relative flex h-full min-h-0">
       <div
-        className="flex h-full shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950"
-        style={{ width: `${sidebarWidth}%` }}
+        className={`shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 ${
+          mobileSidebarOpen
+            ? "absolute inset-y-0 left-0 z-40 flex w-[85vw] max-w-xs shadow-2xl"
+            : "hidden"
+        } md:relative md:z-auto md:flex md:h-full md:max-w-none md:shadow-none md:w-[var(--sidebar-w)]`}
+        style={{ "--sidebar-w": `${sidebarWidth}%` } as React.CSSProperties}
       >
         <WorkspaceSidebar
           bootstrap={bootstrap}
@@ -748,6 +741,13 @@ export function WorkspaceShell(props: {
           onAgentEditorHandled={() => setAgentEditorTargetId(null)}
         />
       </div>
+      {mobileSidebarOpen ? (
+        <div
+          className="absolute inset-0 z-30 bg-zinc-950/40 backdrop-blur-sm md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      ) : null}
       <DragHandle onResize={setSidebarWidth} />
       <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#09090b]">
         {/* Notion/Ramp HQ Top Workspace Tab Bar */}
@@ -759,8 +759,15 @@ export function WorkspaceShell(props: {
           onNewTab={() => setSearchPaletteOpen(true)}
           onNavigateBack={handleNavigateBack}
           onNavigateForward={handleNavigateForward}
-          canNavigateBack={historyIndex > 0}
-          canNavigateForward={historyIndex < tabHistory.length - 1}
+          canNavigateBack={navPast > 0}
+          canNavigateForward={navFuture > 0}
+          showDetails={showDetails}
+          onToggleDetails={
+            activeConversation
+              ? () => setShowDetails(!showDetails, { userIntent: true })
+              : undefined
+          }
+          onToggleSidebar={() => setMobileSidebarOpen(true)}
         />
 
         {notificationError ? (
@@ -780,7 +787,7 @@ export function WorkspaceShell(props: {
               </div>
             </div>
           ) : workspaceTasksActive ? (
-            <WorkspaceTasksView key="workspace-goals" members={members} />
+            <WorkspaceTasksView key="workspace-goals" members={members} selfMemberId={bootstrap.auth.member?.id} />
           ) : activeConversation ? (
             <ChannelView
               key={`${activeConversation.type}:${activeConversation.id}`}
@@ -901,7 +908,7 @@ export function DragHandle({
 
   return (
     <div
-      className="relative w-1 shrink-0 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-violet-500/20 group"
+      className="relative hidden w-1 shrink-0 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-violet-500/20 group md:block"
       data-side={side}
       onPointerDown={onPointerDown}
     >
@@ -949,7 +956,7 @@ function getConversationThreadId(conversation: SelectedConversation, currentMemb
 }
 
 async function markConversationRead(organizationId: string, threadId: string): Promise<void> {
-  await fetch(
+  await clientFetchVoid(
     `/api/conversations/${encodeURIComponent(threadId)}/read?organizationId=${encodeURIComponent(organizationId)}`,
     { method: "POST" },
   ).catch(() => undefined);

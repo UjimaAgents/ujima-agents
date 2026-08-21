@@ -1,10 +1,15 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService, AuthState, ConversationService, GoalSystemService } from '@ujima/orchestrator';
 import { publishGoalTaskUpdatedCard } from '@ujima/orchestrator';
 import { GoalTaskStatusSchema, type Goal, type InteractiveQuestion } from '@ujima/shared';
 import { z } from 'zod';
-import { readSessionToken } from '../session-token.js';
+import { httpError } from './route-errors.js';
+import {
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 interface GoalRouteDeps {
   repo: Repository;
@@ -28,32 +33,6 @@ const StatusBodySchema = z.object({
   handoverSummary: z.string().min(1).optional(),
 });
 const AnswerBodySchema = z.object({ selectedOption: z.string().min(1) });
-
-function sendRouteError(reply: FastifyReply, error: unknown): FastifyReply {
-  const message = error instanceof Error ? error.message : String(error);
-  const status = /forbidden/i.test(message)
-    ? 403
-    : /not found/i.test(message)
-      ? 404
-      : 400;
-  return reply.status(status).send({
-    code: status === 403 ? 'ERR_FORBIDDEN' : status === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST',
-    message,
-  });
-}
-
-function requireMember(
-  deps: GoalRouteDeps,
-  req: FastifyRequest,
-  reply: FastifyReply,
-): AuthedMember | null {
-  const authState = deps.auth.getAuthState(readSessionToken(req));
-  if (!authState.user || !authState.member) {
-    reply.status(401).send({ code: 'ERR_UNAUTHORIZED', message: 'Unauthorized' });
-    return null;
-  }
-  return { ...authState, user: authState.user, member: authState.member };
-}
 
 function questionRunIsLive(deps: GoalRouteDeps, organizationId: string, runId: string | undefined): boolean {
   if (!runId) return true;
@@ -91,7 +70,12 @@ function requireThreadAccess(
     deps.conversations.requireThreadAccess(organizationId, threadId, memberId, access);
     return true;
   } catch (error) {
-    sendRouteError(reply, error);
+    const message = error instanceof Error ? error.message : String(error);
+    const status = /forbidden/i.test(message) ? 403 : /not found/i.test(message) ? 404 : 400;
+    reply.status(status).send({
+      code: status === 403 ? 'ERR_FORBIDDEN' : status === 404 ? 'ERR_NOT_FOUND' : 'ERR_BAD_REQUEST',
+      message,
+    });
     return false;
   }
 }
@@ -151,90 +135,112 @@ function listVisiblePendingQuestions(
 }
 
 export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): void {
-  api.get('/questions', async (req: FastifyRequest<{ Querystring: { runId?: string; threadId?: string } }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    const { runId, threadId } = req.query;
-    if (!runId && !threadId) {
+  const app = api.withTypeProvider<ZodTypeProvider>();
+
+  const register = (spec: RouteSpec) => registerRoute(app, spec, deps);
+
+  // sendRouteError semantics: /forbidden/i → 403, /not found/i → 404, else 400.
+  const goalError = { forbidden: true, notFound: /not found/i, fallback: 400 };
+
+  register({
+    method: 'get',
+    path: '/questions',
+    auth: { kind: 'member' },
+    handler: async (req, { authState, reply }) => {
+      const auth = authState as AuthedMember;
+      const { runId, threadId } = req.query;
+      if (!runId && !threadId) {
+        return reply.status(400).send({ code: 'ERR_BAD_REQUEST', message: 'runId or threadId is required' });
+      }
+      if (threadId) {
+        if (!requireThreadAccess(deps, reply, auth.user.organizationId, threadId, auth.member.id, 'read')) return;
+        const thread = deps.repo.getThread(auth.user.organizationId, threadId);
+        const channelId = thread?.channelId ?? threadId;
+        return {
+          questions: listVisiblePendingQuestions(deps, auth.user.organizationId, channelId, auth.member.id),
+        };
+      }
+      if (runId) {
+        const run = deps.repo.getRun(auth.user.organizationId, runId);
+        if (!run || !questionRunIsLive(deps, auth.user.organizationId, runId)) {
+          return { questions: [] };
+        }
+        if (
+          run.threadId &&
+          !requireThreadAccess(deps, reply, auth.user.organizationId, run.threadId, auth.member.id, 'read')
+        ) {
+          return;
+        }
+        return {
+          questions: deps.repo
+            .listInteractiveQuestionsByRunId(auth.user.organizationId, runId)
+            .filter((question) => question.status === 'pending')
+            .filter((question) => canAccessChannel(deps, auth.user.organizationId, question.channelId, auth.member.id)),
+        };
+      }
       return reply.status(400).send({ code: 'ERR_BAD_REQUEST', message: 'runId or threadId is required' });
-    }
-    if (threadId) {
-      if (!requireThreadAccess(deps, reply, auth.user.organizationId, threadId, auth.member.id, 'read')) return;
-      const thread = deps.repo.getThread(auth.user.organizationId, threadId);
-      const channelId = thread?.channelId ?? threadId;
-      return reply.status(200).send({
-        questions: listVisiblePendingQuestions(deps, auth.user.organizationId, channelId, auth.member.id),
-      });
-    }
-    if (runId) {
-      const run = deps.repo.getRun(auth.user.organizationId, runId);
-      if (!run || !questionRunIsLive(deps, auth.user.organizationId, runId)) {
-        return reply.status(200).send({ questions: [] });
+    },
+  });
+
+  register({
+    method: 'get',
+    path: '/goals',
+    auth: { kind: 'member' },
+    handler: async (req, { authState, reply }) => {
+      const auth = authState as AuthedMember;
+      if (req.query.channelId) {
+        if (!requireThreadAccess(deps, reply, auth.user.organizationId, req.query.channelId, auth.member.id, 'read')) return;
+        return {
+          goals: deps.repo.listGoalsByChannel(auth.user.organizationId, req.query.channelId),
+        };
       }
-      if (
-        run.threadId &&
-        !requireThreadAccess(deps, reply, auth.user.organizationId, run.threadId, auth.member.id, 'read')
-      ) {
-        return;
-      }
-      return reply.status(200).send({
-        questions: deps.repo
-          .listInteractiveQuestionsByRunId(auth.user.organizationId, runId)
-          .filter((question) => question.status === 'pending')
-          .filter((question) => canAccessChannel(deps, auth.user.organizationId, question.channelId, auth.member.id)),
-      });
-    }
-    return reply.status(400).send({ code: 'ERR_BAD_REQUEST', message: 'runId or threadId is required' });
+      return {
+        goals: deps.repo
+          .listGoals(auth.user.organizationId)
+          .filter((goal) => canAccessChannel(deps, auth.user.organizationId, goal.channelId, auth.member.id)),
+      };
+    },
   });
 
-  api.get('/goals', async (req: FastifyRequest<{ Querystring: { channelId?: string } }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    if (req.query.channelId) {
-      if (!requireThreadAccess(deps, reply, auth.user.organizationId, req.query.channelId, auth.member.id, 'read')) return;
-      return reply.status(200).send({
-        goals: deps.repo.listGoalsByChannel(auth.user.organizationId, req.query.channelId),
-      });
-    }
-    return reply.status(200).send({
-      goals: deps.repo
-        .listGoals(auth.user.organizationId)
-        .filter((goal) => canAccessChannel(deps, auth.user.organizationId, goal.channelId, auth.member.id)),
-    });
+  register({
+    method: 'get',
+    path: '/goals/:id',
+    auth: { kind: 'member' },
+    handler: async (req, { authState, reply }) => {
+      const auth = authState as AuthedMember;
+      const goal = requireGoalAccess(deps, reply, auth.user.organizationId, req.params.id, auth.member.id);
+      if (!goal) return;
+      return {
+        goal,
+        tasks: deps.repo.listGoalTasks(auth.user.organizationId, goal.id),
+        questions: listVisiblePendingQuestions(deps, auth.user.organizationId, goal.channelId, auth.member.id)
+          .filter((q) => q.goalId === goal.id),
+      };
+    },
   });
 
-  api.get('/goals/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    const goal = requireGoalAccess(deps, reply, auth.user.organizationId, req.params.id, auth.member.id);
-    if (!goal) return;
-    return reply.status(200).send({
-      goal,
-      tasks: deps.repo.listGoalTasks(auth.user.organizationId, goal.id),
-      questions: listVisiblePendingQuestions(deps, auth.user.organizationId, goal.channelId, auth.member.id)
-        .filter((q) => q.goalId === goal.id),
-    });
-  });
-
-  api.post('/goals/:id/implement', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    try {
+  register({
+    method: 'post',
+    path: '/goals/:id/implement',
+    auth: { kind: 'member' },
+    error: goalError,
+    handler: async (req, { authState, reply }) => {
+      const auth = authState as AuthedMember;
       if (!requireGoalAccess(deps, reply, auth.user.organizationId, req.params.id, auth.member.id)) return;
-      return reply.status(200).send(deps.goals.implement(auth.user.organizationId, req.params.id));
-    } catch (error) {
-      return sendRouteError(reply, error);
-    }
+      return deps.goals.implement(auth.user.organizationId, req.params.id);
+    },
   });
 
-  api.patch('/goal-tasks/:id', {
+  register({
+    method: 'patch',
+    path: '/goal-tasks/:id',
+    auth: { kind: 'member' },
     schema: { body: UpdateTaskBodySchema },
-  }, async (req: FastifyRequest<{ Params: { id: string }; Body: z.infer<typeof UpdateTaskBodySchema> }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    try {
+    error: goalError,
+    handler: async (req, { authState }) => {
+      const auth = authState as AuthedMember;
       const existing = deps.repo.getGoalTask(auth.user.organizationId, req.params.id);
-      if (!existing) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
+      if (!existing) throw httpError(404, 'Task not found');
       const task = deps.goals.updateTask({
         organizationId: auth.user.organizationId,
         taskId: req.params.id,
@@ -242,21 +248,21 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
         assigneeId: req.body.assigneeId,
         callerMemberId: auth.member.id,
       });
-      if (!task) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
-      return reply.status(200).send({ task });
-    } catch (error) {
-      return sendRouteError(reply, error);
-    }
+      if (!task) throw httpError(404, 'Task not found');
+      return { task };
+    },
   });
 
-  api.patch('/goal-tasks/:id/status', {
+  register({
+    method: 'patch',
+    path: '/goal-tasks/:id/status',
+    auth: { kind: 'member' },
     schema: { body: StatusBodySchema },
-  }, async (req: FastifyRequest<{ Params: { id: string }; Body: z.infer<typeof StatusBodySchema> }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    try {
+    error: goalError,
+    handler: async (req, { authState, reply }) => {
+      const auth = authState as AuthedMember;
       const existing = deps.repo.getGoalTask(auth.user.organizationId, req.params.id);
-      if (!existing) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
+      if (!existing) throw httpError(404, 'Task not found');
       const goal = requireGoalAccess(deps, reply, auth.user.organizationId, existing.goalId, auth.member.id);
       if (!goal) return;
       const task = deps.goals.updateTask({
@@ -266,7 +272,7 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
         handoverSummary: req.body.handoverSummary,
         callerMemberId: auth.member.id,
       });
-      if (!task) return reply.status(404).send({ code: 'ERR_NOT_FOUND', message: 'Task not found' });
+      if (!task) throw httpError(404, 'Task not found');
       if (existing.status !== task.status) {
         publishGoalTaskUpdatedCard({
           conversations: deps.conversations,
@@ -277,37 +283,36 @@ export function registerGoalRoutes(api: FastifyInstance, deps: GoalRouteDeps): v
           actorMemberId: auth.member.id,
         });
       }
-      return reply.status(200).send({ task });
-    } catch (error) {
-      return sendRouteError(reply, error);
-    }
+      return { task };
+    },
   });
 
-  api.post('/questions/:id/answer', {
+  register({
+    method: 'post',
+    path: '/questions/:id/answer',
+    auth: { kind: 'member' },
     schema: { body: AnswerBodySchema },
-  }, async (req: FastifyRequest<{ Params: { id: string }; Body: z.infer<typeof AnswerBodySchema> }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    try {
+    error: goalError,
+    handler: async (req, { authState, reply }) => {
+      const auth = authState as AuthedMember;
       if (!requireQuestionAccess(deps, reply, auth.user.organizationId, req.params.id, auth.member.id)) return;
-      return reply.status(200).send({
+      return {
         question: await deps.goals.answer(auth.user.organizationId, req.params.id, req.body.selectedOption),
-      });
-    } catch (error) {
-      return sendRouteError(reply, error);
-    }
+      };
+    },
   });
 
-  api.post('/questions/:id/supersede', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
-    const auth = requireMember(deps, req, reply);
-    if (!auth) return;
-    try {
+  register({
+    method: 'post',
+    path: '/questions/:id/supersede',
+    auth: { kind: 'member' },
+    error: goalError,
+    handler: async (req, { authState, reply }) => {
+      const auth = authState as AuthedMember;
       if (!requireQuestionAccess(deps, reply, auth.user.organizationId, req.params.id, auth.member.id)) return;
-      return reply.status(200).send({
+      return {
         question: deps.goals.supersede(auth.user.organizationId, req.params.id),
-      });
-    } catch (error) {
-      return sendRouteError(reply, error);
-    }
+      };
+    },
   });
 }

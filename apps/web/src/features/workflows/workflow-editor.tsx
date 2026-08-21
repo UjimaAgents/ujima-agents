@@ -82,8 +82,20 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   // Shared (org-wide) definitions open locked so they aren't edited by accident.
   const [readOnly, setReadOnly] = useState(false);
 
-  // Unsaved changes dirty state tracking
-  const [initialSnapshot, setInitialSnapshot] = useState<string>("");
+  // Unsaved changes dirty state tracking. For a brand-new workflow the
+  // pristine baseline is captured once at mount; afterwards only "save"
+  // and "load existing" re-baseline it.
+  const [initialSnapshot, setInitialSnapshot] = useState<string>(() =>
+    isNew
+      ? JSON.stringify({
+          name: "",
+          description: "",
+          channelId: searchParams.get("channelId"),
+          nodes: initialFlow.flowNodes,
+          edges: initialFlow.flowEdges,
+        })
+      : "",
+  );
   const [confirmBackOpen, setConfirmBackOpen] = useState(false);
 
   const currentSnapshot = useMemo(
@@ -105,13 +117,6 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       cancelled = true;
     };
   }, []);
-
-  // Set initial snapshot for new workflow
-  useEffect(() => {
-    if (isNew) {
-      setInitialSnapshot(JSON.stringify({ name: "", description: "", channelId, nodes: initialFlow.flowNodes, edges: initialFlow.flowEdges }));
-    }
-  }, [isNew, channelId, initialFlow]);
 
   // Auto-hide the "saved" confirmation after a few seconds.
   useEffect(() => {

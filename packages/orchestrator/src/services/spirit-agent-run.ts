@@ -12,11 +12,11 @@ import {
 } from './spirit-mcp-helpers.js';
 import {
   SocketEventNames,
-  SpiritSchema,
   channelRoom,
   orgRoom,
   type Message,
   type ReasoningEffort,
+  type RunState,
   type Spirit,
   type SpiritRole,
   type WakeReason,
@@ -25,6 +25,7 @@ import { type AgentTeamHandle, buildAgentSystemPrompt, normalizeProviderKey } fr
 import { resolveVisiblePromptChannels } from '../utils/visible-prompt-channels.js';
 import { runAgentWithRetry, type AgentLoopChunk, type AgentLoopStep, type HumanPause } from './agent-loop.js';
 import { requireTeam } from '../utils/require-team.js';
+import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import {
   resolveSpiritModel,
   makeProviderModelsInUseLookup,
@@ -34,35 +35,89 @@ import {
   listEffectiveAgentToolIds,
 } from '../tools/index.js';
 import type { ApiRepository } from './repository-reader.js';
-import { findToolApprovalRequiredError, findToolInputRequiredError } from './tool-loop-result.js';
-import { errorMessage } from '../utils/error-message.js';
 import {
   createMessageCursor,
   loadChannelInterruptModelMessages,
 } from '../utils/interrupt-loader.js';
 import { wrapToolCallsAsCards } from '../utils/step-tool-calls.js';
+import { buildAgentStepMessages, prepareAgentStepPublication } from './agent-step-publish.js';
 import { buildAgentMessage } from './message-factory.js';
-import { selectPromptContextMessages } from '../utils/prompt-context.js';
 import { collectCursorPages } from '../utils/cursor-pages.js';
-import { RunTurnPublisher } from './run-turn-publisher.js';
-import { normalizeTokenUsage } from './token-usage.js';
-import { pendingApprovalRunSummary } from './approval-summary.js';
-import { findTerminatingTool, findTerminatingToolFromRunSteps } from './run-reply-guard.js';
-import { prepareAgentStepPublication } from './agent-step-publish.js';
+import type { RunTurnPublisher } from './run-turn-publisher.js';
 import type {
   RunSpiritInput,
   RunSpiritOutcome,
 } from './spirit-types.js';
 import { SpiritServiceBase } from './spirit-service-base.js';
 import type { AgentLoopLogger } from '../debug/agent-loop-logger.js';
-import { SpiritRunState } from './spirit-run-state.js';
+import type { SpiritRunState } from './spirit-run-state.js';
 import { buildRunContext } from './agent-run-context.js';
 import { ToolPaletteBuilder } from './tool-palette-builder.js';
 import { RunStatePersister } from './run-state-persister.js';
+import {
+  AgentTurn,
+  type AgentTurnLoopInput,
+  type DirectRunReplyInput,
+} from './agent-turn.js';
 
 export class SpiritServiceAgentRun extends SpiritServiceBase {
   private _paletteBuilder: ToolPaletteBuilder | undefined;
   private _runStatePersister: RunStatePersister | undefined;
+  private readonly agentTurn: AgentTurn;
+
+  constructor(...args: ConstructorParameters<typeof SpiritServiceBase>) {
+    super(...args);
+    this.agentTurn = new AgentTurn({
+      repo: this.repo,
+      realtime: this.realtime,
+      conversations: this.conversations,
+      resolveDirectRunContext: (organizationId, agentId) => ({
+        team: requireTeam(this.teamStore, organizationId),
+        member: this.repo.getMember(organizationId, agentId),
+      }),
+      applyDashboardTeamOverrides: (organizationId) =>
+        applyDashboardTeamOverrides(this.repo, organizationId, this.teamStore),
+      generateRunReply: (input: DirectRunReplyInput) => this.generateRunReply(input),
+      detectRunPauseForHuman: this.detectRunPauseForHuman.bind(this),
+      emitRunChunk: this.emitRunChunk.bind(this),
+      emitRunTokens: this.emitRunTokens.bind(this),
+      runKey: this.runKey.bind(this),
+      registerAbortController: (key, controller) => this.runAbortControllers.set(key, controller),
+      unregisterAbortController: (key) => this.runAbortControllers.delete(key),
+      saveRunAndEmit: this.saveRunAndEmit.bind(this),
+      consumeDeferredApprovalResume: this.consumeDeferredApprovalResume.bind(this),
+      executePendingApprovedRunTools: this.executePendingApprovedRunTools.bind(this),
+      resolveTerminatingTool: this.resolveTerminatingTool.bind(this),
+      getRooms: this.getRooms.bind(this),
+      invokeRunTerminalHook: this.invokeRunTerminalHook.bind(this),
+      completeRun: this.completeRun.bind(this),
+      completeSilentRun: this.completeSilentRun.bind(this),
+      persistSilentTrace: this.persistSilentTrace.bind(this),
+      waitForApproval: this.waitForApproval.bind(this),
+      waitForInput: this.waitForInput.bind(this),
+      failRun: this.failRun.bind(this),
+      modelResolver: this.modelResolver,
+      maxIterationsPerRun: this.maxIterationsPerRun,
+      resolveMemberAgentRole: this.resolveMemberAgentRole.bind(this),
+      resolveToolAllowlist: this.resolveToolAllowlist.bind(this),
+      buildWakeToolPalette: this.buildWakeToolPalette.bind(this),
+      resolveSystemPromptSuffix: this.resolveSystemPromptSuffix.bind(this),
+      spawn: this.spawn.bind(this),
+      executeAgentLoop: (input: AgentTurnLoopInput) => this.executeAgentLoop(input),
+      saveRunningSpirit: (spirit) => {
+        this.repo.saveSpirit(spirit);
+        this.registry.register(spirit);
+        return spirit;
+      },
+      saveTerminalSpirit: this.saveTerminalSpirit.bind(this),
+      saveWaitingSpirit: this.saveWaitingSpirit.bind(this),
+      emitSpirit: this.emit.bind(this),
+      publishAgentMessage: this.publishAgentMessage.bind(this),
+      publishStepBubble: this.publishStepBubble.bind(this),
+      maybeFinalizeTaskSession: this.maybeFinalizeTaskSession.bind(this),
+      writeRunErrorStep: this.writeRunErrorStep.bind(this),
+    });
+  }
 
   private get paletteBuilder(): ToolPaletteBuilder {
     if (!this._paletteBuilder) {
@@ -117,6 +172,111 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
 
   private saveWaitingSpirit(runState: SpiritRunState, running: Spirit): Spirit {
     return this.runStatePersister.saveWaiting(runState, running);
+  }
+
+  protected executeDirectTurn(
+    run: RunState,
+    eventName: typeof SocketEventNames.runStarted | typeof SocketEventNames.runUpdated = SocketEventNames.runUpdated,
+  ): Promise<RunState> {
+    return this.agentTurn.executeDirectTurn(run, eventName);
+  }
+
+  protected completeRun(
+    run: RunState,
+    summary: string,
+    terminatingTool: string | null = null,
+  ): RunState {
+    const completed = this.saveRunAndEmit(SocketEventNames.runCompleted, {
+      ...run,
+      status: 'completed',
+      step: 'completed',
+      summary,
+      terminatingTool,
+      endedAt: new Date().toISOString(),
+    });
+    this.invokeRunTerminalHook(completed);
+    return completed;
+  }
+
+  protected completeSilentRun(
+    run: RunState,
+    summary: string,
+    terminatingTool: string,
+    wakeReason: WakeReason | null,
+  ): RunState {
+    this.realtime.emit(
+      SocketEventNames.runSilentCompletion,
+      {
+        organizationId: run.organizationId,
+        runId: run.id,
+        memberId: run.agentId,
+        wakeReason: wakeReason ?? undefined,
+        occurredAt: new Date().toISOString(),
+      },
+      this.getRooms(run),
+    );
+    return this.completeRun(run, summary, terminatingTool);
+  }
+
+  protected persistSilentTrace(run: RunState, reasoningContent?: string): void {
+    if (!run.threadId || !reasoningContent) return;
+    const channelId = this.repo.getThread(run.organizationId, run.threadId)?.channelId;
+    const message = buildAgentMessage({
+      organizationId: run.organizationId,
+      threadId: run.threadId,
+      channelId,
+      senderId: run.agentId,
+      content: '',
+      reasoningContent,
+      metadata: { runId: run.id, traceOnly: true },
+    });
+    if (this.conversations) {
+      this.conversations.publishMessage(message, [], undefined, {
+        wakePolicy: 'never',
+        skipMentionResolution: true,
+      });
+    } else {
+      this.repo.saveMessage(message);
+    }
+  }
+
+  protected waitForApproval(run: RunState, summary: string): RunState {
+    const waiting = this.saveRunAndEmit(SocketEventNames.runUpdated, {
+      ...run,
+      status: 'waiting_for_approval',
+      step: 'waiting_for_approval',
+      summary,
+    });
+    this.invokeRunTerminalHook(waiting);
+    return waiting;
+  }
+
+  protected waitForInput(run: RunState, summary: string): RunState {
+    const waiting = this.saveRunAndEmit(SocketEventNames.runUpdated, {
+      ...run,
+      status: 'waiting_for_input',
+      step: 'waiting_for_input',
+      summary,
+    });
+    this.invokeRunTerminalHook(waiting);
+    return waiting;
+  }
+
+  protected failRun(run: RunState, summary: string): RunState {
+    const failed = this.saveRunAndEmit(SocketEventNames.runCompleted, {
+      ...run,
+      status: 'failed',
+      step: 'failed',
+      summary,
+      endedAt: new Date().toISOString(),
+    });
+    this.invokeRunTerminalHook(failed);
+    return failed;
+  }
+
+  protected async executePendingApprovedRunTools(run: RunState): Promise<RunState> {
+    await this.replayApprovedToolsForRun(run);
+    return run;
   }
 
   protected async executeAgentLoop(params: {
@@ -265,6 +425,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       runId: string;
       summary?: string;
       systemPromptSuffix?: string;
+      additionalToolIds?: readonly string[];
       abortSignal?: AbortSignal;
       onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
       onStepFinish?: (step: AgentLoopStep, steps: AgentLoopStep[]) => PromiseLike<void> | void;
@@ -300,7 +461,9 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       threadId: input.threadId,
       sourceMessage,
       wakeReason,
-      roleToolIds: listEffectiveAgentToolIds(role.tools),
+      roleToolIds: [
+        ...new Set([...listEffectiveAgentToolIds(role.tools), ...(input.additionalToolIds ?? [])]),
+      ],
       team,
       taskSessionId: '',
       role: 'worker' as SpiritRole,
@@ -392,398 +555,7 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
   }
 
   async run(input: RunSpiritInput): Promise<RunSpiritOutcome> {
-    const role = input.role ?? 'worker';
-    const session = this.repo.getTaskSession(input.organizationId, input.taskSessionId);
-    if (!session) {
-      throw new Error(`Task session not found: ${input.taskSessionId}`);
-    }
-    const { team, organization, member, agent, role: teamRole } = this.resolveMemberAgentRole(input.organizationId, input.memberId);
-
-    const model = await Promise.resolve(
-      this.modelResolver({
-        organizationId: input.organizationId,
-        memberId: input.memberId,
-        role,
-      }),
-    );
-
-    const threadMessages = collectCursorPages((cursor) =>
-      this.repo.listChannelMessages(input.organizationId, session.channelId, { cursor, limit: 600 }),
-    );
-    const recent = selectPromptContextMessages(threadMessages);
-    const interruptCursor = createMessageCursor(recent);
-
-    const spirit = this.spawn({
-      organizationId: input.organizationId,
-      taskSessionId: input.taskSessionId,
-      memberId: input.memberId,
-      role,
-    });
-
-    const running: Spirit = SpiritSchema.parse({
-      ...spirit,
-      status: 'running',
-      updatedAt: new Date().toISOString(),
-    });
-    this.repo.saveSpirit(running);
-    this.registry.register(running);
-    if (spirit.runId) {
-      const run = this.repo.getRun(input.organizationId, spirit.runId);
-      if (run) {
-        this.saveRunAndEmit(SocketEventNames.runUpdated, {
-          ...run,
-          status: 'running',
-          step: 'running',
-          summary: 'Spirit turn',
-        });
-      }
-    }
-    this.emit(SocketEventNames.spiritUpdated, running);
-
-    const runId = spirit.runId ?? spirit.id;
-    const resolvedAllowlist = this.resolveToolAllowlist(teamRole.tools, role, input.toolAllowlist);
-    const supervisorRunRow =
-      spirit.runId !== undefined
-        ? this.repo.getRun(input.organizationId, spirit.runId)
-        : undefined;
-    const sourceMessage = supervisorRunRow?.sourceMessageId
-      ? this.repo.getMessage(input.organizationId, supervisorRunRow.sourceMessageId)
-      : null;
-    const wakePalette = await this.buildWakeToolPalette({
-      organizationId: input.organizationId,
-      memberId: input.memberId,
-      runId: spirit.runId ?? spirit.id,
-      threadId: session.channelId,
-      sourceMessage,
-      wakeReason: (supervisorRunRow?.wakeReason ?? null) as WakeReason | null,
-      roleToolIds: resolvedAllowlist,
-      team,
-      taskSessionId: input.taskSessionId,
-      role,
-    });
-    const { toolDefs, attachedMcpServers, availableConnectors, wakeReplyPolicy: supervisorWakePolicy } = wakePalette;
-
-    const availableToolIds = Object.keys(toolDefs);
-    const availableSkills = this.repo.listOrganizationSkillInstalls?.(input.organizationId) ?? [];
-    const visibleChannels = resolveVisiblePromptChannels(
-      team.channels,
-      this.repo,
-      input.organizationId,
-    );
-    const baseSystemPrompt = buildAgentSystemPrompt(
-      team.workspace.root,
-      organization.name,
-      member.id,
-      member.name,
-      session.channelId,
-      agent,
-      teamRole,
-      this.repo
-        .listMembers(input.organizationId)
-        .filter((current) => current.id !== member.id),
-      team.agents,
-      visibleChannels,
-      organization.organizationChart,
-      availableSkills,
-      availableToolIds,
-      attachedMcpServers.map((s) => ({ name: s.serverName, toolNames: s.toolNames })),
-      supervisorWakePolicy.conversationKind,
-      availableConnectors,
-      model,
-    );
-
-    const systemPromptSuffix = this.resolveSystemPromptSuffix({
-      organizationId: input.organizationId,
-      taskSessionId: input.taskSessionId,
-      threadId: session.channelId,
-      extraSuffix: input.systemPromptSuffix,
-      messageContent: input.promptMessageContent,
-      goalMode: input.promptGoalMode,
-      scheduleMode: input.promptScheduleMode,
-    });
-
-    const runCtx = await buildRunContext({
-      organizationId: input.organizationId,
-      agentId: input.memberId,
-      threadId: session.channelId,
-      channelId: session.channelId,
-      runId,
-      model,
-      team,
-      repo: this.repo,
-      baseSystemPrompt,
-      sourceMessage,
-      wakeReason: (supervisorRunRow?.wakeReason ?? null) as WakeReason | null,
-      systemPromptSuffix,
-      extraPrompt: input.extraPrompt,
-      toolDefs,
-      mcpServers: attachedMcpServers,
-      threadMessages,
-    });
-
-    const systemPrompt = runCtx.system;
-    const messages = runCtx.messages;
-    const debugLogger = runCtx.debugLogger;
-    const contextMessages = runCtx.contextMessages;
-
-    const maxIterations = input.maxIterations ?? this.maxIterationsPerRun;
-    const runState = new SpiritRunState();
-    const turn = new RunTurnPublisher(
-      (message) => this.publishAgentMessage(message),
-      (message) => {
-        this.repo.updateMessage(message);
-      },
-    );
-
-    const abortKey = this.runKey(input.organizationId, runId);
-    const abortController = new AbortController();
-    this.runAbortControllers.set(abortKey, abortController);
-
-    try {
-      const loopResult = await this.executeAgentLoop({
-        model,
-        systemPrompt,
-        messages,
-        toolDefs,
-        attachedMcpServers,
-        maxIterations,
-        organizationId: input.organizationId,
-        runId,
-        channelId: session.channelId,
-        threadId: session.channelId,
-        memberId: input.memberId,
-        interruptCursor,
-        contextMessages,
-        sourceMessage,
-        extraPrompt: input.extraPrompt,
-        sessionPrompt: session.prompt,
-        spirit: { runId: spirit.runId, id: spirit.id, taskSessionId: spirit.taskSessionId },
-        runState,
-        turn,
-        debugLogger,
-        member: { id: member.id },
-        teamRoot: team.workspace.root,
-        abortSignal: abortController.signal,
-      });
-      const latestAfterLoop = this.repo.getRun(input.organizationId, runId);
-      if (latestAfterLoop?.status === 'cancelled') {
-        runState.cancel(latestAfterLoop.summary || 'Stopped by user');
-        const cancelled = this.saveTerminalSpirit(runState, running);
-        this.realtime.emit(
-          SocketEventNames.runCompleted,
-          { organizationId: input.organizationId, run: latestAfterLoop },
-          this.getRooms(latestAfterLoop),
-        );
-        this.emit(SocketEventNames.spiritCompleted, cancelled);
-        this.maybeFinalizeTaskSession(cancelled.organizationId, cancelled.taskSessionId, latestAfterLoop.summary);
-        return {
-          spirit: cancelled,
-          finalText: runState.lastText,
-          iterations: runState.iteration,
-          toolCalls: runState.toolCallCount,
-          tokensUsed: runState.totalTokens,
-          terminatingTool: null,
-        };
-      }
-      const { steps, usage, streamedReasoning, persistedStepCount } = loopResult;
-
-      // Compute token counts early so they're available when persisting
-      // the last step's message below.
-      const tokenUsage = normalizeTokenUsage(usage);
-      const finalText = loopResult.text;
-      const detectedTerminatingTool = findTerminatingTool({ steps, text: loopResult.text });
-
-      // Each step in `steps` is one model turn. We persist one
-      // `kind='agent'` message per step that produced text or tool
-      // calls, with tool-call cards inlined. This keeps the channel
-      // history readable as a turn-by-turn timeline.
-      for (let index = persistedStepCount; index < steps.length; index++) {
-        const step = steps[index];
-        if (!step) continue;
-        const out = await this.publishStepBubble({
-          step,
-          spirit,
-          turn,
-          organizationId: input.organizationId,
-          channelId: session.channelId,
-          senderId: member.id,
-          teamRoot: team.workspace.root,
-          runId: spirit.runId ?? spirit.id,
-          reasoningFallback:
-            index === steps.length - 1 ? streamedReasoning.trim() || undefined : undefined,
-        });
-        runState.trackStep(out.toolCallCount, {
-          input: step.usage?.inputTokens,
-          output: step.usage?.outputTokens,
-        });
-        if (out.messageId) runState.lastMessageId = out.messageId;
-        if (out.stepText) runState.lastText = out.stepText;
-      }
-
-      const persistedRunSteps = spirit.runId ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? [] : [];
-      const terminatingTool = detectedTerminatingTool ?? findTerminatingToolFromRunSteps(persistedRunSteps);
-      turn.backfillTokens({ finalText, lastText: runState.lastText, terminatingTool, usage: tokenUsage });
-
-      runState.complete(finalText, runState.lastMessageId);
-      const completed = this.saveTerminalSpirit(runState, running);
-      const finalTerminatingTool = this.resolveTerminatingTool(
-        input.organizationId,
-        spirit.runId,
-        detectedTerminatingTool,
-      );
-      if (spirit.runId) {
-        const run = this.repo.getRun(input.organizationId, spirit.runId);
-        if (run) {
-          const completedRun = this.saveRunAndEmit(SocketEventNames.runCompleted, {
-            ...run,
-            status: 'completed',
-            step: 'completed',
-            summary: runState.lastText || run.summary,
-            endedAt: new Date().toISOString(),
-            terminatingTool: finalTerminatingTool,
-          });
-          this.invokeRunTerminalHook(completedRun);
-        }
-      }
-      this.emit(SocketEventNames.spiritCompleted, completed);
-      this.maybeFinalizeTaskSession(completed.organizationId, completed.taskSessionId, runState.lastText || undefined);
-
-      return {
-        spirit: completed,
-        finalText: runState.lastText,
-        iterations: runState.iteration,
-        toolCalls: runState.toolCallCount,
-        tokensUsed: runState.totalTokens,
-        terminatingTool: finalTerminatingTool,
-      };
-    } catch (err) {
-      debugLogger.flush().catch(() => undefined);
-      const latestRun = this.repo.getRun(input.organizationId, runId);
-      if (latestRun?.status === 'cancelled') {
-        runState.cancel(latestRun.summary || 'Stopped by user');
-        const cancelled = this.saveTerminalSpirit(runState, running);
-        this.realtime.emit(
-          SocketEventNames.runCompleted,
-          { organizationId: input.organizationId, run: latestRun },
-          this.getRooms(latestRun),
-        );
-        this.emit(SocketEventNames.spiritCompleted, cancelled);
-        this.maybeFinalizeTaskSession(cancelled.organizationId, cancelled.taskSessionId, latestRun.summary);
-        return {
-          spirit: cancelled,
-          finalText: runState.lastText,
-          iterations: runState.iteration,
-          toolCalls: runState.toolCallCount,
-          tokensUsed: runState.totalTokens,
-          terminatingTool: null,
-        };
-      }
-      const inputRequiredError = findToolInputRequiredError(err);
-      if (inputRequiredError) {
-        runState.waitForInput();
-        const waiting = this.saveWaitingSpirit(runState, running);
-        if (spirit.runId) {
-          const run = this.repo.getRun(input.organizationId, spirit.runId);
-          if (run) {
-            const question = this.repo.getInteractiveQuestion(input.organizationId, inputRequiredError.questionId);
-            this.saveRunAndEmit(SocketEventNames.runUpdated, {
-              ...run,
-              status: 'waiting_for_input',
-              step: 'waiting_for_input',
-              summary: question?.questionText ?? run.summary ?? 'Waiting for user input',
-            });
-          }
-        }
-        this.emit(SocketEventNames.spiritUpdated, waiting);
-        return {
-          spirit: waiting,
-          finalText: runState.lastText,
-          iterations: runState.iteration,
-          toolCalls: runState.toolCallCount,
-          tokensUsed: runState.totalTokens,
-          terminatingTool: null,
-        };
-      }
-
-      if (findToolApprovalRequiredError(err)) {
-        runState.waitForApproval();
-        const waiting = this.saveWaitingSpirit(runState, running);
-        const pausedRunSteps = spirit.runId
-          ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-          : [];
-        const pausedTerminatingTool = findTerminatingToolFromRunSteps(pausedRunSteps);
-        if (spirit.runId) {
-          const run = this.repo.getRun(input.organizationId, spirit.runId);
-          if (run) {
-            this.saveRunAndEmit(SocketEventNames.runUpdated, {
-              ...run,
-              status: 'waiting_for_approval',
-              step: 'waiting_for_approval',
-              summary: pendingApprovalRunSummary(this.repo, input.organizationId, spirit.runId),
-              terminatingTool: pausedTerminatingTool,
-            });
-          }
-        }
-        this.emit(SocketEventNames.spiritUpdated, waiting);
-        return {
-          spirit: waiting,
-          finalText: runState.lastText,
-          iterations: runState.iteration,
-          toolCalls: runState.toolCallCount,
-          tokensUsed: runState.totalTokens,
-          terminatingTool: pausedTerminatingTool,
-        };
-      }
-      const message = errorMessage(err);
-      console.error('[spirit-agent-run] run failed', {
-        organizationId: input.organizationId,
-        memberId: input.memberId,
-        runId: spirit.runId,
-        error: err instanceof Error ? err.stack ?? err.message : String(err),
-      });
-      runState.fail(message);
-      const failed = this.saveTerminalSpirit(runState, running);
-      const failedRunSteps = spirit.runId
-        ? this.repo.listRunSteps?.(input.organizationId, spirit.runId) ?? []
-        : [];
-      const failedTerminatingTool = findTerminatingToolFromRunSteps(failedRunSteps);
-      if (spirit.runId) {
-        this.repo.saveRunStep?.({
-          id: crypto.randomUUID(),
-          organizationId: input.organizationId,
-          runId: spirit.runId,
-          threadId: session.channelId,
-          agentId: input.memberId,
-          toolCallId: `run-error-${spirit.runId}`,
-          toolId: 'agent.run',
-          action: 'execute',
-          resourceType: 'message',
-          resourcePath: '',
-          input: {},
-          output: { error: message },
-          status: 'error',
-          createdAt: new Date().toISOString(),
-        });
-        const run = this.repo.getRun(input.organizationId, spirit.runId);
-        if (run) {
-          this.saveRunAndEmit(SocketEventNames.runCompleted, {
-            ...run,
-            status: 'failed',
-            step: 'failed',
-            summary: message,
-            endedAt: new Date().toISOString(),
-            terminatingTool: failedTerminatingTool,
-          });
-        }
-      }
-      this.emit(SocketEventNames.spiritCompleted, failed);
-      this.maybeFinalizeTaskSession(failed.organizationId, failed.taskSessionId, message);
-      debugLogger.setError(message);
-      debugLogger.flush().catch(() => undefined);
-      throw err;
-    } finally {
-      this.runAbortControllers.delete(abortKey);
-    }
+    return this.agentTurn.executeTurn(input);
   }
 
   protected resolveToolAllowlist(
@@ -842,19 +614,18 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       ...(prepared.artifact ? [prepared.artifact] : []),
     ];
     let message: Message | undefined;
-    const parts = prepared.contentParts.length > 0 ? prepared.contentParts : [prepared.content];
-    for (const [index, content] of parts.entries()) {
-      const isLast = index === parts.length - 1;
-      message = input.turn.publishMessage(buildAgentMessage({
-        organizationId: input.organizationId,
-        threadId: input.channelId,
-        channelId: input.channelId,
-        senderId: input.senderId,
-        content,
-        ...(isLast && messageToolCalls.length > 0 ? { toolCalls: messageToolCalls } : {}),
-        metadata: { runId: input.runId },
-        ...(isLast && prepared.reasoningContent ? { reasoningContent: prepared.reasoningContent } : {}),
-      }));
+    const stepMessages = buildAgentStepMessages({
+      organizationId: input.organizationId,
+      threadId: input.channelId,
+      channelId: input.channelId,
+      senderId: input.senderId,
+      runId: input.runId,
+      prepared,
+      toolCalls: messageToolCalls,
+      metadata: { runId: input.runId },
+    });
+    for (const stepMessage of stepMessages) {
+      message = input.turn.publishMessage(stepMessage);
     }
     if (prepared.artifactPublished) input.turn.markArtifactFilePublished();
     return {
@@ -883,6 +654,31 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       [orgRoom(saved.organizationId), channelRoom(saved.channelId ?? '')],
     );
     return saved;
+  }
+
+  private writeRunErrorStep(input: {
+    organizationId: string;
+    runId: string;
+    threadId: string;
+    agentId: string;
+    error: string;
+  }): void {
+    this.repo.saveRunStep?.({
+      id: crypto.randomUUID(),
+      organizationId: input.organizationId,
+      runId: input.runId,
+      threadId: input.threadId,
+      agentId: input.agentId,
+      toolCallId: `run-error-${input.runId}`,
+      toolId: 'agent.run',
+      action: 'execute',
+      resourceType: 'message',
+      resourcePath: '',
+      input: {},
+      output: { error: input.error },
+      status: 'error',
+      createdAt: new Date().toISOString(),
+    });
   }
 
   /**

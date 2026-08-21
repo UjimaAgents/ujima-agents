@@ -4,11 +4,20 @@ import type { RuntimeHost } from '@ujima/runtime-core';
 import {
   ListAgentsResponseSchema,
 } from '@ujima/api-schema';
+import {
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 export function registerAgentRoutes(_app: FastifyInstance, host: RuntimeHost): void {
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/agents', {
+  const register = (spec: RouteSpec) => registerRoute(app, spec, {});
+
+  register({
+    method: 'get',
+    path: '/agents',
+    auth: { kind: 'none' },
     schema: {
       description: 'List all currently running agents',
       tags: ['Agents'],
@@ -16,8 +25,9 @@ export function registerAgentRoutes(_app: FastifyInstance, host: RuntimeHost): v
         200: ListAgentsResponseSchema,
       },
     },
-  }, async () => {
-    return { agents: host.listAgents().map(toAgentDto) };
+    handler: async () => {
+      return { agents: host.listAgents().map(toAgentDto) };
+    },
   });
 }
 

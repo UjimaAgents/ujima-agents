@@ -6,8 +6,7 @@ import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMockProvider, textTurn, toolTurn } from '@ujima/llm/legacy';
 import { runAgent } from './shell';
 import { hydrate } from './hydrate';
-import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
-import { makeFakeMCPConnection } from './test-helpers';
+import { createLanguageModelFromLegacyProvider, makeFakeMCPConnection } from './test-helpers';
 
 const baseAgent: AgentDef = {
   id: 'sr-designer',

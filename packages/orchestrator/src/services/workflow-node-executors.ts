@@ -1,5 +1,6 @@
 import {
   extractWorkflowTokens,
+  latestNodeRuns,
   type NodeOutput,
   type WorkflowGraph,
   type WorkflowNode,
@@ -55,14 +56,9 @@ export function resolveAttachedSubnodes(
 export function buildNodeOutputs(
   nodeRuns: WorkflowNodeRun[],
 ): Map<string, NodeOutput> {
-  const latest = new Map<string, WorkflowNodeRun>();
-  for (const nr of nodeRuns) {
-    if (nr.status !== 'completed') continue;
-    const prev = latest.get(nr.nodeId);
-    if (!prev || nr.attempt >= prev.attempt) latest.set(nr.nodeId, nr);
-  }
   const out = new Map<string, NodeOutput>();
-  for (const [nodeId, nr] of latest) {
+  for (const [nodeId, nr] of latestNodeRuns(nodeRuns)) {
+    if (nr.status !== 'completed') continue;
     out.set(nodeId, {
       summary: nr.summary ?? '',
       output_file: nr.outputPath ?? undefined,

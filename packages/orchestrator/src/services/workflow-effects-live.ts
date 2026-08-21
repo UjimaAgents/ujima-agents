@@ -1,11 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import type { RunState } from '@ujima/shared';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import {
+  SocketEventNames,
+  channelRoom,
+  orgRoom,
+  threadRoom,
+  type RunState,
+} from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
 import type { GoalSystemService, ParsedPlanTask } from './goal-system.js';
 import type { CreateRunInput } from './spirit-types.js';
+import type { RealtimeService } from './context.js';
 import { buildSystemMessage } from './message-factory.js';
 import type {
   NotifyInitiatorInput,
@@ -19,6 +26,7 @@ import type {
   StatOutputInput,
   WorkflowEffects,
   WorkflowEngineService,
+  WorkflowRunLiveUpdate,
 } from './workflow-engine.js';
 
 /**
@@ -40,6 +48,7 @@ export interface LiveWorkflowEffectsDeps {
   spirits: { createRun(input: CreateRunInput): Promise<RunState> };
   /** Resolve the workspace filesystem root for an org (for output verification). */
   getWorkspaceRoot(organizationId: string): string | undefined;
+  realtime?: Pick<RealtimeService, 'emit'>;
 }
 
 export class LiveWorkflowEffects implements WorkflowEffects {
@@ -59,25 +68,35 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     // and the completion hook can correlate this run back to the node run.
     const runId = input.childRunId;
 
+    // Preload the attached `ai_skill` sub-nodes into the run's system prompt so
+    // the agent follows the skill's instructions for this step (mirrors what
+    // `skill.read` injects, but automatically — the skill is chosen by the graph).
+    const skillBlocks = this.loadSkillBlocks(input.organizationId, input.skills);
+    const skillPromptSuffix =
+      skillBlocks.length > 0
+        ? `The following skills are pre-loaded for this workflow step — follow their instructions:\n\n${skillBlocks.join('\n\n')}`
+        : undefined;
+    const workflowPromptSuffix = [input.systemPromptSuffix, skillPromptSuffix]
+      .filter((part): part is string => Boolean(part))
+      .join('\n\n');
+
     // Give the agent its task: prompt + wake-context, posted without waking
-    // anyone (we drive the run explicitly below).
-    const content = `${input.prompt}\n\n${input.systemPromptSuffix}`;
+    // anyone (we drive the run explicitly below). The source message carries
+    // the durable workflow context used again if the child run pauses/resumes.
+    const content = [input.prompt, input.systemPromptSuffix].filter(Boolean).join('\n\n');
     const message = buildSystemMessage({
       organizationId: input.organizationId,
       threadId: input.threadId,
       channelId: input.channelId,
       content,
+      metadata: {
+        workflowContext: {
+          ...(workflowPromptSuffix ? { systemPromptSuffix: workflowPromptSuffix } : {}),
+          ...(input.toolIds.length > 0 ? { toolIds: input.toolIds } : {}),
+        },
+      },
     });
     this.deps.conversations.publishMessage(message, [], undefined, { wakePolicy: 'never' });
-
-    // Preload the attached `ai_skill` sub-nodes into the run's system prompt so
-    // the agent follows the skill's instructions for this step (mirrors what
-    // `skill.read` injects, but automatically — the skill is chosen by the graph).
-    const skillBlocks = this.loadSkillBlocks(input.organizationId, input.skills);
-    const systemPromptSuffix =
-      skillBlocks.length > 0
-        ? `The following skills are pre-loaded for this workflow step — follow their instructions:\n\n${skillBlocks.join('\n\n')}`
-        : undefined;
 
     // Fire the run; completion is handled by the run-completed hook.
     void this.deps.spirits
@@ -89,7 +108,6 @@ export class LiveWorkflowEffects implements WorkflowEffects {
         sourceMessageId: message.id,
         byMemberId: input.initiatedBy,
         summary: `Workflow ${input.workflowName} · step ${input.nodeId}`,
-        ...(systemPromptSuffix ? { systemPromptSuffix } : {}),
       })
       .catch((err) => {
         void this.engine?.onNodeComplete({
@@ -189,9 +207,15 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     const root = this.deps.getWorkspaceRoot(input.organizationId);
     if (!root) return null;
     try {
-      const abs = join(root, input.path);
+      const rootPath = resolve(root);
+      const abs = resolve(rootPath, input.path);
+      const relativePath = relative(rootPath, abs);
+      if (relativePath.startsWith('..') || isAbsolute(relativePath)) return null;
       const stat = statSync(abs);
       if (!stat.isFile()) return null;
+      const realRoot = realpathSync(rootPath);
+      const realPath = realpathSync(abs);
+      if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`)) return null;
       const buf = readFileSync(abs);
       return { sha256: createHash('sha256').update(buf).digest('hex'), sizeBytes: stat.size };
     } catch {
@@ -204,6 +228,23 @@ export class LiveWorkflowEffects implements WorkflowEffects {
     runId: string;
   }): Promise<string | null> {
     return this.deps.repo.getRun(input.organizationId, input.runId)?.status ?? null;
+  }
+
+  publishRunUpdated(input: WorkflowRunLiveUpdate): void {
+    if (!this.deps.realtime) return;
+    this.deps.realtime.emit(
+      SocketEventNames.workflowRunUpdated,
+      {
+        organizationId: input.organizationId,
+        run: input.run,
+        nodeRuns: input.nodeRuns,
+      },
+      [
+        orgRoom(input.organizationId),
+        channelRoom(input.run.channelId),
+        threadRoom(input.run.threadId),
+      ],
+    );
   }
 
   async prepareRunThread(input: PrepareRunThreadInput): Promise<{threadId: string}> {

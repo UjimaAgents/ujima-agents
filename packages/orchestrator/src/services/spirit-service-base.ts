@@ -340,7 +340,7 @@ export class SpiritServiceBase {
         .filter((approval) => approval.runId === runId && approval.toolCallId)
         .map((approval) => approval.toolCallId as string),
     );
-    return (this.repo.listRunSteps?.(organizationId, runId) ?? []).filter((step) => {
+    return this.repo.listRunSteps(organizationId, runId).filter((step) => {
       const output = step.output as { status?: unknown; questionId?: unknown } | undefined;
       if (output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(step.toolCallId)) {
         return true;

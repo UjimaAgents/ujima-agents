@@ -41,8 +41,8 @@ describe('buildWorkflowRunView', () => {
       }],
       listPendingApprovals: () => [],
       listMessages: () => ({ data: [
-        { id: 'status', senderId: 'human-1', senderKind: 'human', content: '▶ Workflow started', createdAt: '1' },
-        { id: 'chat', senderId: 'agent-1', senderKind: 'agent', content: 'hello', createdAt: '2' },
+        { id: 'status', senderId: 'human-1', senderKind: 'human', content: '▶ Workflow started', createdAt: '2026-08-12T00:00:00.001Z' },
+        { id: 'chat', senderId: 'agent-1', senderKind: 'agent', content: 'hello', createdAt: '2026-08-12T00:00:00.002Z' },
       ] }),
     } as unknown as Repository;
 

@@ -3,7 +3,7 @@ import type { Message, RunStep, WakeReason } from '@ujima/shared';
 import type { AgentTeamHandle } from '@ujima/framework';
 import { AgentLoopLogger } from '../debug/agent-loop-logger.js';
 import type { McpServerSummary } from './spirit-mcp-helpers.js';
-import type { ApiRepository } from './repository-reader.js';
+import type { AgentTurnStore } from './repository-reader.js';
 import type { WakeReplyPolicy } from '../utils/wake-reply-policy.js';
 import { resolveWakeReplyPolicy } from '../utils/wake-reply-policy.js';
 import { AGENT_KIND } from '@ujima/shared';
@@ -30,7 +30,7 @@ export interface RunContextInput {
   runId: string;
   model: LanguageModel;
   team: AgentTeamHandle;
-  repo: ApiRepository;
+  repo: AgentTurnStore;
   baseSystemPrompt: string;
   sourceMessage: Message | null;
   wakeReason?: WakeReason | null;
@@ -53,7 +53,7 @@ export interface RunContext {
 }
 
 export function visibleHistoryRunSteps(input: {
-  repo: ApiRepository;
+  repo: AgentTurnStore;
   organizationId: string;
   threadId: string;
   historyMessages: readonly Message[];
@@ -174,7 +174,7 @@ export async function buildRunContext(input: RunContextInput): Promise<RunContex
       historyMessages: promptHistoryMessages,
       currentRunId: runId,
     }),
-    ...(repo.listRunSteps?.(organizationId, runId) ?? []),
+    ...repo.listRunSteps(organizationId, runId),
   ];
   const messages = buildPromptMessages({
     historyMessages: promptHistoryMessages,

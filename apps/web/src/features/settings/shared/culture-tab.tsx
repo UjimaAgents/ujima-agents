@@ -15,6 +15,7 @@ import { SettingsEmptyState } from "@/features/settings/shared/settings-empty-st
 import { SettingsList, SettingsListRow, SettingsRowIcon } from "@/features/settings/shared/settings-list-row";
 import { SettingsSection } from "@/features/settings/shared/settings-section";
 import { SettingsTabActions } from "@/features/settings/shared/settings-layout";
+import { settingsFetch, settingsFetchVoid } from "@/features/settings/shared/settings-api";
 
 interface ProcedureSummary {
   scope: "org" | "channel" | "agent";
@@ -41,11 +42,6 @@ interface DetailResponse {
   procedure: ProcedureDetail;
 }
 
-interface ApiError {
-  code?: string;
-  message: string;
-}
-
 export interface CultureTabProps {
   organizationId: string;
   channelId: string | null;
@@ -65,14 +61,6 @@ function formatProcedureName(name: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 64);
-}
-
-async function errorMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  const body = (await response.json().catch(() => null)) as ApiError | null;
-  return body?.message ?? `${fallback} (${response.status}).`;
 }
 
 export const CultureTab = memo(function CultureTab({ organizationId, channelId, members }: CultureTabProps) {
@@ -110,16 +98,11 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId, 
     inflightRef.current = ac;
     setLoading(true);
     try {
-      const res = await fetch(
+      const body = await settingsFetch<ListResponse>(
         `${base}?organizationId=${encodeURIComponent(organizationId)}`,
         { signal: ac.signal },
+        "Failed to load",
       );
-      if (!res.ok) {
-        setError(await errorMessage(res, "Failed to load"));
-        setLoading(false);
-        return;
-      }
-      const body = (await res.json()) as ListResponse;
       setItems(body.procedures ?? []);
       setError(null);
     } catch (err) {
@@ -151,14 +134,11 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId, 
   const beginEdit = useCallback(async (name: string) => {
     setError(null);
     try {
-      const res = await fetch(
+      const body = await settingsFetch<DetailResponse>(
         `${base}/${encodeURIComponent(name)}?organizationId=${encodeURIComponent(organizationId)}`,
+        {},
+        "Failed to load procedure",
       );
-      if (!res.ok) {
-        setError(await errorMessage(res, "Failed to load procedure"));
-        return;
-      }
-      const body = (await res.json()) as DetailResponse;
       setEditing({
         name: body.procedure.name,
         description: body.procedure.description,
@@ -193,7 +173,7 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId, 
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(base, {
+      await settingsFetch<unknown>(base, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -203,11 +183,7 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId, 
           body: editing.body,
           enforced: isOrg ? editing.enforced : false,
         }),
-      });
-      if (!res.ok) {
-        setError(await errorMessage(res, "Save failed"));
-        return;
-      }
+      }, "Save failed");
       setEditing(null);
       void refresh();
     } catch (err) {
@@ -223,14 +199,11 @@ export const CultureTab = memo(function CultureTab({ organizationId, channelId, 
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
+      await settingsFetchVoid(
         `${base}/${encodeURIComponent(name)}?organizationId=${encodeURIComponent(organizationId)}`,
         { method: "DELETE" },
+        "Remove failed",
       );
-      if (!res.ok) {
-        setError(await errorMessage(res, "Remove failed"));
-        return;
-      }
       setPendingRemove(null);
       void refresh();
     } catch (err) {

@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import { clientApiUrl } from "@/lib/client-api";
 
 // `useChat` in @ai-sdk/react@3 (paired with ai@6) no longer returns
 // `input`, `handleInputChange`, or `handleSubmit`. The caller now owns
@@ -12,7 +13,7 @@ import { DefaultChatTransport } from "ai";
 export function StreamingTextPanel() {
   const [input, setInput] = useState("");
   const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/onboarding/chat" }),
+    transport: new DefaultChatTransport({ api: clientApiUrl("/api/onboarding/chat") }),
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {

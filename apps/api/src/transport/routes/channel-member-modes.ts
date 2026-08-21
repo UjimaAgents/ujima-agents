@@ -5,9 +5,10 @@ import { ApiErrorSchema } from '@ujima/api-schema';
 import type { Repository } from '@ujima/runtime-core';
 import type { AuthService } from '@ujima/orchestrator';
 import { z } from 'zod';
-import { requireOrgSession } from './org-auth.js';
-import { routeError } from './route-errors.js';
-import { assertReadyWorkspaceRoot } from './workspace-root.js';
+import {
+  registerRoute,
+  type RouteSpec,
+} from './route-registry.js';
 
 const ChannelIdParamsSchema = z.object({
   orgId: IdSchema,
@@ -31,7 +32,12 @@ export function registerChannelMemberModeRoutes(
   const { repo, auth } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/orgs/:orgId/channels/:channelId/modes', {
+  const register = (spec: RouteSpec) => registerRoute(app, spec, { auth, repo });
+
+  register({
+    method: 'get',
+    path: '/orgs/:orgId/channels/:channelId/modes',
+    auth: { kind: 'org-session', organizationId: (req) => (req.params as { orgId: string }).orgId },
     schema: {
       description: 'List member modes for a channel',
       tags: ['Settings'],
@@ -44,17 +50,19 @@ export function registerChannelMemberModeRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      return repo.listChannelMemberModesForChannel(req.params.orgId, req.params.channelId);
-    } catch (err) {
-      return routeError(reply, err, { notFound: 'Channel not found' });
-    }
+    error: { notFound: 'Channel not found' },
+    handler: async (req, { organizationId }) =>
+      repo.listChannelMemberModesForChannel(
+        organizationId,
+        (req.params as { channelId: string }).channelId,
+      ),
   });
 
-  app.put('/orgs/:orgId/channels/:channelId/modes', {
+  register({
+    method: 'put',
+    path: '/orgs/:orgId/channels/:channelId/modes',
+    auth: { kind: 'org-session', organizationId: (req) => (req.params as { orgId: string }).orgId },
+    workspaceRootAfterAuth: true,
     schema: {
       description: 'Set a member mode on a channel',
       tags: ['Settings'],
@@ -68,20 +76,15 @@ export function registerChannelMemberModeRoutes(
         404: ApiErrorSchema,
       },
     },
-  }, async (req, reply) => {
-    try {
-      const forbidden = requireOrgSession(auth, req, reply, req.params.orgId);
-      if (forbidden) return forbidden;
-      assertReadyWorkspaceRoot(repo, req.params.orgId);
+    error: { notFound: ['Channel not found', 'Member not found'], workspaceRoot: true },
+    handler: async (req, { organizationId }) => {
       repo.setChannelMemberMode(
-        req.params.orgId,
-        req.params.channelId,
-        req.body.memberId,
-        req.body.mode,
+        organizationId,
+        (req.params as { channelId: string }).channelId,
+        (req.body as { memberId: string }).memberId,
+        (req.body as { mode: 'active' | 'passive' | 'muted' | 'temp_disable' }).mode,
       );
       return { ok: true as const };
-    } catch (err) {
-      return routeError(reply, err, { notFound: ['Channel not found', 'Member not found'], workspaceRoot: true });
-    }
+    },
   });
 }

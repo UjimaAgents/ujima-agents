@@ -47,6 +47,7 @@ import {
 } from "../../settings/organization/components/workspaces/workspace-create-modal";
 import { createWorkspaceApi } from "../workspace-api";
 import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
+import { clientFetchJson, clientFetchVoid } from "@/lib/client-api";
 
 interface WorkspaceSchedule {
   id: string;
@@ -325,9 +326,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 
     void (async () => {
       try {
-        const response = await fetch("/api/workspaces");
-        if (!response.ok) return;
-        const body = (await response.json().catch(() => null)) as { workspaces?: { id: string; root_path: string | null; label: string | null }[] } | null;
+        const body = await clientFetchJson<{
+          workspaces?: { id: string; root_path: string | null; label: string | null }[];
+        }>("/api/workspaces").catch(() => null);
         if (cancelled) return;
         setWorkspaces(body?.workspaces ?? []);
       } catch {
@@ -347,9 +348,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 
     void (async () => {
       try {
-        const response = await fetch("/api/schedules");
-        if (!response.ok) return;
-        const body = (await response.json().catch(() => null)) as { jobs?: WorkspaceSchedule[] } | null;
+        const body = await clientFetchJson<{ jobs?: WorkspaceSchedule[] }>("/api/schedules").catch(() => null);
         if (cancelled) return;
         setSchedules(body?.jobs ?? []);
       } catch {
@@ -396,22 +395,19 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 
   const handleCreateWorkspace = useCallback(async (input: WorkspaceCreateSubmitInput) => {
     const created = await createWorkspaceApi(input);
-    await switchToWorkspace(created.id, "/workspace");
-  }, []);
+    await switchToWorkspace(router, created.id, "/workspace");
+  }, [router]);
 
   const handleDeleteWorkspace = useCallback(async () => {
     if (!pendingDelete) return;
     setDeletingWorkspace(true);
     setDeleteError(null);
     try {
-      const res = await fetch(
+      await clientFetchVoid(
         `/api/workspaces/${encodeURIComponent(pendingDelete.workspaceId)}`,
         { method: "DELETE" },
+        "Failed to delete workspace",
       );
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || "Failed to delete workspace");
-      }
       setPendingDelete(null);
       window.location.reload();
     } catch (err) {
@@ -426,7 +422,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     setAccountMenuOpen(false);
     setLoggingOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await clientFetchVoid("/api/auth/logout", { method: "POST" }, "Unable to sign out.");
       router.replace("/login");
       router.refresh();
     } finally {
@@ -472,7 +468,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                             if (active || switchingOrgId) return;
                             setSwitchingOrgId(org.id);
                             try {
-                              await switchOrganization(org.id, "/workspace");
+                              await switchOrganization(router, org.id, "/workspace");
                             } catch {
                               setSwitchingOrgId(null);
                             }
@@ -561,11 +557,15 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <SidebarSectionHeader title="Channels" onAdd={() => setIsChannelModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
             {filteredChannels.length === 0 ? (
-              <SidebarSectionEmpty
-                message="No channels yet."
-                actionLabel="Add channel"
-                onAction={() => setIsChannelModalOpen(true)}
-              />
+              searchQuery ? (
+                <SidebarSectionEmpty message={`No channels matching "${searchQuery}".`} />
+              ) : (
+                <SidebarSectionEmpty
+                  message="No channels yet."
+                  actionLabel="Add channel"
+                  onAction={() => setIsChannelModalOpen(true)}
+                />
+              )
             ) : (
               filteredChannels.slice(0, visibleCounts.channels).map((channel) => (
                 <SidebarItem
@@ -602,11 +602,15 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <SidebarSectionHeader title="Agents" onAdd={() => setIsAgentModalOpen(true)} />
           <div className="mt-1.5 space-y-0.5">
             {filteredAgents.length === 0 ? (
-              <SidebarSectionEmpty
-                message="No agents yet."
-                actionLabel="Add agent"
-                onAction={() => setIsAgentModalOpen(true)}
-              />
+              searchQuery ? (
+                <SidebarSectionEmpty message={`No agents matching "${searchQuery}".`} />
+              ) : (
+                <SidebarSectionEmpty
+                  message="No agents yet."
+                  actionLabel="Add agent"
+                  onAction={() => setIsAgentModalOpen(true)}
+                />
+              )
             ) : (
               filteredAgents.slice(0, visibleCounts.agents).map((agent, idx) => {
                 const roleTitle = teamSettings?.roles.find((r) => r.name === agent.roleName)?.title;

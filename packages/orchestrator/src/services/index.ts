@@ -16,7 +16,7 @@ import {
 } from '@ujima/shared';
 import { randomUUID } from 'node:crypto';
 import { AsyncMutex } from '../utils/async-mutex.js';
-import { AiService } from '../ai-service.js';
+import { AiService, type McpToolResolver } from '../ai-service.js';
 import { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import { ApprovalService } from './approval.js';
 import { createAuthDomain } from './auth-domain.js';
@@ -290,6 +290,21 @@ export interface ApiServices {
 type WakeMemberInput = PendingThreadAlert;
 const AGENT_DELEGATE_POLL_INTERVAL_MS = 500;
 const AGENT_DELEGATE_TIMEOUT_MS = 120_000;
+
+class WirePort<Args extends readonly unknown[], Result> {
+  private handler: ((...args: Args) => Result) | undefined;
+
+  constructor(private readonly name: string) {}
+
+  bind(handler: (...args: Args) => Result): void {
+    this.handler = handler;
+  }
+
+  call(...args: Args): Result {
+    if (!this.handler) throw new Error(`Service wire port is not bound: ${this.name}`);
+    return this.handler(...args);
+  }
+}
 
 interface WakeMemberDeps {
   spirits: Pick<SpiritService, 'handleAlert'>;
@@ -1119,30 +1134,27 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     context.archiveRoot ?? process.env.UJIMA_HOME ?? process.cwd(),
   );
 
-  let wakeMember: (input: {
-    organizationId: string;
-    memberId: string;
-    threadId: string;
-    channelId?: string;
-    messageId: string;
-    byMemberId: string;
-    reason: string;
-    wakeReason: WakeReason;
-  }) => Promise<void> | void = () => undefined;
-  let createDelegateRun: Parameters<typeof runAgentDelegateTurn>[0]['createRun'] = async () => {
-    throw new Error('createDelegateRun not wired');
-  };
-  let summarizeConversation: NonNullable<ConversationServiceOptions['summarizeConversation']> = async () => {
-    throw new Error('AI conversation summarizer is not wired.');
-  };
+  const wakeMemberPort = new WirePort<
+    [Parameters<typeof wakeMemberWithFailureEvents>[1]],
+    Promise<void> | void
+  >('wakeMember');
+  type CreateDelegateRun = Parameters<typeof runAgentDelegateTurn>[0]['createRun'];
+  const createDelegateRunPort = new WirePort<
+    Parameters<CreateDelegateRun>,
+    ReturnType<CreateDelegateRun>
+  >('createDelegateRun');
+  const summarizeConversationPort = new WirePort<
+    Parameters<NonNullable<ConversationServiceOptions['summarizeConversation']>>,
+    ReturnType<NonNullable<ConversationServiceOptions['summarizeConversation']>>
+  >('summarizeConversation');
 
   // eslint-disable-next-line prefer-const
   let handleMessagePublished: ((msg: Message) => void) | undefined;
   const conversations = new ConversationService(context.repo, context.realtime, {
     archiveStore: retention,
-    onMemberAlerted: (input) => wakeMember(input),
+    onMemberAlerted: (input) => wakeMemberPort.call(input),
     onMessagePublished: (msg) => handleMessagePublished?.(msg),
-    summarizeConversation: (messages, mode, runSteps, signal) => summarizeConversation(messages, mode, runSteps, signal),
+    summarizeConversation: (...args) => summarizeConversationPort.call(...args),
     autoCompactConversations: true,
     contextWindowTokens: (organizationId, threadId) => {
       const thread = threadId ? context.repo.getThread(organizationId, threadId) : null;
@@ -1173,8 +1185,8 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       repo: context.repo,
       conversations,
       childTasks,
-      wakeMember,
-      createRun: createDelegateRun,
+      wakeMember: (input) => wakeMemberPort.call(input),
+      createRun: (...args) => createDelegateRunPort.call(...args),
       ...input,
     });
 
@@ -1433,7 +1445,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       } as Message['metadata'],
     });
     updateDelegateMessageStatus(context.repo, followUp, 'running');
-    await wakeMember({
+    await wakeMemberPort.call({
       organizationId: orgId,
       memberId: ctx.recipientId,
       threadId: ctx.threadId,
@@ -1455,29 +1467,20 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     sendToDelegate: sendToDelegateImpl,
   };
 
-  // Late-bound resume callback — runs is constructed below and plugged in.
-  let resumeRun: (
-    organizationId: string,
-    runId: string,
-    allowRun?: boolean,
-    approvalScope?: string,
-  ) => Promise<unknown> | unknown = () => {
-    throw new Error('resumeRun not wired');
-  };
-
-  let resumeInputRun: (
-    organizationId: string,
-    runId: string,
-    allowRun?: boolean,
-  ) => Promise<unknown> | unknown = () => {
-    throw new Error('resumeInputRun not wired');
-  };
+  const resumeRunPort = new WirePort<
+    [string, string, boolean | undefined, string | undefined],
+    Promise<unknown> | unknown
+  >('resumeRun');
+  const resumeInputRunPort = new WirePort<
+    [string, string, boolean | undefined],
+    Promise<unknown> | unknown
+  >('resumeInputRun');
 
   const approvalsImpl = new ApprovalService(
     context.repo,
     context.realtime,
     (orgId, runId, allowRun, approvalScope) =>
-      resumeRun(orgId, runId, allowRun, approvalScope),
+      resumeRunPort.call(orgId, runId, allowRun, approvalScope),
   );
 
   const approvalRequester: ApprovalRequester = {
@@ -1487,7 +1490,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   const spiritModelResolver =
     context.spiritModelResolver ??
     createSpiritModelResolver(context.teamStore, context.repo);
-  summarizeConversation = async (messages, mode, runSteps, abortSignal) => {
+  summarizeConversationPort.bind(async (messages, mode, runSteps, abortSignal) => {
     const agent = [...messages]
       .reverse()
       .map((message) => context.repo.getMember(message.organizationId, message.senderId))
@@ -1510,10 +1513,10 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
         reasoningEffort: 'none',
       }),
     });
-  };
+  });
   const goals = new GoalSystemService(
     context.repo,
-    (orgId, runId, allowRun) => resumeInputRun(orgId, runId, allowRun),
+    (orgId, runId, allowRun) => resumeInputRunPort.call(orgId, runId, allowRun),
     conversations,
   );
 
@@ -1570,7 +1573,16 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     },
   );
 
-  const ai = new AiService(context.teamStore, context.repo, tools);
+  const mcpToolResolverPort = new WirePort<
+    [Parameters<McpToolResolver>[0]],
+    ReturnType<McpToolResolver>
+  >('mcpToolResolver');
+  const ai = new AiService(
+    context.teamStore,
+    context.repo,
+    tools,
+    (input) => mcpToolResolverPort.call(input),
+  );
 
   // Phase 2.C.1 — single shared in-memory registry. SpiritService writes
   // (spawn/retire/complete) and reads on every alert.
@@ -1623,7 +1635,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
       attachmentCapture: attachmentCaptureClosure,
     },
   );
-  createDelegateRun = (run) => spirits.createRun(run);
+  createDelegateRunPort.bind((run) => spirits.createRun(run));
 
   // Plug SpiritService's MCP tool resolver into AiService now that
   // both exist. This is what gives the wake-run path (advanceRun ->
@@ -1636,12 +1648,12 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // others get byte-for-byte legacy. Without this the wake-run path
   // bypassed the flag and DM → agent calls produced zero connector_*
   // events even when V2 was on.
-  ai.setMcpToolResolver((ctx) => spirits.buildMcpToolDefinitionsRouted(ctx));
+  mcpToolResolverPort.bind((ctx) => spirits.buildMcpToolDefinitionsRouted(ctx));
   const runs = spirits;
-  resumeRun = async (orgId, runId, allowRun = true, approvalScope) =>
-    spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope);
-  resumeInputRun = async (orgId, runId, allowRun = true) =>
-    spirits.resumeAfterInput(orgId, runId, allowRun);
+  resumeRunPort.bind((orgId, runId, allowRun = true, approvalScope) =>
+    spirits.resumeAfterApproval(orgId, runId, allowRun, approvalScope));
+  resumeInputRunPort.bind((orgId, runId, allowRun = true) =>
+    spirits.resumeAfterInput(orgId, runId, allowRun));
   // Hydrate the in-memory registry from persisted spirits BEFORE alert
   // handling begins. Without this, a daemon restart would see an empty
   // registry and fall through to regular wake runs for already-active work.
@@ -1656,6 +1668,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     goals,
     spirits: { createRun: (runInput) => spirits.createRun(runInput) },
     getWorkspaceRoot: (orgId) => context.teamStore.getTeam(orgId)?.workspace.root,
+    realtime: context.realtime,
   });
   const workflowEngine = new WorkflowEngineService(context.repo, workflowEffects);
   workflowEffects.setEngine(workflowEngine);
@@ -1674,9 +1687,9 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // `debounced` result means the supervisor intentionally suppressed
   // the alert (second mention in a 2s burst) — falling through there
   // would spawn a duplicate run that defeats the debounce.
-  wakeMember = async (input) => {
+  wakeMemberPort.bind(async (input) => {
     await wakeMemberWithFailureEvents(wakeMemberDeps, input);
-  };
+  });
 
   const authDomain = createAuthDomain({
     repo: context.repo,
@@ -1964,25 +1977,19 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
   // trajectory is already constructed inside createSchedulerDomain.
 
   // Late-bind the run-completed hook. The single hook routes to
-  // drain-pending-member-alert, memory-review's turn counter, and
-  // the trajectory writer.
+  // the workflow engine (child-run → node-run correlation + completion
+  // decisions), drain-pending-member-alert, memory-review's turn
+  // counter, and the trajectory writer.
   spirits.setRunCompletedHook(async (run) => {
-    // If this run backs a workflow node, capture its envelope + advance the
-    // graph. Only act on truly terminal runs — a run that pauses for tool
-    // approval / input is not done and will re-fire this hook when it resumes.
-    const wfTerminal = ['completed', 'failed', 'cancelled'];
-    if (wfTerminal.includes(run.status)) {
-      const wfNodeRun = context.repo.getWorkflowNodeRunByChildRun(run.id);
-      if (wfNodeRun) {
-        await workflowEngine.onNodeComplete({
-          organizationId: run.organizationId,
-          workflowRunId: wfNodeRun.workflowRunId,
-          nodeRunId: wfNodeRun.id,
-          failed: run.status !== 'completed',
-          failureReason: run.status !== 'completed' ? `agent_run_${run.status}` : undefined,
-        });
-      }
-    }
+    // If this run backs a workflow node, the engine captures its envelope +
+    // advances the graph. It ignores non-workflow runs and non-terminal
+    // statuses itself (a run paused for tool approval / input re-fires this
+    // hook when it resumes).
+    await workflowEngine.handleAgentRunCompleted({
+      organizationId: run.organizationId,
+      runId: run.id,
+      status: run.status,
+    });
 
     const sourceMessageId = run.sourceMessageId;
     if (sourceMessageId) {
@@ -2025,7 +2032,7 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
           });
           const threadId = parentThreadId;
           const parentThread = context.repo.getThread(run.organizationId, threadId);
-          await wakeMember({
+          await wakeMemberPort.call({
             organizationId: run.organizationId,
             memberId: parentRun.agentId,
             threadId,

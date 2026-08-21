@@ -1,13 +1,17 @@
 import type { LanguageModel, ModelMessage, ToolSet } from 'ai';
-import {
+import type {
   runAgentLoop,
+  AgentLoopChunk,
+  AgentLoopStep,
   ContextLengthExceededError,
-  type AgentLoopChunk,
-  type AgentLoopStep,
-  type HumanPause,
+  HumanPause,
 } from '@ujima/agent-core';
 import type { McpServerSummary } from './spirit-mcp-helpers.js';
-import { configureClaudeCodeTools } from '@ujima/llm';
+import {
+  runAgentLoopWithRetry,
+  supportsTemperature,
+  wrapToolFallback,
+} from '@ujima/agent-runtime';
 
 export {
   RUN_TERMINATING_TOOL_NAMES,
@@ -33,30 +37,7 @@ export type {
   HumanPause,
 } from '@ujima/agent-core';
 
-export interface RunAgentLoopRetryHooks {
-  onContextLengthExceeded?: (error: ContextLengthExceededError) => Promise<ModelMessage[] | null>;
-}
-
-export async function runAgentLoopWithRetry(
-  buildArgs: () => Parameters<typeof runAgentLoop>[0],
-  hooks: RunAgentLoopRetryHooks = {},
-): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
-  let contextReduced = false;
-  while (true) {
-    try {
-      return await runAgentLoop(buildArgs());
-    } catch (error) {
-      if (error instanceof ContextLengthExceededError && !contextReduced && hooks.onContextLengthExceeded) {
-        contextReduced = true;
-        const reduced = await hooks.onContextLengthExceeded(error);
-        if (reduced) {
-          continue;
-        }
-      }
-      throw error;
-    }
-  }
-}
+export type { LoopRetryHooks as RunAgentLoopRetryHooks } from '@ujima/agent-runtime';
 
 export interface RunAgentExecutionConfig {
   model: LanguageModel;
@@ -81,21 +62,17 @@ export interface RunAgentRetryHooks {
   onContextLengthExceeded?: (error: ContextLengthExceededError) => Promise<ModelMessage[] | null>;
 }
 
+/**
+ * Spirit-mode host entry: delegates the shared machinery (tool adapter,
+ * temperature decision, retry/compaction policy) to the consolidated host in
+ * `@ujima/agent-runtime`, keeping only the mode-specific message mutation for
+ * compaction here.
+ */
 export async function runAgentWithRetry(
   config: RunAgentExecutionConfig,
   hooks?: RunAgentRetryHooks,
 ): Promise<Awaited<ReturnType<typeof runAgentLoop>>> {
-  const model = configureClaudeCodeTools(config.model, async (toolName, args, toolCallId) => {
-    const definition = config.tools[toolName] as {
-      execute?: (input: Record<string, unknown>, context: Record<string, unknown>) => Promise<unknown>;
-    } | undefined;
-    if (!definition?.execute) return { error: `Tool not found: ${toolName}` };
-    return definition.execute(args, {
-      toolCallId,
-      abortSignal: config.abortSignal,
-      messages: [],
-    });
-  });
+  const model = wrapToolFallback(config.model, config.tools, config.abortSignal);
   const temperature = supportsTemperature(model) ? config.temperature : undefined;
   let compacted = false;
 
@@ -133,7 +110,5 @@ export async function runAgentWithRetry(
   );
 }
 
-function supportsTemperature(model: LanguageModel): boolean {
-  const meta = model as { provider?: string; modelId?: string };
-  return !(meta.provider === 'openai.responses' && /^gpt-5(?:\.|$|-)/.test(meta.modelId ?? ''));
-}
+export { runAgentLoopWithRetry, supportsTemperature } from '@ujima/agent-runtime';
+export type { LoopRetryHooks } from '@ujima/agent-runtime';

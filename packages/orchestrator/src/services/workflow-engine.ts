@@ -1,6 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {
   MAIN_FLOW_KINDS,
+  latestNodeRuns,
   normalizeWorkflowGraph,
   validateWorkflowGraph,
   type NodeOutput,
@@ -29,11 +30,19 @@ import {
 // ---------------------------------------------------------------------------
 // WorkflowEngineService — the deterministic, durable, server-driven stepper.
 //
-// It owns graph traversal + run state; node *execution* is injected via the
-// `WorkflowEffects` port (spawn an agent run, raise an approval, start a goal,
-// stat an output file, notify the initiator). This preserves n8n's hard split
-// between the execution engine and the nodes, and keeps the state machine
-// unit-testable with fakes.
+// It is the SINGLE authority over workflow run state: status transitions,
+// latency stamps (startedAt/completedAt on every node run), completion
+// detection, and node-output derivation all live here. Node *execution* is
+// injected via the `WorkflowEffects` port (spawn an agent run, raise an
+// approval, start a goal, stat an output file, notify the initiator). This
+// preserves n8n's hard split between the execution engine and the nodes, and
+// keeps the state machine unit-testable with fakes.
+//
+// The agent-facing tools are thin adapters: `workflow.advance` calls into
+// `advance()` below and never writes node-run state itself; the child-run →
+// node-run correlation for a completed agent run lives in
+// `handleAgentRunCompleted()` (the run-completed hook at the composition root
+// just calls it — no correlation logic there).
 //
 // DB rule (matches the repo's `transaction` helper): state mutations run
 // synchronously inside a transaction; async side effects (spawning, file I/O,
@@ -44,10 +53,6 @@ import {
 export interface WorkflowEngineStore {
   transaction<T>(fn: () => T): T;
   getWorkflowDefinition(organizationId: string, id: string): WorkflowDefinition | null;
-  getWorkflowDefinitionByName(
-    organizationId: string,
-    name: string,
-  ): WorkflowDefinition | null;
   /** Channel-scoped + org-wide definitions, ordered channel-scoped first. */
   listWorkflowDefinitionsForChannel(
     organizationId: string,
@@ -59,6 +64,8 @@ export interface WorkflowEngineStore {
   saveWorkflowNodeRun(nodeRun: WorkflowNodeRun): WorkflowNodeRun;
   getWorkflowNodeRun(workflowRunId: string, id: string): WorkflowNodeRun | null;
   listWorkflowNodeRuns(workflowRunId: string): WorkflowNodeRun[];
+  /** Correlate a child agent run back to its workflow node run. */
+  getWorkflowNodeRunByChildRun(childRunId: string): WorkflowNodeRun | null;
 }
 
 export interface SpawnAgentNodeInput {
@@ -181,6 +188,8 @@ export interface WorkflowEffects {
   postRunUpdate(input: PostRunUpdateInput): Promise<void>;
   /** Spawn an agent to review + resolve an approval gate via workflow.transition. */
   spawnApproverAgent(input: SpawnApproverAgentInput): Promise<void>;
+  /** Publish the canonical run snapshot to realtime consumers. */
+  publishRunUpdated?(input: WorkflowRunLiveUpdate): Promise<void> | void;
 }
 
 export interface StartRunInput {
@@ -207,6 +216,47 @@ export interface NodeCompleteInput {
   failureReason?: string;
 }
 
+/**
+ * The `workflow.advance` contract: an agent node's run finished its work and
+ * hands its envelope (summary / json / output path) to the engine. The tool
+ * is a thin adapter over this — the engine resolves the calling run to its
+ * node run and persists the envelope as the single writer of run state.
+ */
+export interface AdvanceInput {
+  organizationId: string;
+  /** The calling agent run's id — correlated to its workflow node run. */
+  runId: string;
+  summary: string;
+  json?: unknown;
+  /** Override the node's designated output path. */
+  outputPath?: string;
+  idempotencyKey?: string;
+}
+
+export interface AdvanceResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * The run-completed hook contract: a child agent run went terminal. The
+ * engine decides whether it backs a workflow node run and drives the
+ * completion; the composition root keeps no correlation logic of its own.
+ */
+export interface AgentRunCompletedInput {
+  organizationId: string;
+  /** The finished agent run's id. */
+  runId: string;
+  /** The run's terminal status (whichever string the runtime persisted). */
+  status: string;
+}
+
+export interface WorkflowRunLiveUpdate {
+  organizationId: string;
+  run: WorkflowRun;
+  nodeRuns: WorkflowNodeRun[];
+}
+
 export interface TransitionInput {
   organizationId: string;
   workflowRunId: string;
@@ -218,6 +268,45 @@ export interface TransitionInput {
 export interface TransitionResult {
   ok: boolean;
   idempotent?: boolean;
+}
+
+function createWorkflowNodeRun(input: {
+  workflowRunId: string;
+  nodeId: string;
+  attempt: number;
+  kind: WorkflowNodeRun['kind'];
+  status: WorkflowNodeRun['status'];
+  agentId?: string | null;
+  childRunId?: string | null;
+  outputPath?: string | null;
+  outputSha256?: string | null;
+  outputSizeBytes?: number | null;
+  outputJson?: unknown;
+  summary?: string | null;
+  approvalRequestId?: string | null;
+  failureReason?: string | null;
+  startedAt: string;
+  completedAt?: string | null;
+}): WorkflowNodeRun {
+  return {
+    id: randomUUID(),
+    workflowRunId: input.workflowRunId,
+    nodeId: input.nodeId,
+    attempt: input.attempt,
+    kind: input.kind,
+    agentId: input.agentId ?? null,
+    childRunId: input.childRunId ?? null,
+    outputPath: input.outputPath ?? null,
+    outputSha256: input.outputSha256 ?? null,
+    outputSizeBytes: input.outputSizeBytes ?? null,
+    outputJson: input.outputJson,
+    summary: input.summary ?? null,
+    approvalRequestId: input.approvalRequestId ?? null,
+    status: input.status,
+    failureReason: input.failureReason ?? null,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt ?? null,
+  };
 }
 
 export class WorkflowValidationError extends Error {
@@ -332,18 +421,20 @@ export class WorkflowEngineService {
       workflowRunId: runId,
     });
 
+    await this.publishState(input.organizationId, runId);
     await this.stepRun(input.organizationId, runId);
+    await this.publishState(input.organizationId, runId);
     return {workflowRunId: runId};
   }
 
   /** The heart: dispatch every node whose main-flow predecessors are done. */
-  async stepRun(organizationId: string, workflowRunId: string): Promise<void> {
+  private async stepRun(organizationId: string, workflowRunId: string): Promise<void> {
     const run = this.store.getWorkflowRun(organizationId, workflowRunId);
     if (!run || run.status !== 'running') return;
 
     const graph = this.parseGraph(run);
     const nodeRuns = this.store.listWorkflowNodeRuns(workflowRunId);
-    const latest = this.latestByNode(nodeRuns);
+    const latest = latestNodeRuns(nodeRuns);
     const outputs = buildNodeOutputs(nodeRuns);
 
     const ready: WorkflowNode[] = [];
@@ -360,6 +451,7 @@ export class WorkflowEngineService {
 
     for (const node of ready) {
       await this.dispatchNode(run, graph, node, outputs, 1);
+      await this.publishState(organizationId, workflowRunId);
       const fresh = this.store.getWorkflowRun(organizationId, workflowRunId);
       if (!fresh || fresh.status !== 'running') return; // an approval paused the run
     }
@@ -375,7 +467,7 @@ export class WorkflowEngineService {
   async onNodeComplete(input: NodeCompleteInput): Promise<void> {
     const nodeRun = this.store.getWorkflowNodeRun(input.workflowRunId, input.nodeRunId);
     if (!nodeRun) return;
-    if (TERMINAL_DONE_STATUSES.has(nodeRun.status)) return; // idempotent
+    if (TERMINAL_DONE_STATUSES.has(nodeRun.status) || nodeRun.status === 'failed') return; // idempotent
     const nowIso = new Date().toISOString();
 
     if (input.failed) {
@@ -388,6 +480,7 @@ export class WorkflowEngineService {
         });
         this.setRunStatus(input.organizationId, input.workflowRunId, 'paused');
       });
+      await this.publishState(input.organizationId, input.workflowRunId);
       await this.notify(input.organizationId, input.workflowRunId, `Step "${nodeRun.nodeId}" failed`, nodeRun.nodeId);
       await this.postFailedCard(input.organizationId, input.workflowRunId);
       return;
@@ -404,22 +497,26 @@ export class WorkflowEngineService {
       }
     }
 
-    const producedOutput = sha !== null || input.json !== undefined;
-    if (nodeRun.kind === 'agent' && !producedOutput) {
+    const currentNodeRun = this.store.getWorkflowNodeRun(input.workflowRunId, input.nodeRunId) ?? nodeRun;
+    if (TERMINAL_DONE_STATUSES.has(currentNodeRun.status) || currentNodeRun.status === 'failed') return;
+    const producedOutput =
+      sha !== null || input.json !== undefined || currentNodeRun.outputJson !== undefined;
+    if (currentNodeRun.kind === 'agent' && !producedOutput) {
       this.store.transaction(() => {
         this.store.saveWorkflowNodeRun({
-          ...nodeRun,
+          ...currentNodeRun,
           status: 'failed',
           failureReason: 'output_not_written',
           completedAt: nowIso,
         });
         this.setRunStatus(input.organizationId, input.workflowRunId, 'paused');
       });
+      await this.publishState(input.organizationId, input.workflowRunId);
       await this.notify(
         input.organizationId,
         input.workflowRunId,
-        `Step "${nodeRun.nodeId}" produced no output`,
-        nodeRun.nodeId,
+        `Step "${currentNodeRun.nodeId}" produced no output`,
+        currentNodeRun.nodeId,
       );
       await this.postFailedCard(input.organizationId, input.workflowRunId);
       return;
@@ -427,10 +524,10 @@ export class WorkflowEngineService {
 
     this.store.transaction(() => {
       this.store.saveWorkflowNodeRun({
-        ...nodeRun,
+        ...currentNodeRun,
         status: 'completed',
-        summary: input.summary ?? nodeRun.summary ?? '(no summary)',
-        outputJson: input.json ?? nodeRun.outputJson,
+        summary: input.summary ?? currentNodeRun.summary ?? '(no summary)',
+        outputJson: input.json ?? currentNodeRun.outputJson,
         outputPath: outputPath ?? null,
         outputSha256: sha,
         outputSizeBytes: size,
@@ -438,10 +535,64 @@ export class WorkflowEngineService {
       });
     });
 
+    await this.publishState(input.organizationId, input.workflowRunId);
+
     const fresh = this.store.getWorkflowRun(input.organizationId, input.workflowRunId);
     if (fresh && fresh.status === 'running') {
       await this.stepRun(input.organizationId, input.workflowRunId);
     }
+  }
+
+  /**
+   * `workflow.advance` — the in-node terminator. The tool calls only this
+   * method; the engine resolves the calling agent run to its node run and
+   * persists the envelope (summary / json / output path) as the single writer
+   * of node-run state. The node itself is completed when the agent's run
+   * finishes (via `handleAgentRunCompleted` → `onNodeComplete`).
+   */
+  async advance(input: AdvanceInput): Promise<AdvanceResult> {
+    const nodeRun = this.store.getWorkflowNodeRunByChildRun(input.runId);
+    if (!nodeRun) return {ok: false, error: 'this run is not a workflow node run'};
+    const run = this.store.getWorkflowRun(input.organizationId, nodeRun.workflowRunId);
+    if (!run) return {ok: false, error: 'this run is not a workflow node run'};
+    // The node already went terminal (e.g. the completion hook fired first) —
+    // the advance intent is already satisfied; do not clobber terminal state.
+    if (TERMINAL_DONE_STATUSES.has(nodeRun.status) || nodeRun.status === 'failed') {
+      return {ok: true};
+    }
+    this.store.transaction(() => {
+      this.store.saveWorkflowNodeRun({
+        ...nodeRun,
+        summary: input.summary,
+        outputJson: input.json ?? nodeRun.outputJson,
+        outputPath: input.outputPath ?? nodeRun.outputPath,
+      });
+    });
+    await this.publishState(input.organizationId, nodeRun.workflowRunId);
+    // `idempotencyKey` is accepted for contract parity; stashing the same
+    // envelope twice is a no-op overwrite, so the key needs no persistence.
+    return {ok: true};
+  }
+
+  /**
+   * The run-completed hook's workflow leg. The composition root calls this
+   * with every terminal agent run; the engine correlates the child run to its
+   * node run (state determination lives here, not in the hook) and drives
+   * `onNodeComplete`, which marks the node done and steps the graph forward.
+   */
+  async handleAgentRunCompleted(input: AgentRunCompletedInput): Promise<void> {
+    // Only terminal runs finish a node; a run paused for tool approval / input
+    // is not done and will re-fire this hook when it resumes.
+    if (!['completed', 'failed', 'cancelled'].includes(input.status)) return;
+    const nodeRun = this.store.getWorkflowNodeRunByChildRun(input.runId);
+    if (!nodeRun) return;
+    await this.onNodeComplete({
+      organizationId: input.organizationId,
+      workflowRunId: nodeRun.workflowRunId,
+      nodeRunId: nodeRun.id,
+      failed: input.status !== 'completed',
+      failureReason: input.status !== 'completed' ? `agent_run_${input.status}` : undefined,
+    });
   }
 
   /** retry / skip / abort / approve / reject — single idempotent entrypoint. */
@@ -465,7 +616,7 @@ export class WorkflowEngineService {
       return {ok: true, idempotent: true};
     }
 
-    const latest = this.latestByNode(this.store.listWorkflowNodeRuns(input.workflowRunId));
+    const latest = latestNodeRuns(this.store.listWorkflowNodeRuns(input.workflowRunId));
     const nowIso = new Date().toISOString();
 
     switch (input.action) {
@@ -483,6 +634,7 @@ export class WorkflowEngineService {
           }
           this.setRunStatus(input.organizationId, input.workflowRunId, 'running', input.idempotencyKey);
         });
+        await this.publishState(input.organizationId, input.workflowRunId);
         await this.stepRun(input.organizationId, input.workflowRunId);
         return {ok: true};
       }
@@ -500,6 +652,7 @@ export class WorkflowEngineService {
           }
           this.setRunStatus(input.organizationId, input.workflowRunId, 'paused', input.idempotencyKey);
         });
+        await this.publishState(input.organizationId, input.workflowRunId);
         await this.notify(
           input.organizationId,
           input.workflowRunId,
@@ -512,6 +665,7 @@ export class WorkflowEngineService {
         this.store.transaction(() => {
           this.setRunStatus(input.organizationId, input.workflowRunId, 'failed', input.idempotencyKey);
         });
+        await this.publishState(input.organizationId, input.workflowRunId);
         await this.postFailedCard(input.organizationId, input.workflowRunId);
         return {ok: true};
       }
@@ -521,6 +675,7 @@ export class WorkflowEngineService {
         this.store.transaction(() => {
           this.setRunStatus(input.organizationId, input.workflowRunId, 'running', input.idempotencyKey);
         });
+        await this.publishState(input.organizationId, input.workflowRunId);
         const runningRun = this.store.getWorkflowRun(input.organizationId, input.workflowRunId);
         if (runningRun) {
           const graph = this.parseGraph(runningRun);
@@ -545,17 +700,10 @@ export class WorkflowEngineService {
           });
           this.setRunStatus(input.organizationId, input.workflowRunId, 'running', input.idempotencyKey);
         });
+        await this.publishState(input.organizationId, input.workflowRunId);
         await this.stepRun(input.organizationId, input.workflowRunId);
         return {ok: true};
       }
-    }
-  }
-
-  /** Re-dispatch runs left `running` after a process restart. */
-  async recoverInFlight(organizationId: string): Promise<void> {
-    const runs = this.store.listWorkflowRunsByStatus(organizationId, ['running']);
-    for (const run of runs) {
-      await this.stepRun(organizationId, run.id);
     }
   }
 
@@ -654,27 +802,17 @@ export class WorkflowEngineService {
     outputs: Map<string, NodeOutput>,
     attempt: number,
   ): Promise<void> {
-    const nodeRunId = randomUUID();
     const nowIso = new Date().toISOString();
-    const base: WorkflowNodeRun = {
-      id: nodeRunId,
+    const base = createWorkflowNodeRun({
       workflowRunId: run.id,
       nodeId: node.id,
       attempt,
       kind: 'agent',
       agentId: node.config.agentId,
-      childRunId: null,
-      outputPath: null,
-      outputSha256: null,
-      outputSizeBytes: null,
-      outputJson: undefined,
-      summary: null,
-      approvalRequestId: null,
       status: 'pending',
-      failureReason: null,
       startedAt: nowIso,
-      completedAt: null,
-    };
+    });
+    const nodeRunId = base.id;
     const tokenCtx: TokenContext = {input: run.input ?? '', workflowRunId: run.id, outputs};
     // A downstream `output` node declares the required format + owns the path.
     const outputSpec = findDownstreamOutputSpec(graph, node.id);
@@ -751,27 +889,16 @@ export class WorkflowEngineService {
     outputs: Map<string, NodeOutput>,
     attempt: number,
   ): Promise<void> {
-    const nodeRunId = randomUUID();
     const nowIso = new Date().toISOString();
-    const base: WorkflowNodeRun = {
-      id: nodeRunId,
+    const base = createWorkflowNodeRun({
       workflowRunId: run.id,
       nodeId: node.id,
       attempt,
       kind: 'approval',
-      agentId: null,
-      childRunId: null,
-      outputPath: null,
-      outputSha256: null,
-      outputSizeBytes: null,
-      outputJson: undefined,
-      summary: null,
-      approvalRequestId: null,
       status: 'awaiting_approval',
-      failureReason: null,
       startedAt: nowIso,
-      completedAt: null,
-    };
+    });
+    const nodeRunId = base.id;
     this.store.transaction(() => this.store.saveWorkflowNodeRun(base));
 
     const priorSummary = this.nearestUpstreamSummary(graph, node.id, outputs);
@@ -814,27 +941,15 @@ export class WorkflowEngineService {
     outputs: Map<string, NodeOutput>,
     attempt: number,
   ): Promise<void> {
-    const nodeRunId = randomUUID();
     const nowIso = new Date().toISOString();
-    const base: WorkflowNodeRun = {
-      id: nodeRunId,
+    const base = createWorkflowNodeRun({
       workflowRunId: run.id,
       nodeId: node.id,
       attempt,
       kind: 'goal_handoff',
-      agentId: null,
-      childRunId: null,
-      outputPath: null,
-      outputSha256: null,
-      outputSizeBytes: null,
-      outputJson: undefined,
-      summary: null,
-      approvalRequestId: null,
       status: 'pending',
-      failureReason: null,
       startedAt: nowIso,
-      completedAt: null,
-    };
+    });
     this.store.transaction(() => this.store.saveWorkflowNodeRun(base));
 
     const tokenCtx: TokenContext = {input: run.input ?? '', workflowRunId: run.id, outputs};
@@ -888,25 +1003,20 @@ export class WorkflowEngineService {
     const nowIso = new Date().toISOString();
     const upstream = this.nearestUpstreamOutput(graph, node.id, outputs);
     this.store.transaction(() =>
-      this.store.saveWorkflowNodeRun({
-        id: randomUUID(),
+      this.store.saveWorkflowNodeRun(
+        createWorkflowNodeRun({
         workflowRunId: run.id,
         nodeId: node.id,
         attempt,
         kind: 'output',
-        agentId: null,
-        childRunId: null,
         outputPath: upstream?.output_file ?? null,
-        outputSha256: null,
-        outputSizeBytes: null,
         outputJson: upstream?.json,
         summary: `Output · ${node.config.format}`,
-        approvalRequestId: null,
         status: 'completed',
-        failureReason: null,
         startedAt: nowIso,
         completedAt: nowIso,
-      }),
+        }),
+      ),
     );
     // The output node completes synchronously; re-step to dispatch what's now ready.
     await this.stepRun(run.organizationId, run.id);
@@ -953,15 +1063,6 @@ export class WorkflowEngineService {
     return normalizeWorkflowGraph(JSON.parse(run.graphSnapshot));
   }
 
-  private latestByNode(nodeRuns: WorkflowNodeRun[]): Map<string, WorkflowNodeRun> {
-    const latest = new Map<string, WorkflowNodeRun>();
-    for (const nr of nodeRuns) {
-      const prev = latest.get(nr.nodeId);
-      if (!prev || nr.attempt >= prev.attempt) latest.set(nr.nodeId, nr);
-    }
-    return latest;
-  }
-
   private latestFailed(latest: Map<string, WorkflowNodeRun>): WorkflowNodeRun | undefined {
     return [...latest.values()]
       .filter((nr) => nr.status === 'failed')
@@ -1003,7 +1104,7 @@ export class WorkflowEngineService {
     const run = this.store.getWorkflowRun(organizationId, workflowRunId);
     if (!run || run.status !== 'running') return;
     const graph = this.parseGraph(run);
-    const latest = this.latestByNode(this.store.listWorkflowNodeRuns(workflowRunId));
+    const latest = latestNodeRuns(this.store.listWorkflowNodeRuns(workflowRunId));
     const mainNodes = graph.nodes.filter((n) => MAIN_FLOW_KINDS.includes(n.kind));
     const anyActive = [...latest.values()].some((nr) => ACTIVE_NODE_STATUSES.has(nr.status));
     const allTerminal = mainNodes.every((n) => {
@@ -1012,6 +1113,7 @@ export class WorkflowEngineService {
     });
     if (allTerminal && !anyActive) {
       this.setRunStatus(organizationId, workflowRunId, 'completed');
+      await this.publishState(organizationId, workflowRunId);
       await this.effects.postRunUpdate({
         organizationId,
         channelId: run.channelId,
@@ -1038,6 +1140,17 @@ export class WorkflowEngineService {
       workflowName: run.name,
       workflowRunId,
       status: 'failed',
+    });
+  }
+
+  private async publishState(organizationId: string, workflowRunId: string): Promise<void> {
+    if (!this.effects.publishRunUpdated) return;
+    const run = this.store.getWorkflowRun(organizationId, workflowRunId);
+    if (!run) return;
+    await this.effects.publishRunUpdated({
+      organizationId,
+      run,
+      nodeRuns: this.store.listWorkflowNodeRuns(workflowRunId),
     });
   }
 

@@ -36,7 +36,7 @@ describe("groupTraceSteps", () => {
     expect(groupTraceSteps([])).toEqual([]);
   });
 
-  it("folds consecutive tool steps from the same actor into a single group", () => {
+  it("folds all tool steps from the same actor into one unified group", () => {
     const steps: TraceStepData[] = [
       fsStep({ id: "s1", actorId: "carter-jordan", actor: "Carter Jordan", verb: "is writing to", path: "/foo.ts" }),
       {
@@ -56,7 +56,44 @@ describe("groupTraceSteps", () => {
     expect(grouped).toHaveLength(1);
     expect(grouped[0]?.actorId).toBe("carter-jordan");
     expect(grouped[0]?.aggregatedOperations).toHaveLength(2);
-    expect(grouped[0]?.title).toBe("Carter Jordan · completed");
+    expect(grouped[0]?.title).toBe("Carter Jordan");
+  });
+
+  it("keeps each run as its own unified activity group without status rows", () => {
+    const steps: TraceStepData[] = [
+      fsStep({ id: "s1", actorId: "carter-jordan", actor: "Carter Jordan", verb: "is reading", path: "/a.ts", runId: "run-1" }),
+      {
+        id: "run:run-1",
+        actorId: "carter-jordan",
+        actorName: "Carter Jordan",
+        title: "Run · completed",
+        detail: "",
+        time: "00:00",
+        duration: "—",
+        status: "success",
+        runId: "run-1",
+      },
+      fsStep({ id: "s2", actorId: "carter-jordan", actor: "Carter Jordan", verb: "is writing to", path: "/b.ts", runId: "run-2" }),
+      {
+        id: "run:run-2",
+        actorId: "carter-jordan",
+        actorName: "Carter Jordan",
+        title: "Run · failed",
+        detail: "",
+        time: "00:00",
+        duration: "—",
+        status: "failed",
+        runId: "run-2",
+      },
+    ];
+
+    const grouped = groupTraceSteps(steps);
+
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0]?.title).toBe("Carter Jordan");
+    expect(grouped[1]?.title).toBe("Carter Jordan");
+    expect(grouped[0]?.aggregatedOperations).toHaveLength(1);
+    expect(grouped[1]?.aggregatedOperations).toHaveLength(1);
   });
 
   it("preserves structured payloads for memory and message tool UX", () => {

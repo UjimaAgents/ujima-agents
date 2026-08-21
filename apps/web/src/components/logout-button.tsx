@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { clientFetchVoid } from "@/lib/client-api";
 
 export function LogoutButton() {
   const router = useRouter();
@@ -12,7 +13,7 @@ export function LogoutButton() {
       type="button"
       onClick={() => {
         startTransition(async () => {
-          await fetch("/api/auth/logout", { method: "POST" });
+          await clientFetchVoid("/api/auth/logout", { method: "POST" }, "Unable to sign out.");
           router.replace("/login");
           router.refresh();
         });

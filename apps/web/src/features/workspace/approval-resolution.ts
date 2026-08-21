@@ -1,17 +1,17 @@
+import { clientFetchJson } from "@/lib/client-api";
+
 export interface ApprovalResolutionInput {
   organizationId: string;
   approvalId: string;
   resolution: "allow_once" | "allow_always" | "allow_family" | "reject";
-  fetchImpl?: typeof fetch;
 }
 
 export async function resolveWorkspaceApproval({
   organizationId,
   approvalId,
   resolution,
-  fetchImpl = fetch,
-}: ApprovalResolutionInput): Promise<Response> {
-  return fetchImpl(`/api/approvals/${approvalId}/resolve`, {
+}: ApprovalResolutionInput): Promise<unknown> {
+  return clientFetchJson<unknown>(`/api/approvals/${approvalId}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -19,5 +19,5 @@ export async function resolveWorkspaceApproval({
       resolution,
       reason: `Resolved from workspace (${resolution}).`,
     }),
-  });
+  }, "Unable to resolve approval.");
 }

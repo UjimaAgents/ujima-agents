@@ -4,6 +4,7 @@ import { normalizeRunStepToolCalls } from '../utils/step-tool-calls.js';
 import { appendArtifactFileToolCall } from './artifact-file-card.js';
 import { appendGoalTaskToolCalls } from './goal-task-card.js';
 import { appendScheduleToolCalls } from './schedule-card.js';
+import { buildAgentMessage } from './message-factory.js';
 import type { AgentLoopStep } from './agent-loop.js';
 import { normalizeToDottedToolName, runUsedThreadPublishingTool, stepContainsSilentTerminator } from './run-reply-guard.js';
 
@@ -48,6 +49,38 @@ export function composedStepToolCalls(prepared: PreparedAgentStepPublication): M
     ...prepared.cards,
     ...(prepared.artifact ? [prepared.artifact] : []),
   ];
+}
+
+/**
+ * The single step→messages assembler used by every publication path
+ * (spirit bubbles, direct-run live steps, final reply trace). Splits
+ * content parts, gates tool calls and reasoning onto the last part,
+ * and stamps the shared metadata. Callers only choose the transport.
+ */
+export function buildAgentStepMessages(input: {
+  organizationId: string;
+  threadId: string;
+  channelId?: string;
+  senderId: string;
+  runId: string;
+  prepared: PreparedAgentStepPublication;
+  toolCalls: MessageToolCall[];
+  metadata: Record<string, unknown>;
+}): ReturnType<typeof buildAgentMessage>[] {
+  const parts = input.prepared.contentParts.length > 0 ? input.prepared.contentParts : [input.prepared.content];
+  return parts.map((content, partIndex) => {
+    const isLastPart = partIndex === parts.length - 1;
+    return buildAgentMessage({
+      organizationId: input.organizationId,
+      threadId: input.threadId,
+      channelId: input.channelId,
+      senderId: input.senderId,
+      content,
+      metadata: input.metadata,
+      ...(isLastPart && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}),
+      ...(isLastPart && input.prepared.reasoningContent ? { reasoningContent: input.prepared.reasoningContent } : {}),
+    });
+  });
 }
 
 export async function prepareAgentStepPublication(

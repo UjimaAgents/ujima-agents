@@ -1,9 +1,10 @@
 "use client";
 
-import type { ApiError, AuthSessionResponse } from "@ujima/api-schema";
+import type { AuthSessionResponse } from "@ujima/api-schema";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Select } from "@/components/ui/select";
+import { clientFetchJson } from "@/lib/client-api";
 
 interface LoginFormProps {
   organizations: { id: string; name: string }[];
@@ -27,7 +28,7 @@ export function LoginForm({ organizations }: LoginFormProps) {
     }
 
     startTransition(async () => {
-      const response = await fetch("/api/auth/login", {
+      const body = await clientFetchJson<unknown>("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -35,19 +36,13 @@ export function LoginForm({ organizations }: LoginFormProps) {
           password,
           organizationId: organizationId || undefined,
         }),
+      }, "Unable to sign in right now.").catch((error) => {
+        setError(error instanceof Error ? error.message : "Unable to sign in right now.");
+        return null;
       });
+      if (!body) return;
 
-      const body = (await response.json().catch(() => null)) as ApiError | AuthSessionResponse | null;
-      if (!response.ok) {
-        setError(
-          body && typeof body === "object" && "message" in body && typeof body.message === "string"
-            ? body.message
-            : "Unable to sign in right now.",
-        );
-        return;
-      }
-
-      const session = body as AuthSessionResponse | null;
+      const session = body as AuthSessionResponse;
       if (!session?.auth?.authenticated) {
         setError("Signed in without a valid session. Try again.");
         return;

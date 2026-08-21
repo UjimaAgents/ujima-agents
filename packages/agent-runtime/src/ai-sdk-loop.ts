@@ -5,8 +5,6 @@ import {
   type ModelMessage,
   type ToolSet,
 } from 'ai';
-import { runAgentLoop } from '@ujima/agent-core';
-import { configureClaudeCodeTools } from '@ujima/llm';
 import { z } from 'zod';
 import type { AgentDef, UjimaEvent } from '@ujima/shared';
 import { DEFAULT_SPIRIT_TEMPERATURE } from '@ujima/shared';
@@ -14,13 +12,12 @@ import type { AuditLog } from '@ujima/context-store';
 import type { MCPConnection, ToolInfo } from '@ujima/mcp-client';
 import type { PermissionMiddleware } from '@ujima/permissions';
 import { matchesEscalation } from './escalation';
+import { runAgentLoopWithRetry, supportsTemperature, wrapToolFallback } from './loop-host';
 
 /**
- * Agent-runtime host wrapper. Tool execution stays local here, while the model
- * loop itself is delegated to `@ujima/agent-core`.
- *
- * This is engine = 'ai-sdk' (the default post-E0). Engine = 'legacy' keeps
- * the hand-rolled `runToolLoop` path alive for two clean releases.
+ * Agent-runtime task-mode host wrapper. Tool execution stays local here,
+ * while the loop machinery (tool adapter, retry/compaction policy) lives in
+ * `./loop-host`, shared with the orchestrator's spirit-mode host.
  */
 export interface AiSdkLoopInputs {
   agent: AgentDef;
@@ -296,42 +293,45 @@ export async function runAiSdkLoop(input: AiSdkLoopInputs): Promise<AiSdkLoopOut
   const toolSet = Object.fromEntries(
     mcpTools.map((t) => [t.name, wrapMcpTool(t)]),
   ) as ToolSet;
-  const runnableModel = configureClaudeCodeTools(model, async (toolName, args, toolCallId) => {
-    const definition = toolSet[toolName] as {
-      execute?: (input: Record<string, unknown>, context: Record<string, unknown>) => Promise<unknown>;
-    } | undefined;
-    if (!definition?.execute) return { error: `Tool not found: ${toolName}` };
-    return definition.execute(args, {
-      toolCallId,
-      abortSignal,
-      messages: [],
-    });
-  });
+  const runnableModel = wrapToolFallback(model, toolSet, abortSignal);
 
-  const messages: ModelMessage[] = [
-    ...(input.contextMessages ?? []),
+  // Messages are rebuilt per loop attempt so the compaction hook can drop
+  // the Zone 2 context block and retry with the bare task prompt.
+  let zone2Active = true;
+  const buildMessages = (): ModelMessage[] => [
+    ...(zone2Active ? (input.contextMessages ?? []) : []),
     { role: 'user', content: userPrompt },
   ];
+  const runTemperature = supportsTemperature(runnableModel) ? temperature : undefined;
 
   stream('agent_turn_started', { iteration: 1 });
 
   try {
-    const result = await runAgentLoop({
-      model: runnableModel,
-      system: systemPrompt,
-      messages,
-      tools: toolSet,
-      stopWhen: stepCountIs(maxIterations),
-      abortSignal,
-      onStepFinish: () => {
-        iterations++;
+    const result = await runAgentLoopWithRetry(
+      () => ({
+        model: runnableModel,
+        system: systemPrompt,
+        messages: buildMessages(),
+        tools: toolSet,
+        stopWhen: stepCountIs(maxIterations),
+        abortSignal,
+        onStepFinish: () => {
+          iterations++;
+        },
+        onChunk: (chunk) => {
+          if (chunk.kind === 'text') stream('agent_thought_delta', { text: chunk.delta });
+        },
+        ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+        temperature: runTemperature,
+      }),
+      {
+        onContextLengthExceeded: async () => {
+          if (!zone2Active || !input.contextMessages?.length) return null;
+          zone2Active = false;
+          return buildMessages();
+        },
       },
-      onChunk: (chunk) => {
-        if (chunk.kind === 'text') stream('agent_thought_delta', { text: chunk.delta });
-      },
-      ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
-      temperature,
-    });
+    );
 
     const finalText = result.text;
     const usage = result.usage;

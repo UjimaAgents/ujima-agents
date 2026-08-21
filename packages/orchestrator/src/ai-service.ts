@@ -79,8 +79,11 @@ export class AiService {
   constructor(
     private readonly teamStore: TeamStore,
     private readonly repo: ApiRepository,
-    private readonly tools: ToolService
-  ) {}
+    private readonly tools: ToolService,
+    mcpToolResolver?: McpToolResolver,
+  ) {
+    this.mcpToolResolver = mcpToolResolver;
+  }
 
   /**
    * Plug in the MCP tool palette resolver. Production wiring sets this

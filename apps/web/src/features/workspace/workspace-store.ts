@@ -34,6 +34,15 @@ export type WorkspaceTab =
 export type WorkspaceDetailsTab = "Thinking trace" | "Changes" | "Metadata";
 export type ChatFontSize = "normal" | "large" | "xlarge" | "xxlarge" | "3xlarge" | "6xlarge";
 
+export const CHAT_FONT_SIZE_OPTIONS: { value: ChatFontSize; label: string }[] = [
+  { value: "normal", label: "Normal" },
+  { value: "large", label: "Large" },
+  { value: "xlarge", label: "X-Large" },
+  { value: "xxlarge", label: "2X Large" },
+  { value: "3xlarge", label: "3X Large" },
+  { value: "6xlarge", label: "6X Large" },
+];
+
 export interface ActiveJob {
   runId: string;
   jobId: string;

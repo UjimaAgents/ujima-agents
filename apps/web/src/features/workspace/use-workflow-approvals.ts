@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect } from "react";
+import { SocketEventNames } from "@ujima/shared/browser";
 import {
   listWorkflowApprovals,
   transitionWorkflowRun,
@@ -8,8 +9,8 @@ import {
   type WorkflowToolApproval,
 } from "@/features/workflows/use-workflows";
 import type { ApprovalCardData } from "./components/chat";
-import { usePolling } from "@/hooks/use-polling";
 import { useWorkspaceStore } from "./workspace-store";
+import { subscribeWorkspaceLiveEvents } from "./live-events";
 
 /** Map a pending workflow gate into the shared approval-queue card shape. */
 export function workflowApprovalToCard(wf: WorkflowApproval): ApprovalCardData {
@@ -80,30 +81,31 @@ export async function resolveWorkflowGate(
   );
 }
 
-const WORKFLOW_APPROVALS_POLL_MS = 15000;
-
 /**
- * Polls pending workflow gates and feeds them into the approval store, so they
- * surface in the same "Approval N of M" queue + floating pending pill as MCP
- * approvals. Mounted once at the workspace shell.
- *
- * Kept deliberately light: it pauses while the tab is hidden and only writes to
- * the store when the pending set actually changed (a signature compare), so a
- * steady state costs one cheap request per interval and zero re-renders.
+ * Loads pending workflow gates once, then refreshes them from the workspace
+ * event stream so they share the normal approval queue.
  */
-export function useWorkflowApprovalsPoll(): void {
+export function useWorkflowApprovalsLive(): void {
   const setWorkflowApprovals = useWorkspaceStore((state) => state.setWorkflowApprovals);
-  const lastSignature = useRef("");
-  const poll = useCallback(async () => {
+  const refresh = useCallback(async () => {
     const { approvals, toolApprovals } = await listWorkflowApprovals();
     const cards = [
       ...approvals.map(workflowApprovalToCard),
       ...toolApprovals.map(toolApprovalToCard),
     ];
-    const signature = cards.map((c) => c.id).sort().join("|");
-    if (signature === lastSignature.current) return;
-    lastSignature.current = signature;
     setWorkflowApprovals(cards);
   }, [setWorkflowApprovals]);
-  usePolling(poll, { intervalMs: WORKFLOW_APPROVALS_POLL_MS });
+
+  useEffect(() => {
+    void refresh();
+    return subscribeWorkspaceLiveEvents(({ event }) => {
+      if (
+        event === SocketEventNames.workflowRunUpdated ||
+        event === SocketEventNames.approvalRequested ||
+        event === SocketEventNames.approvalResolved
+      ) {
+        void refresh();
+      }
+    });
+  }, [refresh]);
 }
