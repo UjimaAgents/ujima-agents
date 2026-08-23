@@ -158,6 +158,66 @@ export const goalStartTool: OrchestratorTool<typeof GoalStartSchema> = {
   },
 };
 
+const GoalModeSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('create'),
+    title: z.string().min(1),
+    description: z.string().min(1),
+  }),
+  z.object({
+    action: z.enum(['resume', 'pause', 'stop']),
+    goal_id: z.string().min(1).optional(),
+  }),
+]);
+
+export const goalModeTool: OrchestratorTool<typeof GoalModeSchema> = {
+  id: 'goal.mode',
+  schema: GoalModeSchema,
+  toInvocation: (args) => ({
+    action: args.action === 'create' ? 'create' : 'update',
+    resourceType: 'goal',
+    ...(args.action === 'create' ? {} : { resourcePath: args.goal_id }),
+    input: args,
+    bypassPermission: true,
+  }),
+  execute: (ctx) => {
+    const input = ctx.invocation.input as z.infer<typeof GoalModeSchema>;
+    const organizationId = ctx.invocation.organizationId;
+    const channelId = invocationChannelId(ctx);
+
+    if (input.action === 'create') {
+      return {
+        status: 'completed',
+        action: 'create',
+        goal: ctx.goals.create({
+          organizationId,
+          channelId,
+          supervisorId: ctx.invocation.memberId,
+          title: input.title,
+          description: input.description,
+        }),
+      };
+    }
+
+    const goal =
+      (input.goal_id ? ctx.repo.getGoal(organizationId, input.goal_id) : null) ??
+      ctx.repo.getGoalByChannel(organizationId, channelId);
+    if (!goal) {
+      throw new Error(
+        `No goal found for this conversation${input.goal_id ? ` (goal_id "${input.goal_id}")` : ''}. ` +
+          `Call goal.mode with action "create" first.`,
+      );
+    }
+    if (input.action === 'resume') {
+      return { status: 'completed', action: 'resume', goal: ctx.goals.resume(organizationId, goal.id) };
+    }
+    if (input.action === 'pause') {
+      return { status: 'completed', action: 'pause', goal: ctx.goals.pause(organizationId, goal.id) };
+    }
+    return { status: 'completed', action: 'stop', goal: ctx.goals.stop(organizationId, goal.id) };
+  },
+};
+
 export const questionAskTool: OrchestratorTool<typeof QuestionAskSchema> = {
   id: 'question.ask',
   schema: QuestionAskSchema,

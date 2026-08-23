@@ -7,6 +7,7 @@ import { buildHistoricalTraceSteps } from "../reasoning-trace";
 import { groupTraceSteps } from "../trace-grouping";
 import { TraceStep } from "./chat/details-sidebar";
 import type { TraceStepData } from "./chat/trace-types";
+import { TRACE_ROW_STYLE } from "./chat/trace-layout";
 import { clientFetchJson } from "@/lib/client-api";
 
 const TRACE_PAGE_SIZE = 8;
@@ -363,7 +364,7 @@ export function ReasoningTracePanel({
   const traceList = (
     <>
       <div ref={rootRef} className="relative min-h-0">
-        <div className="space-y-1.5">
+        <div>
           {loadingMore ? (
             <div className="sticky top-0 z-10 -mx-1 mb-1 flex items-center gap-2 bg-background/90 px-1 py-1 text-[10px] text-foreground/40 backdrop-blur">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -379,22 +380,23 @@ export function ReasoningTracePanel({
             />
           ))}
           {startedAtMs !== undefined ? (
-            <div className="relative pl-6 pb-2 pt-1 animate-in fade-in duration-300">
+            <div
+              className="relative min-w-0 pb-2 pt-1 animate-in fade-in duration-300"
+              style={TRACE_ROW_STYLE}
+            >
               {traceRows.length > 0 ? (
                 <div
-                  className="absolute left-1 -top-2 h-4 w-px bg-foreground/10"
-                  aria-hidden
+                  className="pointer-events-none absolute -top-2 left-2.5 h-4 w-px bg-foreground/10"
+                  aria-hidden="true"
                 />
               ) : null}
-              <div
-                className="absolute left-0 top-1.5 z-[1] h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-600"
-                aria-hidden
-              />
-              <div
-                className="absolute left-0 top-1.5 z-[1] h-2.5 w-2.5 rounded-full bg-zinc-400 ring-[3px] ring-zinc-400/20 dark:bg-zinc-500 dark:ring-zinc-500/20"
-                aria-hidden
-              />
-              <div className="flex items-center gap-2 text-[11px] font-semibold text-foreground/55 tabular-nums">
+              <div className="relative z-[1] flex h-5 w-5 items-center justify-center">
+                <span
+                  className="h-2.5 w-2.5 rounded-full bg-zinc-400 ring-[3px] ring-zinc-400/20 dark:bg-zinc-500 dark:ring-zinc-500/20"
+                  aria-hidden="true"
+                />
+              </div>
+              <div className="flex min-h-5 items-center gap-2 text-[11px] font-semibold text-foreground/55 tabular-nums">
                 <Loader2 className="h-3 w-3 animate-spin shrink-0 text-foreground/45" />
                 <ElapsedBadge startedAtMs={startedAtMs} />
               </div>

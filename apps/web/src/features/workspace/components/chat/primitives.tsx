@@ -173,7 +173,7 @@ export function Chevron({ open }: { open: boolean }) {
 }
 
 const ROW_BUTTON_CLASS =
-  "flex w-full flex-wrap items-center gap-2 text-xs text-foreground/70 hover:text-foreground/90 text-left transition-colors";
+  "trace-step-text flex min-h-5 w-full flex-wrap items-center gap-2 text-foreground/70 hover:text-foreground/90 text-left transition-colors";
 
 export function ExpandableRow({
   expanded,
@@ -181,6 +181,7 @@ export function ExpandableRow({
   header,
   trailing,
   indent = false,
+  className = "",
   children,
 }: {
   expanded: boolean;
@@ -188,10 +189,11 @@ export function ExpandableRow({
   header: React.ReactNode;
   trailing?: React.ReactNode;
   indent?: boolean;
+  className?: string;
   children?: React.ReactNode;
 }) {
   return (
-    <div className={`py-1 animate-in fade-in duration-200 ${indent ? "pl-2" : ""}`}>
+    <div className={`animate-in fade-in duration-200 ${indent ? "pl-2" : ""} ${className}`}>
       <button type="button" onClick={onToggle} className={ROW_BUTTON_CLASS}>
         <span className="flex-1 min-w-0 truncate text-left">{header}</span>
         {trailing && <span className="shrink-0 ml-auto mr-1.5">{trailing}</span>}

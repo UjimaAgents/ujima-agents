@@ -89,6 +89,7 @@ export const TOOL_REGISTRY: Record<string, ToolEntry> = {
   web_search: { id: 'web_search', status: 'active', alwaysAvailable: true, supervisorAllowed: true, explorerDelegate: true },
 
   // ── Goals / questions ─────────────────────────────────────
+  'goal.mode':        { id: 'goal.mode',        status: 'active', alwaysAvailable: true, supervisorAllowed: true },
   'goal.start':       { id: 'goal.start',       status: 'active', alwaysAvailable: true, supervisorAllowed: true },
   'goal.task.update': { id: 'goal.task.update', status: 'active', alwaysAvailable: true, supervisorAllowed: true },
   'question.ask':    { id: 'question.ask',    status: 'active', alwaysAvailable: true, supervisorAllowed: true },
