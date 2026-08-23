@@ -213,6 +213,7 @@ export async function runAgentLoop(input: {
   stopWhen: NonNullable<Parameters<typeof streamText>[0]['stopWhen']>;
   maxOutputTokens?: number;
   temperature?: number;
+  providerOptions?: Parameters<typeof streamText>[0]['providerOptions'];
   toolChoice?: Parameters<typeof streamText>[0]['toolChoice'];
   abortSignal?: AbortSignal;
   loadInterruptMessages?: (step: AgentLoopStep) => Promise<ModelMessage[]> | ModelMessage[];
@@ -277,6 +278,7 @@ export async function runAgentLoop(input: {
       stopWhen,
       ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+      ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
       ...(input.toolChoice !== undefined ? { toolChoice: input.toolChoice } : {}),
       ...(onChunk

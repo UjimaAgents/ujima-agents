@@ -525,14 +525,14 @@ function GoalToolPane({
           : action === "pause" ? title ? `Paused goal · ${title}` : "Paused goal"
             : action === "stop" ? title ? `Stopped goal · ${title}` : "Stopped goal"
               : title ? `Updated ${title}` : "Updated goal";
-  const status = stringValue(result.status) ?? stringValue(goal.status) ?? (op.status === "success" ? "completed" : op.status);
+  const status = stringValue(goal.status) ?? stringValue(result.status) ?? (op.status === "success" ? undefined : op.status);
 
   return (
     <ExpandableRow
       expanded={expanded}
       onToggle={onToggle}
       header={<span className="trace-step-text truncate font-semibold leading-snug text-foreground/85">{header}</span>}
-      trailing={renderSingleStatusBadge(status)}
+      trailing={status ? renderSingleStatusBadge(status) : null}
     >
       <div className="trace-step-text mt-2 space-y-2 leading-relaxed text-foreground/65">
         {plan ? (

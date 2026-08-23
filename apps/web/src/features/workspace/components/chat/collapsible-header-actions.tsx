@@ -62,7 +62,7 @@ export function CollapsibleHeaderActions(props: Props) {
       </button>
 
       {menuOpen ? (
-        <div className="absolute bottom-full right-0 z-50 mb-2 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-zinc-200/50 bg-white/90 p-1.5 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.08),_0_0_1px_rgba(0,0,0,0.03)] backdrop-blur-sm dark:border-zinc-800/50 dark:bg-zinc-950/90 animate-in fade-in slide-in-from-bottom-1 duration-150">
+        <div className="absolute bottom-full right-0 z-50 mb-2 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-zinc-200 bg-white p-1.5 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.16)] dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in slide-in-from-bottom-1 duration-150">
           <div className="border-b border-zinc-100/50 pb-1.5 dark:border-zinc-800/50">
             <button
               type="button"

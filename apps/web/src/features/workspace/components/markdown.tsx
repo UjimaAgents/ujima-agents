@@ -149,8 +149,13 @@ function stripScriptTags(content: string): string {
     .replace(/<\/script>/gi, "&lt;/script&gt;");
 }
 
+export function normalizeCompactionSummaryMarkdown(content: string): string {
+  if (!/^#{1,6}\s+Work State\s*$/m.test(content)) return content;
+  return content.replace(/^(\s*)-\s+-\s+/gm, "$1- ");
+}
+
 export function renderMarkdown(content: string, mentionNames: string[]): string {
-  return marked.parse(stripScriptTags(content), {
+  return marked.parse(stripScriptTags(normalizeCompactionSummaryMarkdown(content)), {
     gfm: true,
     breaks: true,
     renderer: getRenderer(mentionNames),

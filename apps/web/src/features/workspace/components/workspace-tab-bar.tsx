@@ -37,6 +37,7 @@ interface WorkspaceTabBarProps {
   onToggleDetails?: () => void;
   /** Mobile-only hamburger that opens the sidebar as an overlay drawer. */
   onToggleSidebar?: () => void;
+  agentColorIndexById?: ReadonlyMap<string, number>;
 }
 
 export function WorkspaceTabBar({
@@ -52,6 +53,7 @@ export function WorkspaceTabBar({
   showDetails = false,
   onToggleDetails,
   onToggleSidebar,
+  agentColorIndexById,
 }: WorkspaceTabBarProps) {
   return (
     <div className="flex h-10 w-full shrink-0 select-none items-center overflow-hidden border-b border-zinc-200/80 bg-zinc-100/60 px-2 dark:border-zinc-800/80 dark:bg-zinc-950/80 z-20">
@@ -112,7 +114,11 @@ export function WorkspaceTabBar({
                 ) : tab.type === "channel" ? (
                   <Hash className="h-3.5 w-3.5 text-zinc-400" />
                 ) : tab.type === "agent" ? (
-                  <Avatar name={tab.title} size="xs" />
+                  <Avatar
+                    name={tab.title}
+                    colorIndex={agentColorIndexById?.get(tab.targetId ?? "") ?? 0}
+                    size="xs"
+                  />
                 ) : (
                   <MessageSquare className="h-3.5 w-3.5 text-zinc-400" />
                 )}

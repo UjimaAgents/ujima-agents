@@ -48,6 +48,7 @@ export interface RunAgentExecutionConfig {
   stopWhen: Parameters<typeof runAgentLoop>[0]['stopWhen'];
   maxOutputTokens?: number;
   temperature?: number;
+  providerOptions?: Parameters<typeof runAgentLoop>[0]['providerOptions'];
   toolChoice?: Parameters<typeof runAgentLoop>[0]['toolChoice'];
   abortSignal?: AbortSignal;
   onChunk?: (chunk: AgentLoopChunk) => PromiseLike<void> | void;
@@ -85,6 +86,7 @@ export async function runAgentWithRetry(
       stopWhen: config.stopWhen,
       maxOutputTokens: config.maxOutputTokens,
       temperature,
+      providerOptions: config.providerOptions,
       toolChoice: config.toolChoice,
       abortSignal: config.abortSignal,
       onChunk: config.onChunk,

@@ -11,7 +11,7 @@ import {
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { Avatar, TagBadge, type TagVariant } from "./primitives";
 import { MessageActions } from "../message-actions";
-import { Markdown, MarkdownInline } from "../markdown";
+import { Markdown, MarkdownInline, normalizeCompactionSummaryMarkdown } from "../markdown";
 import { AttachmentGrid } from "./attachment-grid";
 import { TerminalPane } from "./terminal-pane";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
@@ -512,9 +512,9 @@ export function systemMessageBodyMarkdown(content: string): string | null {
       .slice(1)
       .filter((line) => !SUMMARY_GUIDANCE.has(line.trim()))
       .join("\n")
-      .trim()
-      .replace(/^(\s*)-\s+-\s+/gm, "$1- ");
-    return body.length > 0 ? body : null;
+      .trim();
+    const normalizedBody = normalizeCompactionSummaryMarkdown(body);
+    return normalizedBody.length > 0 ? normalizedBody : null;
   }
   if (content.startsWith("[Approval needed]")) {
     const rest = content.split("\n").slice(1).join("\n").trim();

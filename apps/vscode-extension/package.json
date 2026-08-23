@@ -2,7 +2,7 @@
   "name": "ujima-vscode-extension",
   "displayName": "Ujima",
   "description": "An agent operating system for your editor.",
-  "version": "0.0.71",
+  "version": "0.0.72",
   "private": true,
   "publisher": "ujima",
   "repository": {
