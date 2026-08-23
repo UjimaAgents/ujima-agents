@@ -1,13 +1,17 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, Workflow, X } from "lucide-react";
-import type { WorkflowRun } from "@ujima/shared";
-import { usePolling } from "@/hooks/use-polling";
+import { SocketEventNames, WorkflowRunUpdatedEventSchema, type WorkflowRun } from "@ujima/shared/browser";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { listWorkflowRuns } from "./use-workflows";
+import { subscribeWorkspaceLiveEvents } from "@/features/workspace/live-events";
 
-const POLL_MS = 8000;
+const ACTIVE_STATUSES = new Set<WorkflowRun["status"]>([
+  "running",
+  "awaiting_approval",
+  "paused",
+]);
 
 /**
  * Floating, workspace-wide indicator that a workflow run is in progress. Mirrors
@@ -18,20 +22,38 @@ const POLL_MS = 8000;
 export function WorkflowRunsIndicator(): React.ReactElement | null {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [open, setOpen] = useState(false);
-  const lastSignature = useRef("");
   const openWorkflowRunDrawer = useWorkspaceStore((s) => s.openWorkflowRunDrawer);
 
-  const poll = useCallback(async () => {
-    const active = await listWorkflowRuns("running");
-    const signature = active.map((r) => r.id).sort().join("|");
-    if (signature === lastSignature.current) return;
-    lastSignature.current = signature;
-    setRuns(active);
+  const refresh = useCallback(async () => {
+    const [running, awaiting, paused] = await Promise.all([
+      listWorkflowRuns("running").catch(() => []),
+      listWorkflowRuns("awaiting_approval").catch(() => []),
+      listWorkflowRuns("paused").catch(() => []),
+    ]);
+    const activeMap = new Map<string, WorkflowRun>();
+    [...running, ...awaiting, ...paused].forEach((r) => activeMap.set(r.id, r));
+    setRuns(Array.from(activeMap.values()));
   }, []);
-  usePolling(poll, { intervalMs: POLL_MS });
+
+  useEffect(() => {
+    queueMicrotask(() => void refresh());
+    return subscribeWorkspaceLiveEvents(({ event, payload }) => {
+      if (event !== SocketEventNames.workflowRunUpdated) return;
+      const parsed = WorkflowRunUpdatedEventSchema.safeParse(payload);
+      if (!parsed.success) return;
+      setRuns((current) => {
+        const next = current.filter((run) => run.id !== parsed.data.run.id);
+        if (ACTIVE_STATUSES.has(parsed.data.run.status)) next.push(parsed.data.run);
+        return next;
+      });
+    });
+  }, [refresh]);
 
   if (runs.length === 0) return null;
-  const label = runs.length === 1 ? "1 workflow running" : `${runs.length} workflows running`;
+  const label =
+    runs.length === 1
+      ? `1 workflow ${runs[0].status === "running" ? "running" : "active"}`
+      : `${runs.length} active workflows`;
 
   return (
     <div className="fixed bottom-[4.75rem] right-4 z-40 flex flex-col items-end gap-2">

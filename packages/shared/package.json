@@ -1,12 +1,14 @@
 {
   "name": "@ujima/shared",
-  "version": "0.0.70",
+  "version": "0.0.71",
   "private": true,
   "main": "./dist/index.js",
+  "browser": "./dist/browser.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "browser": "./dist/browser.js",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },

@@ -347,7 +347,6 @@ export function IndustryCarousel() {
   useEffect(() => {
     if (!paused) startTimer();
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused]);
 
   return (

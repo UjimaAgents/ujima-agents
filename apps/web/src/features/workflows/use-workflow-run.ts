@@ -1,16 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WorkflowTransitionAction } from "@ujima/shared";
-import { usePolling } from "@/hooks/use-polling";
+import { SocketEventNames, WorkflowRunUpdatedEventSchema, type WorkflowTransitionAction } from "@ujima/shared/browser";
 import { getWorkflowRun, transitionWorkflowRun, type WorkflowRunDetail } from "./use-workflows";
-
-const ACTIVE_STATUSES = new Set(["running", "awaiting_approval"]);
+import { subscribeWorkspaceLiveEvents } from "@/features/workspace/live-events";
 
 /**
- * Loads a workflow run's detail, polls while it's active, and exposes the
- * transition action. Shared by the full-page run view and the in-channel run
- * drawer so both stay consistent.
+ * Loads a workflow run's detail and refreshes it from the workspace's canonical
+ * workflow snapshot event.
  */
 export function useWorkflowRun(runId: string) {
   const [detail, setDetail] = useState<WorkflowRunDetail | null>(null);
@@ -48,19 +45,21 @@ export function useWorkflowRun(runId: string) {
     };
   }, [runId, load]);
 
-  // Poll while the run is active so status/steps stay live. The hook prevents
-  // overlap and pauses hidden tabs.
-  usePolling(load, {
-    intervalMs: 2500,
-    enabled: Boolean(detail && ACTIVE_STATUSES.has(detail.run.status)),
-    immediate: false,
-  });
+  useEffect(() => {
+    return subscribeWorkspaceLiveEvents(({ event, payload }) => {
+      if (event !== SocketEventNames.workflowRunUpdated) return;
+      const parsed = WorkflowRunUpdatedEventSchema.safeParse(payload);
+      if (parsed.success && parsed.data.run.id === runId) void load();
+    });
+  }, [load, runId]);
 
   const act = useCallback(
-    async (action: WorkflowTransitionAction) => {
-      let reason: string | undefined;
-      if (action === "reject") {
-        reason = window.prompt("Reason for rejection?") ?? undefined;
+    async (action: WorkflowTransitionAction, rejectionReason?: string) => {
+      let reason: string | undefined = rejectionReason;
+      if (action === "reject" && rejectionReason === undefined) {
+        const input = window.prompt("Reason for rejection?");
+        if (input === null) return;
+        reason = input || undefined;
       }
       setBusy(true);
       try {

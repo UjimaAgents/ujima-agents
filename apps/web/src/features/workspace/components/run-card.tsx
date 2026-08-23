@@ -26,12 +26,12 @@ export const RunCard = memo(function RunCard({ run, blockedReason }: { run: RunS
           <p className="text-xs font-bold text-zinc-900 dark:text-white">
             {run.summary || "Run"}
           </p>
-          <p className="text-[10px] text-zinc-500">
-            {run.step || run.status} · {run.agentId}
+          <p className="text-xs text-zinc-500">
+            {run.step || run.status.split("_").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")} · {run.agentId}
           </p>
           {blockedReason ? (
-            <p className="mt-1 text-[10px] text-red-600 dark:text-red-400">
-              Blocked reason: {blockedReason}
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+              Blocked: {blockedReason}
             </p>
           ) : null}
         </div>

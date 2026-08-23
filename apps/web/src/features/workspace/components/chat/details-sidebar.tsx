@@ -8,9 +8,9 @@ import { GrepToolPane } from "./grep-tool-pane";
 import { WebSearchToolPane } from "./web-search-tool-pane";
 import { SkillReadPane } from "./skill-read-pane";
 import { UnifiedDiffView } from "./unified-diff-view";
-import { AggregatedRunPanel, SemanticToolPane, TraceMarkdown } from "./aggregated-run-panel";
+import { AggregatedRunPanel, SemanticToolPane, ToolCallIcon, TraceMarkdown } from "./aggregated-run-panel";
 import { collectFileChanges } from "../../change-summary";
-import type { TraceStepData } from "./trace-types";
+import type { AggregatedOperation, TraceStepData } from "./trace-types";
 
 export type { TraceStepData } from "./trace-types";
 export const TraceStep = memo(function TraceStep({
@@ -24,11 +24,16 @@ export const TraceStep = memo(function TraceStep({
   autoOpen?: boolean;
 }) {
   const {subject, remainder} = splitTraceTitle(step.title);
+  const isUnifiedRun = Boolean(step.aggregatedOperations?.length);
+  const markerType = isUnifiedRun
+    ? step.aggregatedOperations?.[0]?.type ?? "tool"
+    : getTraceOperationType(step);
   const rowMargin = step.title.startsWith("Run ·") ? "mt-2" : "";
   const rowPadding = isLast ? "pb-0" : "pb-4";
   const body = step.aggregatedOperations && step.aggregatedOperations.length > 0 ? (
     <AggregatedRunPanel
       operations={step.aggregatedOperations}
+      actorName={step.actorName}
       autoOpen={Boolean(autoOpen || (isLast && step.status === "running"))}
     />
   ) : step.terminal?.streamingJob ? (
@@ -102,58 +107,73 @@ export const TraceStep = memo(function TraceStep({
     <div
       className={`relative pl-6 ${rowMargin} ${rowPadding}`}
     >
-      <div
-        className={`absolute left-0 top-1.5 z-[1] h-2 w-2 rounded-full ring-[1.5px] ring-background ${
-          step.status === "success"
-            ? "bg-emerald-500"
-            : step.status === "failed"
-              ? "bg-red-500"
-              : "bg-violet-500 animate-pulse ring-[3px] ring-violet-500/20"
-        }`}
-        aria-hidden
-      />
+      <span
+        className="pointer-events-none z-[2] flex h-5 w-5 items-center justify-center rounded-sm bg-background text-foreground/45"
+        style={{ position: "absolute", left: -6, top: 2 }}
+        aria-hidden="true"
+      >
+        <ToolCallIcon type={markerType} className="h-3.5 w-3.5" />
+      </span>
       {!isLast ? (
         <div
-          className="absolute bottom-0 left-1 top-5 w-px bg-gradient-to-b from-violet-500/25 to-foreground/5"
+          className="absolute bottom-0 left-1 top-5 w-px bg-zinc-300 dark:bg-zinc-700"
           aria-hidden
         />
       ) : null}
 
       <div className="min-w-0">
-        <div className="flex min-h-5 items-baseline justify-between gap-3">
-          <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
-            <p className="min-w-0 text-xs leading-snug text-foreground trace-step-title">
-              <span className="font-semibold">{subject}</span>
-              {remainder ? (
-                <span className="font-normal">{remainder}</span>
-              ) : null}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-baseline gap-2.5 whitespace-nowrap text-[11px] tabular-nums leading-snug text-foreground/45">
-            <span>{step.time}</span>
-            {step.duration && !["—", "0ms", "0s", "0"].includes(step.duration.trim()) && (
-              <span className="min-w-[4ch] text-end">{step.duration}</span>
-            )}
-          </div>
-        </div>
-        {step.reasoning ? (
-          <details className="mt-2" open={step.status === "running"}>
-            <summary className="cursor-pointer list-none text-[11px] leading-snug text-foreground/45">
-              Thinking
-            </summary>
-            <TraceMarkdown content={step.reasoning} tone="text-foreground/60" />
-          </details>
-        ) : null}
-        {body ? <div className="mt-2">{body}</div> : null}
-        {step.subtext ? (
-          <p className="mt-2 text-[11px] leading-snug text-foreground/45">
-            {step.subtext}
-          </p>
-        ) : null}
+        {isUnifiedRun ? body : (
+          <>
+            <div className="flex min-h-5 items-baseline justify-between gap-3">
+              <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
+                <p className="min-w-0 text-xs leading-snug text-foreground trace-step-title">
+                  <span className="font-semibold">{subject}</span>
+                  {remainder ? <span className="font-normal">{remainder}</span> : null}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-baseline gap-2.5 whitespace-nowrap text-[11px] tabular-nums leading-snug text-foreground/45">
+                <span>{step.time}</span>
+                {step.duration && !["—", "0ms", "0s", "0"].includes(step.duration.trim()) && (
+                  <span className="min-w-[4ch] text-end">{step.duration}</span>
+                )}
+              </div>
+            </div>
+            {step.reasoning ? (
+              <details className="mt-2" open={step.status === "running"}>
+                <summary className="cursor-pointer list-none text-[11px] leading-snug text-foreground/45">
+                  Thinking
+                </summary>
+                <TraceMarkdown content={step.reasoning} tone="text-foreground/60" />
+              </details>
+            ) : null}
+            {body ? <div className="mt-2">{body}</div> : null}
+            {step.subtext ? (
+              <p className="mt-2 text-[11px] leading-snug text-foreground/45">{step.subtext}</p>
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );
 });
+
+function getTraceOperationType(step: TraceStepData): AggregatedOperation["type"] {
+  if (step.filesystem) {
+    return step.filesystem.action === "write" ? "edit" : "read";
+  }
+  if (step.grep || step.webSearch) return "search";
+  if (step.terminal) return "shell";
+  if (step.skillRead) return "skill";
+  const toolName = step.toolName ?? "";
+  if (toolName.startsWith("memory.")) return "memory";
+  if (toolName.startsWith("goal.")) return "goal";
+  if (toolName.startsWith("question.")) return "question";
+  if (toolName.startsWith("self.procedure.")) return "procedure";
+  if (toolName === "schedule") return "schedule";
+  if (toolName === "agent.delegate") return "delegate";
+  if (toolName === "message" || toolName.startsWith("channel.")) return "message";
+  return "tool";
+}
 
 function splitTraceTitle(title: string): {subject: string; remainder: string} {
   const trimmed = title.trim();

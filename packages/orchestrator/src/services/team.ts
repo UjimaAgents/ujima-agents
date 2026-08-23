@@ -1,4 +1,4 @@
-import type { AgentTeamHandle } from '@ujima/framework';
+import { normalizeProviderKey, type AgentTeamHandle } from '@ujima/framework';
 import type { ProviderAuthMode } from '@ujima/shared';
 import { hasCodexAccessToken } from '../utils/codex-auth.js';
 import { hasClaudeCodeLogin } from '../utils/claude-code-auth.js';
@@ -38,13 +38,20 @@ export function listProviderStatuses(
   credentials: Record<string, boolean>,
 ): ProviderStatus[] {
   const providers: ProviderStatus[] = [];
+  const normalizedCredentials = new Set(
+    Object.keys(credentials).map(normalizeProviderKey),
+  );
 
   for (const name of Object.keys(team.providers)) {
     const authMode = providerAuthMode(team, name);
     const baseUrl = team.providers[name]?.baseUrl;
     providers.push({
       name,
-      hasKey: authMode === 'chatgpt' ? hasCodexAccessToken() : (authMode as string) === 'claude-code' ? hasClaudeCodeLogin() : Boolean(credentials[name]),
+      hasKey: authMode === 'chatgpt'
+        ? hasCodexAccessToken()
+        : (authMode as string) === 'claude-code'
+          ? hasClaudeCodeLogin()
+          : normalizedCredentials.has(normalizeProviderKey(name)),
       authMode,
       ...(baseUrl ? { baseUrl } : {}),
     });
@@ -57,28 +64,29 @@ export function validateProviderKeys(
   team: AgentTeamHandle,
   providerKeys: Record<string, string>,
 ): { unknownProviders: string[]; missingProviders: string[] } {
+  const teamProviderNames = new Set(Object.keys(team.providers).map(normalizeProviderKey));
+  const credentialNames = new Set(Object.keys(providerKeys).map(normalizeProviderKey));
+
   const unknownProviders: string[] = [];
   for (const providerName of Object.keys(providerKeys)) {
-    if (!team.providers[providerName]) {
+    if (!teamProviderNames.has(normalizeProviderKey(providerName))) {
       unknownProviders.push(providerName);
     }
   }
 
   const missingProviders: string[] = [];
   for (const role of team.roles) {
-    if (!role.provider) {
+    const provider = role.provider;
+    if (!provider || provider === 'ollama') {
       continue;
     }
-    if (role.provider === 'ollama') {
-      continue;
-    }
-    const authMode = providerAuthMode(team, role.provider);
+    const authMode = providerAuthMode(team, provider);
     if (authMode === 'chatgpt' || authMode === 'claude-code') {
       continue;
     }
 
-    if (!providerKeys[role.provider] && !missingProviders.includes(role.provider)) {
-      missingProviders.push(role.provider);
+    if (!credentialNames.has(normalizeProviderKey(provider)) && !missingProviders.includes(provider)) {
+      missingProviders.push(provider);
     }
   }
 

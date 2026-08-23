@@ -13,6 +13,7 @@ import {
 } from "@/features/providers/catalog";
 import { defaultModelForProvider, type OnboardingDraft, type OnboardingStep, type RolePresetTemplate } from "../types";
 import { getSuggestedAgentName } from "../agent-name-suggestions";
+import { clientFetchJson } from "@/lib/client-api";
 
 interface Props {
   step: OnboardingStep;
@@ -79,9 +80,11 @@ export function ActivationOnboardingForm(props: Props) {
     setPicking(true);
     setPickError(null);
     try {
-      const response = await fetch("/api/onboarding/pick-workspace-root", { method: "POST" });
-      const body = (await response.json().catch(() => null)) as { path?: string; message?: string } | null;
-      if (!response.ok) throw new Error(body?.message ?? "Unable to open folder picker.");
+      const body = await clientFetchJson<{ path?: string }>(
+        "/api/onboarding/pick-workspace-root",
+        { method: "POST" },
+        "Unable to open folder picker.",
+      );
       if (body?.path) update("workspaceRoot", body.path);
     } catch (cause) {
       setPickError(cause instanceof Error ? cause.message : "Unable to open folder picker.");

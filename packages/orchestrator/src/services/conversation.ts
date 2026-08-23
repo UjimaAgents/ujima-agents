@@ -19,7 +19,7 @@ import { selfChannelId } from './member-channels.js';
 import { buildMessage, buildSystemMessage } from './message-factory.js';
 import { formatTimestampedContent, isCompactionSummarySystemMessage } from './conversation-summary.js';
 import type {
-  ConversationRepository,
+  ConversationStore,
   PaginatedMessages,
 } from './repository-reader.js';
 import { MessageWriter } from './message-writer.js';
@@ -108,7 +108,7 @@ export class ConversationService {
   private readonly wakeDispatcher: WakeDispatcher;
 
   constructor(
-    private readonly repo: ConversationRepository,
+    private readonly repo: ConversationStore,
     private readonly realtime: RealtimeService,
     options: ConversationServiceOptions = {},
   ) {

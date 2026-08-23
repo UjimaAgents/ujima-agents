@@ -35,7 +35,6 @@ import type { ToolService } from './tool-service.js';
 import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { scheduleModeEnabledFromMessage } from './schedule-prompt.js';
 import { isLiveSpiritStatus } from './live-status.js';
-import type { AiService } from '../ai-service.js';
 import type { AgentLoopChunk } from './agent-loop.js';
 import { normalizeStepTokenUsage } from './token-usage.js';
 import { wrapAttachmentCapture } from '../utils/tool-output.js';
@@ -71,7 +70,6 @@ export class SpiritServiceBase {
   protected readonly modelResolver: ModelResolver;
   protected readonly registry: ActiveSpiritRegistry;
   protected readonly conversations?: ConversationService;
-  protected readonly ai?: AiService;
   protected readonly mcpPool?: SpiritMcpPool;
   protected readonly mcpResolver?: SpiritMcpResolver;
   protected readonly supervisorDebounceMs: number;
@@ -97,7 +95,6 @@ export class SpiritServiceBase {
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
     this.conversations = options.conversations;
-    this.ai = options.ai;
     this.mcpPool = options.mcpPool;
     this.mcpResolver = options.mcpResolver ?? this.defaultMcpResolver();
     this.supervisorDebounceMs = options.supervisorDebounceMs ?? DEFAULT_SUPERVISOR_DEBOUNCE_MS;
@@ -340,7 +337,7 @@ export class SpiritServiceBase {
         .filter((approval) => approval.runId === runId && approval.toolCallId)
         .map((approval) => approval.toolCallId as string),
     );
-    return (this.repo.listRunSteps?.(organizationId, runId) ?? []).filter((step) => {
+    return this.repo.listRunSteps(organizationId, runId).filter((step) => {
       const output = step.output as { status?: unknown; questionId?: unknown } | undefined;
       if (output?.status === 'waiting_for_approval' && !pendingApprovalToolCallIds.has(step.toolCallId)) {
         return true;

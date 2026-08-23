@@ -1,4 +1,4 @@
-export const UJIMA_VERSION = "0.1.0-alpha.0";
+export const UJIMA_VERSION = "0.0.71";
 export * from "./provider-kinds.js";
 export * from "./types.js";
 export * from "./messages.js";
@@ -61,6 +61,7 @@ export * from "./mentions.js";
 export * from "./approval-scope.js";
 export * from "./tool-call-display-args.js";
 export * from "./workspace-file-filters.js";
+export * from "./workspace-access.js";
 export * from "./tool-registry.js";
 export * from "./json-string-field.js";
 export { formatPathEscapeError, type PathEscapeReason } from "./path-escape.js";

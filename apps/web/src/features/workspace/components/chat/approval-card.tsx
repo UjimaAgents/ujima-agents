@@ -1,7 +1,8 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Check, ShieldAlert, X } from "lucide-react";
 import { MarkdownInline } from "../markdown";
 import { shellInvocationDisplayLine, type ParsedFilesystemScope } from "@ujima/shared/browser";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import { FilesystemToolPane } from "./filesystem-tool-pane";
 import { TerminalPane } from "./terminal-pane";
 import { ExpandableOutput } from "./expandable-output";
@@ -275,6 +276,7 @@ export const ApprovalCard = memo(function ApprovalCard({
   onResolve?: (approvalId: string, resolution: "allow_once" | "allow_always" | "allow_family" | "reject") => void;
 }) {
   const isPending = data.status === "pending";
+  const [confirmingGrant, setConfirmingGrant] = useState<"allow_always" | "allow_family" | null>(null);
   const statusLabel =
     data.status === "approved"
       ? "Approved"
@@ -282,6 +284,12 @@ export const ApprovalCard = memo(function ApprovalCard({
         ? "Rejected"
         : "Pending";
   function resolveApproval(resolution: "allow_once" | "allow_always" | "allow_family" | "reject") {
+    // Persistent grants get one confirmation step; session-scoped and
+    // once-only resolutions go straight through.
+    if (resolution === "allow_always" || (resolution === "allow_family" && !data.connectorScope)) {
+      setConfirmingGrant(resolution);
+      return;
+    }
     onResolve?.(data.id, resolution);
   }
   const approvalsText = data.approvalsNeeded === 1 ? "1 approval needed" : `${data.approvalsNeeded} approvals needed`;
@@ -336,6 +344,7 @@ export const ApprovalCard = memo(function ApprovalCard({
             className="mt-1"
             cwd={data.shellScope.cwd}
             commandLine={shellInvocationDisplayLine(data.shellScope)}
+            storageKey={`approval:${data.id}:shell`}
           />
         ) : data.filesystemScope ? (
           <FilesystemToolPane
@@ -347,6 +356,7 @@ export const ApprovalCard = memo(function ApprovalCard({
                 ? (data.filesystemScope.patch ?? data.filesystemScope.content)
                 : undefined
             }
+            storageKey={`approval:${data.id}:fs`}
           />
         ) : data.connectorScope ? (
           <ConnectorActionPane className="mt-1" scope={data.connectorScope} />
@@ -368,15 +378,7 @@ export const ApprovalCard = memo(function ApprovalCard({
         {isPending && data.workflowScope ? (
           // Workflow gate: binary approve/reject. "allow_once" is the approve
           // signal the resolver maps to a workflow transition.
-          <div className="grid gap-2 sm:grid-cols-2">
-            <button
-              type="button"
-              disabled={resolving}
-              onClick={() => resolveApproval("reject")}
-              className="group flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-red-300 px-2.5 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/40 dark:hover:bg-red-500/10"
-            >
-              <X className="h-3.5 w-3.5" /> Reject
-            </button>
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               disabled={resolving}
@@ -385,10 +387,18 @@ export const ApprovalCard = memo(function ApprovalCard({
             >
               <Check className="h-3.5 w-3.5" /> Approve
             </button>
+            <button
+              type="button"
+              disabled={resolving}
+              onClick={() => resolveApproval("reject")}
+              className="group flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-red-300 px-2.5 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/40 dark:hover:bg-red-500/10"
+            >
+              <X className="h-3.5 w-3.5" /> Reject
+            </button>
           </div>
         ) : isPending ? (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {(["reject", "allow_once", "allow_always", "allow_family"] as const).map((resolution) => {
+          <div className="grid grid-cols-2 gap-2">
+            {(["allow_once", "allow_always", "allow_family", "reject"] as const).map((resolution) => {
               const option = (data.connectorScope ? APPROVAL_OPTIONS_CONNECTOR : APPROVAL_OPTIONS)[resolution];
               const Icon = option.icon;
               return (
@@ -415,6 +425,24 @@ export const ApprovalCard = memo(function ApprovalCard({
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmingGrant !== null}
+        onClose={() => setConfirmingGrant(null)}
+        title={confirmingGrant === "allow_always" ? "Always allow?" : "Allow family?"}
+        message={
+          confirmingGrant === "allow_always"
+            ? `This grants ${data.requestedBy} standing permission to run this action without asking again.`
+            : `This grants ${data.requestedBy} standing permission to run similar actions of this type without asking again.`
+        }
+        confirmLabel={confirmingGrant ? APPROVAL_OPTIONS[confirmingGrant].label : "Allow"}
+        variant="primary"
+        busy={resolving}
+        onConfirm={() => {
+          if (confirmingGrant) onResolve?.(data.id, confirmingGrant);
+          setConfirmingGrant(null);
+        }}
+      />
     </div>
   );
 });

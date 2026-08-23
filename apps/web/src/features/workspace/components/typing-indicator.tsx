@@ -1,17 +1,11 @@
 import { memo } from "react";
 import { Avatar } from "./chat/primitives";
-import { AnimatedCharacters } from "./chat/chat-token-count";
+import { AnimatedCharacters, formatTokens } from "./chat/chat-token-count";
 
 function formatTypingSubject(label: string): string {
   return label
     .replace(/\s+(?:is|are)\s+responding$/, '')
     .replace(/\s+(?:is|are)\s+waiting for approval$/, '');
-}
-
-function formatTokenCount(value: number): string {
-  if (value < 1_000) return value.toString();
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
-  return `${(value / 1_000_000).toFixed(1)}M`;
 }
 
 export const TypingIndicator = memo(function TypingIndicator({
@@ -88,14 +82,14 @@ export const TypingIndicator = memo(function TypingIndicator({
                 <span>
                   <span className="opacity-70">in</span>{" "}
                   <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                    {formatTokenCount(tokenUsage.inputTokens)}
+                    {formatTokens(tokenUsage.inputTokens)}
                   </span>
                 </span>
                 <span className="opacity-40">·</span>
                 <span>
                   <span className="opacity-70">out</span>{" "}
                   <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                    {formatTokenCount(tokenUsage.outputTokens)}
+                    {formatTokens(tokenUsage.outputTokens)}
                   </span>
                 </span>
               </>

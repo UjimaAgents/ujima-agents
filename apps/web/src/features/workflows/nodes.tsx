@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { WorkflowNode, WorkflowNodeKind, WorkflowNodeRunStatus } from "@ujima/shared";
 
-export type FlowNodeData = { node: WorkflowNode; status?: WorkflowNodeRunStatus };
+export type FlowNodeData = { node: WorkflowNode; status?: WorkflowNodeRunStatus; isError?: boolean };
 export type FlowNode = Node<FlowNodeData, "workflow">;
 
 export const NODE_STATUS_STYLES: Record<WorkflowNodeRunStatus, { label: string; ring: string; dot: string }> = {
@@ -106,7 +106,7 @@ const capHandleClass =
   "!h-2.5 !w-2.5 !border-2 !border-white !bg-violet-500 dark:!border-zinc-900 dark:!bg-violet-400";
 
 export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
-  const { node, status } = data;
+  const { node, status, isError } = data;
   const style = NODE_KIND_STYLES[node.kind];
   const statusStyle = status ? NODE_STATUS_STYLES[status] : null;
   const Icon = style.icon;
@@ -117,17 +117,24 @@ export function WorkflowFlowNode({ data, selected }: NodeProps<FlowNode>) {
     <div
       className={[
         "relative min-w-32 max-w-48 rounded-lg border bg-white px-2 py-1.5 shadow-sm transition dark:bg-zinc-900",
-        style.accent,
+        isError ? "border-red-500 ring-2 ring-red-500 dark:border-red-500 dark:ring-red-500/80" : style.accent,
         statusStyle ? statusStyle.ring : selected ? "ring-2 ring-purple-400/70 dark:ring-purple-400/60" : "",
         isSub ? "border-dashed" : "",
       ].join(" ")}
     >
-      {statusStyle && (
+      {isError ? (
+        <span
+          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-red-500 text-[9px] font-bold text-white shadow dark:border-zinc-900"
+          title="Node has validation issues"
+        >
+          !
+        </span>
+      ) : statusStyle ? (
         <span
           className={`absolute -right-1.5 -top-1.5 h-3 w-3 rounded-full border-2 border-white dark:border-zinc-900 ${statusStyle.dot}`}
           title={statusStyle.label}
         />
-      )}
+      ) : null}
       {/* main flow (vertical, grey) — main-flow nodes only */}
       {!isSub && node.kind !== "trigger" && (
         <Handle id="main-in" type="target" position={Position.Top} className={handleClass} />

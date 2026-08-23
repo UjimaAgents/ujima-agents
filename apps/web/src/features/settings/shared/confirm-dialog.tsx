@@ -5,9 +5,11 @@ import { Modal } from "@/components/ui/modal";
 
 export function ConfirmDialog({
   isOpen,
+  open,
   onClose,
   title,
   message,
+  description,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   variant = "default",
@@ -15,25 +17,34 @@ export function ConfirmDialog({
   errorMessage,
   onConfirm,
 }: {
-  isOpen: boolean;
+  isOpen?: boolean;
+  /** Alias for isOpen */
+  open?: boolean;
   onClose: () => void;
   title: string;
-  message: string;
+  message?: string;
+  /** Alias for message */
+  description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  variant?: "default" | "primary";
+  variant?: "default" | "primary" | "danger";
   busy?: boolean;
   errorMessage?: string;
   onConfirm: () => void | Promise<void>;
 }) {
+  const resolvedOpen = isOpen ?? open ?? false;
+  const resolvedMessage = message ?? description ?? "";
+
   const confirmClass =
     variant === "primary"
       ? "rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition hover:bg-violet-700 disabled:opacity-50"
-      : "rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900";
+      : variant === "danger"
+        ? "rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700 disabled:opacity-50"
+        : "rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900";
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title} contentClassName="max-w-sm">
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">{message}</p>
+    <Modal isOpen={resolvedOpen} onClose={onClose} title={title} contentClassName="max-w-sm">
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">{resolvedMessage}</p>
       {errorMessage ? (
         <div
           role="alert"

@@ -155,7 +155,7 @@ export function WorkflowRunSidePanel({
 
   return (
     <>
-      <div className="shrink-0 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "55%" }}>
+      <div className="flex-1 min-h-0 space-y-2 overflow-y-auto p-3">
         <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Timeline</p>
         {steps.length === 0 ? (
           <p className="px-1 text-xs text-zinc-400">No steps yet.</p>

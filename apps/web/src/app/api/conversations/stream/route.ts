@@ -146,6 +146,10 @@ export function shouldForwardEvent(
       const body = payload as { run?: { threadId?: string } };
       return body.run?.threadId === input.threadId;
     }
+    case SocketEventNames.workflowRunUpdated: {
+      const body = payload as { run?: { threadId?: string } };
+      return body.run?.threadId === input.threadId;
+    }
     case SocketEventNames.agentPassed:
     case SocketEventNames.agentPassedWithText:
     case SocketEventNames.agentAck:

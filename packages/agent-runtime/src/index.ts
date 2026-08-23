@@ -10,19 +10,14 @@ export type { BrowserStateSnapshot } from './browser';
 export { runAiSdkLoop } from './ai-sdk-loop';
 export type { AiSdkLoopInputs, AiSdkLoopOutcome } from './ai-sdk-loop';
 
-export { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
-
-export type { OrchestratorEngine } from './engine';
-export { ORCHESTRATOR_ENGINES, resolveOrchestratorEngine } from './engine';
+export { runAgentLoopWithRetry, supportsTemperature, wrapToolFallback } from './loop-host';
+export type { LoopRetryHooks } from './loop-host';
 
 export { matchesEscalation } from './escalation';
 export type { EscalationMatch } from './escalation';
 
 export { runConcurrent } from './concurrent';
 export type { ConcurrentRunInputs, ConcurrentRunHandle } from './concurrent';
-
-export { createAgentWatchdog } from './watchdog';
-export type { AgentWatchdog, WatchdogOptions } from './watchdog';
 
 export type {
   AgentRunInputs,

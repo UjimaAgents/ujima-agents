@@ -5,13 +5,13 @@ import {
   Bell,
   Building2,
   Clock,
-  FolderKanban,
   Layers,
   MessageSquare,
   Package,
   Plug,
   Server,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Users,
 } from "lucide-react";
@@ -83,7 +83,7 @@ const NAV_GROUPS: SettingsNavGroup<SettingsTabId>[] = [
   {
     label: "Workspace",
     items: [
-      { id: "general", label: "General", icon: FolderKanban },
+      { id: "general", label: "General", icon: SlidersHorizontal },
       { id: "workspaces", label: "Workspaces", icon: Layers },
       { id: "culture", label: "Culture", icon: Sparkles },
       { id: "policies", label: "Policies", icon: ShieldCheck },

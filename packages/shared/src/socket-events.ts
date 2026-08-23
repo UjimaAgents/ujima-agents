@@ -12,6 +12,10 @@ import {
   ToolCallSchema,
   ToolResultSchema,
 } from './org-schemas.js';
+import {
+  WorkflowNodeRunSchema,
+  WorkflowRunSchema,
+} from './workflows.js';
 
 export function orgRoom(organizationId: string) {
   return `org:${organizationId}`;
@@ -43,6 +47,8 @@ export const SocketEventNames = Object.freeze({
   runStarted: 'run:started',
   runUpdated: 'run:updated',
   runCompleted: 'run:completed',
+  workflowRunUpdated: 'workflow:run_updated',
+  workflowNodeUpdated: 'workflow:node_updated',
   runChunk: 'run:chunk',
   runTokens: 'run:tokens',
   memberUpdated: 'member:updated',
@@ -72,6 +78,21 @@ export const SocketEventNames = Object.freeze({
 });
 
 export type SocketEventName = (typeof SocketEventNames)[keyof typeof SocketEventNames];
+
+export const WorkflowRunUpdatedEventSchema = z.object({
+  organizationId: IdSchema,
+  run: WorkflowRunSchema,
+  nodeRuns: z.array(WorkflowNodeRunSchema),
+});
+export type WorkflowRunUpdatedEvent = z.infer<typeof WorkflowRunUpdatedEventSchema>;
+
+export const WorkflowNodeUpdatedEventSchema = z.object({
+  organizationId: IdSchema,
+  workflowRunId: IdSchema,
+  run: WorkflowRunSchema,
+  nodeRun: WorkflowNodeRunSchema,
+});
+export type WorkflowNodeUpdatedEvent = z.infer<typeof WorkflowNodeUpdatedEventSchema>;
 
 /**
  * Why an agent was woken. Drives mandatory-reply enforcement
@@ -466,6 +487,8 @@ export const SocketEventSchemas = Object.freeze({
   [SocketEventNames.runStarted]: RunEventSchema,
   [SocketEventNames.runUpdated]: RunEventSchema,
   [SocketEventNames.runCompleted]: RunEventSchema,
+  [SocketEventNames.workflowRunUpdated]: WorkflowRunUpdatedEventSchema,
+  [SocketEventNames.workflowNodeUpdated]: WorkflowNodeUpdatedEventSchema,
   [SocketEventNames.runChunk]: RunChunkEventSchema,
   [SocketEventNames.runTokens]: RunTokenUsageEventSchema,
   [SocketEventNames.memberUpdated]: MemberUpdatedEventSchema,

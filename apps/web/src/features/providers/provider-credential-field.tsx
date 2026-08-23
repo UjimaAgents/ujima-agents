@@ -20,6 +20,7 @@ import {
   type ProviderAuthModeUI,
 } from "./catalog";
 import { CLAUDE_CODE_LOGIN_HELP_PATH } from "./constants";
+import { clientFetchJson } from "@/lib/client-api";
 
 export function ProviderCredentialField({
   provider,
@@ -66,17 +67,15 @@ export function ProviderCredentialField({
     let active = true;
     async function checkStatus() {
       try {
-        const res = await fetch("/api/auth/openai/codex/status?loginId=check");
+        const body = await clientFetchJson<{ status?: string }>(
+          "/api/auth/openai/codex/status?loginId=check",
+          {},
+          "Unable to check Codex connection.",
+        );
         if (!active) return;
-        if (res.ok) {
-          const body = await res.json();
-          if (body.status === "completed") {
-            setLoginState("completed");
-            onCodexConnectionChange?.(true);
-          } else {
-            setLoginState("idle");
-            onCodexConnectionChange?.(false);
-          }
+        if (body.status === "completed") {
+          setLoginState("completed");
+          onCodexConnectionChange?.(true);
         } else {
           setLoginState("idle");
           onCodexConnectionChange?.(false);
@@ -108,19 +107,18 @@ export function ProviderCredentialField({
     let active = true;
     async function checkClaudeCode() {
       try {
-        const res = await fetch("/api/auth/anthropic/claude-code/status");
+        const body = await clientFetchJson<{ status?: string }>(
+          "/api/auth/anthropic/claude-code/status",
+          {},
+          "Unable to check Claude Code connection.",
+        );
         if (!active) return;
-        if (res.ok) {
-          const body = await res.json();
-          if (body.status === "connected") {
-            setClaudeCodeState("completed");
-            onClaudeCodeConnectionChange?.(true);
-          } else {
-            setClaudeCodeState("idle");
-            onClaudeCodeConnectionChange?.(false);
-          }
+        if (body.status === "connected") {
+          setClaudeCodeState("completed");
+          onClaudeCodeConnectionChange?.(true);
         } else {
-          if (active) setClaudeCodeState("idle");
+          setClaudeCodeState("idle");
+          onClaudeCodeConnectionChange?.(false);
         }
       } catch {
         if (active) setClaudeCodeState("idle");
@@ -139,20 +137,19 @@ export function ProviderCredentialField({
 
     async function poll() {
       try {
-        const res = await fetch(`/api/auth/openai/codex/status?loginId=${encodeURIComponent(loginId)}`);
+        const body = await clientFetchJson<{ status?: string; error?: string }>(
+          `/api/auth/openai/codex/status?loginId=${encodeURIComponent(loginId)}`,
+          {},
+          "Unable to check Codex authorization.",
+        );
         if (!active) return;
-        if (res.ok) {
-          const body = await res.json();
-          if (body.status === "completed") {
-            setLoginState("completed");
-            onCodexConnectionChange?.(true);
-          } else if (body.status === "failed" || body.status === "timeout") {
-            setLoginState("failed");
-            setErrorMsg(body.error || "Authorization failed or timed out.");
-            onCodexConnectionChange?.(false);
-          } else {
-            timer = setTimeout(poll, 2000);
-          }
+        if (body.status === "completed") {
+          setLoginState("completed");
+          onCodexConnectionChange?.(true);
+        } else if (body.status === "failed" || body.status === "timeout") {
+          setLoginState("failed");
+          setErrorMsg(body.error || "Authorization failed or timed out.");
+          onCodexConnectionChange?.(false);
         } else {
           timer = setTimeout(poll, 2000);
         }
@@ -172,12 +169,11 @@ export function ProviderCredentialField({
     setLoginState("starting");
     setErrorMsg("");
     try {
-      const res = await fetch("/api/auth/openai/codex/start", { method: "POST" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Failed to start login flow.");
-      }
-      const data = await res.json();
+      const data = await clientFetchJson<{
+        userCode: string;
+        verificationUrl: string;
+        loginId: string;
+      }>("/api/auth/openai/codex/start", { method: "POST" }, "Failed to start login flow.");
       setUserCode(data.userCode);
       setVerificationUrl(data.verificationUrl);
       setLoginId(data.loginId);

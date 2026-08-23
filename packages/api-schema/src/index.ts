@@ -29,7 +29,12 @@ export * from './plugins.js';
 export * from './schedules.js';
 export * from './self-improvement.js';
 export * from './additive/requests.js';
+export * from './workflows.js';
 export { MODEL_OPTIONS_BY_PROVIDER, defaultModelForProvider, getModelOptionsForProvider } from './model-catalog.js';
+// ADR 0002 §9 — additive re-export seam: canonical shapes stay in @ujima/shared,
+// api-schema only re-exports them for consumers that want a single import point.
+export { WorkflowNodeRunSchema, WorkflowRunSchema, type WorkflowNodeRun, type WorkflowRun } from '@ujima/shared';
+export { WorkflowRunMarkerSchema, type WorkflowRunMarker } from '@ujima/shared';
 
 export const API_VERSION = 'v1';
 

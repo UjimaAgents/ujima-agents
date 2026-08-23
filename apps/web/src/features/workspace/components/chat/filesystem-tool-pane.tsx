@@ -83,8 +83,11 @@ export function FilesystemToolPane({
   meta,
   body,
   bodyTone = "default",
+  storageKey,
 }: {
   className?: string;
+  /** Stable identity — keeps expand/collapse state across virtualized unmounts. */
+  storageKey?: string;
   action: "read" | "write";
   resourcePath: string;
   meta?: string;
@@ -115,7 +118,7 @@ export function FilesystemToolPane({
         </div>
       </div>
       {showBody ? (
-        <ExpandableOutput>
+        <ExpandableOutput storageKey={storageKey}>
           <div className={`${useDiffUi ? "" : "px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words"} ${bodyTone === "error" ? "text-red-700 dark:text-red-300/90" : "text-foreground/85"}`}>
             {useDiffUi ? (
               <div className="px-3 pb-2 pt-2">

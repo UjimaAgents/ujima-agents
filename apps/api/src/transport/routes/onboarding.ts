@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { OnboardingRequestSchema, OnboardingResponseSchema, BootstrapResponseSchema, ApiErrorSchema } from '@ujima/api-schema';
@@ -11,11 +12,7 @@ import type {
 } from '@ujima/orchestrator';
 import { readSessionToken } from '../session-token.js';
 import { apiError, errorMessage } from './route-errors.js';
-
-const COMPLETED_ATTEMPT_TTL_MS = 10 * 60_000;
-const MAX_COMPLETED_ATTEMPTS = 32;
-const completedAttempts = new Map<string, { response: OnboardingResponse; expiresAt: number }>();
-let onboardingInFlight = false;
+import { OnboardingAttemptLifecycle } from '../onboarding-attempt-cache.js';
 
 export interface OnboardingRoutesOptions {
   auth: AuthService;
@@ -31,6 +28,7 @@ export function registerOnboardingRoutes(
 ): void {
   const { auth, bootstrap, onboarding, repo, teamStore } = options;
   const app = _app.withTypeProvider<ZodTypeProvider>();
+  const onboardingLifecycle = new OnboardingAttemptLifecycle<OnboardingResponse>();
 
   app.get('/bootstrap', {
     schema: {
@@ -56,18 +54,19 @@ export function registerOnboardingRoutes(
       },
     },
   }, async (req, reply) => {
-    const now = Date.now();
-    for (const [attemptId, entry] of completedAttempts) {
-      if (entry.expiresAt <= now) completedAttempts.delete(attemptId);
-    }
+    const requestKey = createHash('sha256').update(JSON.stringify(req.body)).digest('hex');
     if (req.body.attemptId) {
-      const cached = completedAttempts.get(req.body.attemptId);
-      if (cached) return cached.response;
+      const cached = onboardingLifecycle.getCompleted(req.body.attemptId, requestKey);
+      if (cached) return cached;
     }
-    if (onboardingInFlight || repo.listOrganizations().length > 0 || auth.getAuthState(readSessionToken(req)).authenticated) {
+    if (
+      !onboardingLifecycle.begin() ||
+      repo.listOrganizations().length > 0 ||
+      auth.getAuthState(readSessionToken(req)).authenticated
+    ) {
+      onboardingLifecycle.release();
       return apiError(reply, 409, 'Onboarding is already complete or in progress.');
     }
-    onboardingInFlight = true;
     let organizationId: string | undefined;
     try {
       const result = await onboarding.onboard({
@@ -101,15 +100,7 @@ export function registerOnboardingRoutes(
         sessionToken: session.sessionToken,
       };
       if (req.body.attemptId) {
-        completedAttempts.set(req.body.attemptId, {
-          response,
-          expiresAt: Date.now() + COMPLETED_ATTEMPT_TTL_MS,
-        });
-        while (completedAttempts.size > MAX_COMPLETED_ATTEMPTS) {
-          const oldest = completedAttempts.keys().next().value;
-          if (typeof oldest !== 'string') break;
-          completedAttempts.delete(oldest);
-        }
+        onboardingLifecycle.complete(req.body.attemptId, requestKey, response);
       }
       return response;
     } catch (err) {
@@ -123,7 +114,7 @@ export function registerOnboardingRoutes(
       }
       return apiError(reply, 400, safeOnboardingError(err));
     } finally {
-      onboardingInFlight = false;
+      onboardingLifecycle.release();
     }
   });
 }

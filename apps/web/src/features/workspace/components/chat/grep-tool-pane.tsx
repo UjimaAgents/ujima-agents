@@ -18,6 +18,7 @@ export function GrepToolPane({
   limit,
   truncated,
   matches,
+  storageKey,
 }: {
   className?: string;
   query: string;
@@ -26,6 +27,7 @@ export function GrepToolPane({
   limit: number;
   truncated?: boolean;
   matches: GrepMatchRow[];
+  storageKey?: string;
 }) {
   return (
     <div className={`${TERMINAL_PANEL} ${className}`}>
@@ -39,7 +41,7 @@ export function GrepToolPane({
         </div>
       </div>
 
-      <ExpandableOutput>
+      <ExpandableOutput storageKey={storageKey}>
         <div className="px-3 py-2">
           {matches.length === 0 ? (
             <div className="text-[11px] text-foreground/45">No matches.</div>

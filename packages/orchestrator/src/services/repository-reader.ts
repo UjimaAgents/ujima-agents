@@ -172,7 +172,7 @@ export interface RepositoryReader {
   ): PaginatedMessages;
   getProviderCredential(organizationId: string, providerName: string): string | null;
   listOrganizationSkillInstalls?(organizationId: string): SkillInstall[];
-  listRunSteps?(organizationId: string, runId: string): RunStep[];
+  listRunSteps(organizationId: string, runId: string): RunStep[];
   listRunsByIds?(organizationId: string, runIds: readonly string[]): RunState[];
   listRunStepsByRunIds?(
     organizationId: string,
@@ -846,3 +846,51 @@ export type ChannelStore = Pick<
   | 'listChannelMemberModesForChannel'
   | 'deleteChannelMemberMode'
 >;
+
+/**
+ * Everything ConversationService (plus its MentionResolver, WakeDispatcher,
+ * and compaction collaborators) reads or writes. Services should take this
+ * slice instead of the full ConversationRepository/ApiRepository.
+ */
+export type ConversationStore = Pick<
+  ApiRepository,
+  | 'ensureThread'
+  | 'findMessageByClientId'
+  | 'getAttachment'
+  | 'getChannel'
+  | 'getChannelMemberMode'
+  | 'getMember'
+  | 'getMessage'
+  | 'getOrganization'
+  | 'getRun'
+  | 'getThread'
+  | 'linkAttachmentsToMessage'
+  | 'listAllChannels'
+  | 'listChannelMessages'
+  | 'listChannels'
+  | 'listMembers'
+  | 'listMessageAttachments'
+  | 'listMessages'
+  | 'replaceMessageMentions'
+  | 'saveChannel'
+  | 'saveMessage'
+  | 'saveRun'
+  | 'searchChannelMessages'
+  | 'setChannelMembers'
+  | 'updateMessage'
+  | 'countUncompactedMessageChars'
+  | 'listRunSteps'
+>;
+
+/** Persistence boundary for one Agent turn. Keep the turn off ApiRepository. */
+export type AgentTurnStore = RunStore &
+  MemberStore &
+  MessageStore &
+  ChannelStore &
+  Pick<
+    ApiRepository,
+    | 'getInteractiveQuestion'
+    | 'recordProceduresApplied'
+    | 'listOrganizationSkillInstalls'
+    | 'listPendingApprovals'
+  >;

@@ -53,10 +53,10 @@ export function EmptyChat({
       </h3>
       <p className="mt-1 text-xs text-zinc-500 max-w-xs text-center">
         {loading
-          ? "Pulling the latest thread history and live updates."
+          ? "Loading messages…"
           : isAgent
             ? "Send a message or assign a task to get started."
-            : "This is the beginning of the channel. Send a message to start collaborating."}
+            : "Send a message to start the conversation."}
       </p>
     </div>
   );

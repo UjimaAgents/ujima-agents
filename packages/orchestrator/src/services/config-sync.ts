@@ -6,7 +6,6 @@ import {
   defineRole,
   loadAgentTeam,
   loadAgentTeamFromFile,
-  migrateAgentTeamConfig,
   normalizeProviderKey,
   type AgentTeamHandle,
 } from '@ujima/framework';
@@ -22,7 +21,6 @@ import {
   type Organization,
   resolveChannelMemberIds,
 } from '@ujima/shared';
-import { isPathInsideRoot } from '@ujima/shared/workspace';
 import type { ApiRepository } from './repository-reader.js';
 import { ensureMemberSelfChannel } from './member-channels.js';
 import type { TeamStore } from './team-store.js';
@@ -30,6 +28,7 @@ import { summarizeTeam, type TeamSummary } from './team.js';
 import { applyDashboardTeamOverrides } from './dashboard-team-overrides.js';
 import { upsertWorkspaceMemberScopes } from './workspace-root.js';
 import { visiblePublicChannels } from './channel-visibility.js';
+import { normalizeStoredTeamConfig } from './team-config-reconciliation.js';
 
 export interface ReconcileTeamConfigInput {
   team: AgentTeamHandle;
@@ -114,31 +113,6 @@ function markConfigOwnership(
   }
 }
 
-function normalizeStoredScopes(config: Record<string, unknown>, workspaceRoot: string): boolean {
-  const roles = Array.isArray(config.roles) ? config.roles : [];
-  let changed = false;
-  for (const role of roles) {
-    if (!role || typeof role !== 'object') continue;
-    const record = role as Record<string, unknown>;
-    if (!Array.isArray(record.workspaceScopes)) continue;
-    const originalScopes = record.workspaceScopes;
-    const scopes = originalScopes
-      .filter((scope): scope is string => typeof scope === 'string' && scope.trim().length > 0)
-      .map((scope) => {
-        const resolved = resolve(workspaceRoot, scope);
-        if (isPathInsideRoot(workspaceRoot, resolved)) return scope;
-        changed = true;
-        return '.';
-      });
-    const nextScopes = [...new Set(scopes)];
-    if (nextScopes.length !== originalScopes.length || nextScopes.some((scope, index) => scope !== originalScopes[index])) {
-      record.workspaceScopes = nextScopes;
-      changed = true;
-    }
-  }
-  return changed;
-}
-
 export class ConfigSyncService {
   constructor(
     private readonly repo: ApiRepository,
@@ -167,30 +141,7 @@ export class ConfigSyncService {
     const stored = this.repo.getWorkspaceSetting(organization.id, TEAM_CONFIG_SETTING_KEY);
     if (stored) {
       try {
-        const parsedStored = JSON.parse(stored) as Record<string, unknown>;
-        if (parsedStored.providers && typeof parsedStored.providers === 'object') {
-          for (const [providerName, providerConfig] of Object.entries(parsedStored.providers)) {
-            if (typeof providerConfig === 'object' && providerConfig && !('kind' in providerConfig)) {
-              (providerConfig as Record<string, unknown>).kind = providerName;
-            }
-          }
-        }
-        const migrated = migrateAgentTeamConfig(parsedStored);
-        const activeRoot = organization.workspace.root?.trim();
-        if (activeRoot) {
-          const workspace =
-            migrated.config.workspace && typeof migrated.config.workspace === 'object'
-              ? { ...(migrated.config.workspace as Record<string, unknown>) }
-              : {};
-          if (workspace.root !== activeRoot) {
-            workspace.root = activeRoot;
-            migrated.config.workspace = workspace;
-            migrated.migrated = true;
-          }
-          if (normalizeStoredScopes(migrated.config, activeRoot)) {
-            migrated.migrated = true;
-          }
-        }
+        const migrated = normalizeStoredTeamConfig(stored, organization.workspace.root);
         if (migrated.migrated) {
           this.repo.saveWorkspaceSetting(
             organization.id,

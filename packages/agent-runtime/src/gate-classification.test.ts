@@ -11,8 +11,7 @@ import { createLocalEventBus, type EventBus } from '@ujima/event-bus';
 import { createPermissionMiddleware } from '@ujima/permissions';
 import { createMockProvider, textTurn, toolTurn } from '@ujima/llm/legacy';
 import { runAgent } from './shell';
-import { createLanguageModelFromLegacyProvider } from './legacy-llm-language-model';
-import { makeFakeMCPConnection } from './test-helpers';
+import { createLanguageModelFromLegacyProvider, makeFakeMCPConnection } from './test-helpers';
 
 // Runtime enforces the (classification × risk_defaults) decision before
 // any MCP callTool happens.

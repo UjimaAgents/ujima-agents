@@ -1,16 +1,16 @@
 "use client";
 
 import "@xyflow/react/dist/style.css";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Background, Controls, MiniMap, ReactFlow, type Edge } from "@xyflow/react";
 import {
-  WorkflowGraphSchema,
+  normalizeWorkflowGraph,
   type WorkflowNodeRun,
   type WorkflowNodeRunStatus,
   type WorkflowRun,
 } from "@ujima/shared";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Clock, Loader2 } from "lucide-react";
 import { workflowNodeTypes, type FlowNode } from "./nodes";
 import { graphToFlow } from "./graph-flow";
 import { useWorkflowRun } from "./use-workflow-run";
@@ -34,6 +34,17 @@ function latestByNode(nodeRuns: WorkflowNodeRun[]): Map<string, WorkflowNodeRun>
   return map;
 }
 
+/** Current time, re-read on an interval only while `active` is true. */
+function useTickingNow(active: boolean, intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [active, intervalMs]);
+  return now;
+}
+
 export function WorkflowRunView({ runId }: { runId: string }) {
   const router = useRouter();
   const { detail, loading, error, busy, act, reload } = useWorkflowRun(runId);
@@ -43,9 +54,25 @@ export function WorkflowRunView({ runId }: { runId: string }) {
     [detail],
   );
 
+  const runActive = detail ? detail.run.status !== "completed" && detail.run.status !== "failed" : false;
+  const now = useTickingNow(runActive);
+  const durationSecs = useMemo(() => {
+    if (!detail) return null;
+    const start = new Date(detail.run.createdAt).getTime();
+    const end =
+      detail.run.status === "completed" || detail.run.status === "failed"
+        ? new Date(detail.run.updatedAt).getTime()
+        : now;
+    const seconds = Math.max(0, Math.floor((end - start) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
+  }, [detail, now]);
+
   const { nodes, edges } = useMemo(() => {
     if (!detail) return { nodes: [] as FlowNode[], edges: [] as Edge[] };
-    const graph = WorkflowGraphSchema.parse(JSON.parse(detail.run.graphSnapshot));
+    const graph = normalizeWorkflowGraph(JSON.parse(detail.run.graphSnapshot));
     const { flowNodes, flowEdges } = graphToFlow(graph.nodes, graph.edges);
     const withStatus = flowNodes.map((n) => ({
       ...n,
@@ -81,9 +108,15 @@ export function WorkflowRunView({ runId }: { runId: string }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h1 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{run.name}</h1>
-            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${RUN_STATUS_BADGE[run.status]}`}>
-              {run.status.replace("_", " ")}
+            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${RUN_STATUS_BADGE[run.status]}`}>
+              {run.status.split("_").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
             </span>
+            {durationSecs && (
+              <span className="flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 font-mono text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                <Clock className="h-3 w-3 text-zinc-400" />
+                {durationSecs}
+              </span>
+            )}
           </div>
           {run.input && <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{run.input}</p>}
         </div>
@@ -112,7 +145,7 @@ export function WorkflowRunView({ runId }: { runId: string }) {
             proOptions={{ hideAttribution: true }}
             className="bg-zinc-50 dark:bg-zinc-950"
           >
-            <Background color="#d4d4d8" gap={18} />
+            <Background color="var(--color-zinc-300, #d4d4d8)" gap={18} />
             <Controls showInteractive={false} className="!border !border-zinc-200 !bg-white dark:!border-zinc-700 dark:!bg-zinc-900" />
             <MiniMap pannable className="!bg-white dark:!bg-zinc-900" />
           </ReactFlow>

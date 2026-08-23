@@ -1,18 +1,35 @@
 "use client";
 
-import { useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 const TRUNCATED_HEIGHT = 280;
 
+// Expansion survives unmount (virtualized rows) when a stable storageKey is given.
+const expansionCache = new Map<string, boolean>();
+
 export function ExpandableOutput({
   children,
   className = "",
+  storageKey,
 }: {
   children: ReactNode;
   className?: string;
+  storageKey?: string;
 }) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpandedState] = useState(() =>
+    storageKey ? expansionCache.get(storageKey) ?? false : false,
+  );
+  const setIsExpanded = useCallback(
+    (value: boolean | ((prev: boolean) => boolean)) => {
+      setIsExpandedState((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        if (storageKey) expansionCache.set(storageKey, next);
+        return next;
+      });
+    },
+    [storageKey],
+  );
   const [needsTruncation, setNeedsTruncation] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 

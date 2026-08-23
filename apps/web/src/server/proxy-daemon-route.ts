@@ -64,6 +64,27 @@ export async function proxyDaemonRoute(
   }
 }
 
+/** Forward a daemon JSON endpoint that has no route-local organization id. */
+export async function proxyDaemonHttpRoute(
+  path: string,
+  init: RequestInit = {},
+  fallbackMessage: string,
+): Promise<NextResponse> {
+  try {
+    const response = await daemonFetch(path, init, await getSessionTokenFromCookie());
+    if (response.status === 204) return new NextResponse(null, { status: 204 });
+    const body = await response.json().catch(() => null);
+    return response.ok
+      ? NextResponse.json(body, { status: response.status })
+      : NextResponse.json(parseApiError(body, fallbackMessage), { status: response.status });
+  } catch (error) {
+    return NextResponse.json(
+      upstreamUnavailable(error instanceof Error ? error.message : fallbackMessage),
+      { status: 503 },
+    );
+  }
+}
+
 export function missingOrganizationIdResponse(): NextResponse {
   return NextResponse.json(
     { code: "ERR_BAD_REQUEST", message: "organizationId is required." },

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Avatar } from "../chat/primitives";
 import { FieldShell, TextArea, TextInput } from "@/components/ui/form-fields";
 import { ProviderModelFields } from "@/components/ui/provider-model-fields";
 import { ChannelPicker } from "@/features/team/channel-picker";
 import { Select } from "@/components/ui/select";
+import { ConfirmDialog } from "@/features/settings/shared/confirm-dialog";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { listCustomRoleToolIds } from "@ujima/shared";
 import type { SelectedConversation } from "../../types";
@@ -41,20 +42,46 @@ export function AgentEditorModal({
   onSelect: (conv: SelectedConversation) => void;
   onUpdateAgent: UpdateAgentHandler;
 }) {
-  const [draft, setDraft] = useState<AgentEditorDraft | null>(() =>
+  const [initialDraft] = useState<AgentEditorDraft | null>(() =>
     agent ? buildAgentEditorDraft({ agent, teamSettings, rolePresets, channels: visibleChannels }) : null,
   );
+  const [draft, setDraft] = useState<AgentEditorDraft | null>(initialDraft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+
+  const isDirty = Boolean(
+    draft &&
+      initialDraft &&
+      JSON.stringify(draft) !== JSON.stringify(initialDraft),
+  );
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
 
   if (!agent || !draft) return null;
+
+  const requestClose = () => {
+    if (saving) return;
+    if (isDirty) {
+      setConfirmingDiscard(true);
+      return;
+    }
+    onClose();
+  };
 
   const patchDraft = (patch: Partial<AgentEditorDraft>) => {
     setDraft((current) => (current ? { ...current, ...patch } : current));
   };
 
   return (
-    <Modal isOpen onClose={onClose} title="Edit Agent">
+    <Modal isOpen onClose={requestClose} title="Edit Agent">
       <div className="space-y-5">
         <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50">
           <Avatar name={draft.name} size="lg" />
@@ -190,7 +217,7 @@ export function AgentEditorModal({
         <div className="flex items-center justify-between gap-3 pt-1">
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="rounded-xl px-4 py-2 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
           >
             Cancel
@@ -249,6 +276,15 @@ export function AgentEditorModal({
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={confirmingDiscard}
+        onClose={() => setConfirmingDiscard(false)}
+        title="Discard changes?"
+        message="You have unsaved changes to this agent. Closing now will discard them."
+        confirmLabel="Discard"
+        variant="danger"
+        onConfirm={onClose}
+      />
     </Modal>
   );
 }

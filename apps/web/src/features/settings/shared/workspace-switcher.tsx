@@ -2,6 +2,7 @@
 
 import { Check, ChevronDown, Command, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { BootstrapResponse } from "@ujima/api-schema";
 import { orgWorkspaceId } from "@ujima/shared/browser";
 import { switchToWorkspace } from "@/features/workspace/switch-workspace";
@@ -12,6 +13,7 @@ export function WorkspaceSwitcher({
 }: {
   bootstrap: BootstrapResponse;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,10 +41,7 @@ export function WorkspaceSwitcher({
     setError(null);
     setSwitchingId(orgId);
     try {
-      await switchToWorkspace(
-        orgWorkspaceId(orgId),
-        window.location.pathname,
-      );
+      await switchToWorkspace(router, orgWorkspaceId(orgId));
     } catch (err) {
       setSwitchingId(null);
       setError(err instanceof Error ? err.message : "Unable to switch workspace");

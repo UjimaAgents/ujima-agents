@@ -12,7 +12,6 @@ import type { ConversationMessageMetadata } from "../conversation-transport";
 import { DragHandle, WORKSPACE_MAIN_GRID_TRANSITION } from "./workspace-shell";
 import { TerminalDrawer } from "./chat/terminal-drawer";
 import {
-  ChatHeader,
   ChatTabs,
   ChatMessageList,
   ChatInput,
@@ -31,16 +30,13 @@ import {
   getDirectMessageThreadId,
   parseConfiguredProviderModelValue,
   resolveMemberModelSelection,
-  ApprovalRequestSchema,
   RunStateSchema,
   type ReasoningEffort,
   type RunState,
-  type ActivityEvent,
 } from "@ujima/shared/browser";
 import {
   isAgentOnlyThread,
   selectActiveAgentChats,
-  selectActiveTerminals,
   useWorkspaceStore,
   type ActiveJob,
 } from "../workspace-store";
@@ -48,15 +44,13 @@ import { EmptyChat } from "./empty-chat";
 import { TypingIndicator } from "./typing-indicator";
 import { ActivityRow } from "./activity-row";
 import { ChannelGoalsBoard } from "./channel-goals-board";
-import { ConversationSkeleton } from "./conversation-skeleton";
-import { ActivityListSkeleton } from "./activity-list-skeleton";
-import { FileListSkeleton } from "./file-list-skeleton";
-import { MemberListSkeleton } from "./member-list-skeleton";
+import { ListSkeleton } from "./list-skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { resolveWorkspaceApproval } from "../approval-resolution";
-import { resolveWorkflowGate } from "../use-workflow-approvals";
-import { approvalToActivity, runToActivity } from "../activity-events";
-import { approvalToCard } from "../approval-card-data";
+import { useApprovalResolution } from "../hooks/use-approval-resolution";
+import { useThreadQuestions } from "../hooks/use-thread-questions";
+import { useActiveTerminalJobs } from "../hooks/use-active-terminal-jobs";
+import { clientFetchJson } from "@/lib/client-api";
+import { runToActivity } from "../activity-events";
 import { pendingApprovalVisibleInChannelView, queueApprovals } from "../approval-thread-filter";
 import { summarizeFileChanges } from "../change-summary";
 import { ReasoningTracePanel } from "./reasoning-trace-panel";
@@ -70,7 +64,7 @@ import {
   isLiveRun,
 } from "../feed-selectors";
 import { buildReasoningTraceSteps } from "../reasoning-trace";
-import type { Member, ShellApprovalMode, InteractiveQuestion } from "@ujima/shared/browser";
+import type { Member, ShellApprovalMode } from "@ujima/shared/browser";
 
 const CHANNEL_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
@@ -83,105 +77,49 @@ const CHANNEL_TABS: ChatTab[] = [
   { id: "activity", label: "Activity" },
 ];
 const MAX_ACTIVITY_ROWS = 100;
+const ACTIVITY_PAGE_SIZE = 50;
 const EMPTY_ACTIVITY_EVENTS = [] as ReturnType<typeof useConversationSync>["activity"];
 const EMPTY_RUNS = [] as RunState[];
+
+type ActivityFilter = "all" | "runs" | "tools" | "approvals";
+
+const ACTIVITY_FILTER_MATCHERS: Record<Exclude<ActivityFilter, "all">, (type: string) => boolean> = {
+  runs: (type) => type.startsWith("run_") || type.startsWith("member_alert"),
+  tools: (type) => type.startsWith("tool_") || type === "run_chunk",
+  approvals: (type) => type.startsWith("approval_"),
+};
+
+function calendarDayLabel(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "Unknown date";
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(parsed)) / (24 * 60 * 60 * 1000));
+  if (dayDiff <= 0) return "Today";
+  if (dayDiff === 1) return "Yesterday";
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: parsed.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  }).format(parsed);
+}
 
 const AGENT_TABS: ChatTab[] = [
   { id: "conversation", label: "Conversation" },
   { id: "approvals", label: "Approvals" },
   { id: "tasks", label: "Tasks" },
+  { id: "workflows", label: "Workflows" },
   { id: "activity", label: "Activity" },
 ];
 
-function useTerminalPolling(
-  globalActiveRuns: RunState[],
-  organizationId: string | undefined,
-  setActiveTerminals: (jobs: ActiveJob[]) => void,
-) {
-  useEffect(() => {
-    if (!organizationId || globalActiveRuns.length === 0) {
-      setActiveTerminals([]);
-      return;
-    }
-
-    let cancelled = false;
-    let interval: NodeJS.Timeout | null = null;
-
-    const pollJobs = async () => {
-      if (document.visibilityState !== "visible") return;
-      try {
-        const jobsPromises = globalActiveRuns.map(async (run) => {
-          const res = await fetch(
-            `/api/runs/${encodeURIComponent(run.id)}/jobs?organizationId=${encodeURIComponent(organizationId)}`
-          );
-          if (!res.ok) return [];
-          const data = await res.json().catch(() => []);
-          if (!Array.isArray(data)) return [];
-          return data.flatMap((job: unknown) => {
-            if (!job || typeof job !== "object") return [];
-            const record = job as Record<string, unknown>;
-            if (typeof record.id !== "string") return [];
-            return [
-              {
-                runId: run.id,
-                jobId: record.id,
-                commandLine: typeof record.commandLine === "string" ? record.commandLine : "",
-                cwd: typeof record.cwd === "string" ? record.cwd : "",
-                status: typeof record.status === "string" ? record.status : "running",
-              } satisfies ActiveJob,
-            ];
-          });
-        });
-
-        const allJobsLists = await Promise.all(jobsPromises);
-        if (cancelled) return;
-
-        const runningJobs = allJobsLists.flat().filter((job) => job.status === "running");
-        setActiveTerminals(runningJobs);
-      } catch (e) {
-        console.error("Failed to fetch running background jobs:", e);
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void pollJobs();
-        if (!interval) {
-          interval = setInterval(pollJobs, 3000);
-        }
-      } else {
-        if (interval) {
-          clearInterval(interval);
-          interval = null;
-        }
-      }
-    };
-
-    if (document.visibilityState === "visible") {
-      void pollJobs();
-      interval = setInterval(pollJobs, 3000);
-    }
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [globalActiveRuns, organizationId, setActiveTerminals]);
-}
-
-interface ReasoningTraceParams {
+interface FloatingStatusRailProps {
+  channels: BootstrapResponse["channels"];
+  members: BootstrapResponse["members"];
   currentThreadId?: string;
-  reasoningTraceVisible: boolean;
-  conversation: SelectedConversation;
-  traceMembers: { id: string; name: string; kind: string }[];
-  activity: ActivityEvent[];
-  runs: RunState[];
-  organizationId?: string;
+  activeTerminals: ActiveJob[];
+  onOpenChat: (threadId: string, name: string) => void;
+  onOpenTerminal: () => void;
 }
 
 function FloatingStatusRail({
@@ -191,14 +129,7 @@ function FloatingStatusRail({
   activeTerminals,
   onOpenChat,
   onOpenTerminal,
-}: {
-  channels: BootstrapResponse["channels"];
-  members: BootstrapResponse["members"];
-  currentThreadId?: string;
-  activeTerminals: ActiveJob[];
-  onOpenChat: (threadId: string, name: string) => void;
-  onOpenTerminal: () => void;
-}) {
+}: FloatingStatusRailProps) {
   const { globalActiveRuns, approvals, activity } = useWorkspaceStore(
     useShallow((state) => ({
       globalActiveRuns: state.globalActiveRuns,
@@ -226,7 +157,7 @@ function FloatingStatusRail({
           key={chat.threadId}
           type="button"
           onClick={() => onOpenChat(chat.threadId, chat.name)}
-          className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
+          className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200 bg-white/90 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-200"
         >
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -237,107 +168,32 @@ function FloatingStatusRail({
               {chat.name} {chat.agents.length > 1 ? "are" : "is"} chatting
             </span>
             {chat.activityText ? (
-              <span className="live-activity-shimmer block truncate text-[10px] leading-tight">
+              <span className="live-activity-shimmer block truncate text-xs leading-tight">
                 {chat.activityText}
               </span>
             ) : null}
           </span>
           {chat.pendingApprovals > 0 ? (
-            <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950">
+            <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-xs font-bold text-zinc-950">
               {chat.pendingApprovals} approval{chat.pendingApprovals === 1 ? "" : "s"}
             </span>
           ) : null}
         </button>
       ))}
       {activeTerminals.length > 0 ? (
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenTerminal}
-            className="flex items-center gap-2 rounded-full border border-zinc-200/50 bg-white/30 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-200"
-          >
-            <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500 dark:text-zinc-400" />
-            <span>
-              {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenTerminal}
-            className="flex h-[29px] w-[29px] items-center justify-center rounded-full border border-zinc-200/50 bg-white/30 text-zinc-500 shadow-lg backdrop-blur-sm transition hover:bg-white/50 dark:border-zinc-800/50 dark:bg-[#09090b]/30 dark:text-zinc-400"
-            aria-label="More terminal details"
-          >
-            <span className="text-xs font-semibold">...</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onOpenTerminal}
+          className="flex shrink-0 items-center gap-2 rounded-full border border-zinc-200 bg-white/90 px-3.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-200"
+        >
+          <Terminal className="h-3.5 w-3.5 animate-pulse text-zinc-500 dark:text-zinc-400" />
+          <span>
+            {activeTerminals.length} {activeTerminals.length === 1 ? "Terminal" : "Terminals"}
+          </span>
+        </button>
       ) : null}
     </div>
   );
-}
-
-function useReasoningTrace({
-  currentThreadId,
-  reasoningTraceVisible,
-  conversation,
-  traceMembers,
-  activity,
-  runs,
-  organizationId,
-}: ReasoningTraceParams) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [buildFn, setBuildFn] = useState<any>(null);
-
-  useEffect(() => {
-    if (reasoningTraceVisible && !buildFn) {
-      import("../reasoning-trace").then((mod) => {
-        setBuildFn(() => mod.buildReasoningTraceSteps);
-      });
-    }
-  }, [reasoningTraceVisible, buildFn]);
-
-  const liveTraceActivity = useMemo(
-    () => (reasoningTraceVisible ? activity : []),
-    [activity, reasoningTraceVisible],
-  );
-  const liveTraceRuns = useMemo(
-    () => (reasoningTraceVisible ? runs : []),
-    [runs, reasoningTraceVisible],
-  );
-  const deferredTraceActivity = useDeferredValue(liveTraceActivity);
-  const deferredTraceRuns = useDeferredValue(liveTraceRuns);
-
-  const reasoningTraceState = useMemo(
-    () => (reasoningTraceVisible ? { activity: deferredTraceActivity, runs: deferredTraceRuns } : null),
-    [deferredTraceActivity, deferredTraceRuns, reasoningTraceVisible],
-  );
-
-  const steps = useMemo(() => {
-    if (!currentThreadId || !reasoningTraceVisible || !buildFn || !reasoningTraceState) {
-      return [];
-    }
-    return buildFn({
-      threadId: currentThreadId,
-      agentIdFilter: conversation.type === "agent" ? conversation.id : undefined,
-      conversationName: conversation.name,
-      conversationType: conversation.type,
-      members: traceMembers,
-      activity: reasoningTraceState.activity,
-      runs: reasoningTraceState.runs,
-      organizationId,
-    });
-  }, [
-    currentThreadId,
-    reasoningTraceVisible,
-    buildFn,
-    conversation.id,
-    conversation.name,
-    conversation.type,
-    traceMembers,
-    reasoningTraceState,
-    organizationId,
-  ]);
-
-  return steps;
 }
 
 interface ChannelViewProps {
@@ -377,10 +233,9 @@ export function ChannelView({
   onMemberUpdated,
   onOrgShellApprovalModeChange,
 }: ChannelViewProps) {
-  const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, boolean>>({});
-  const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
-  const [pendingQuestions, setPendingQuestions] = useState<InteractiveQuestion[]>([]);
-  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const organizationId = bootstrap.organization?.id;
+  const { resolve: resolveApproval, resolving: resolvingApprovals, errors: approvalErrors } =
+    useApprovalResolution(organizationId);
   const [resolvingQuestions, setResolvingQuestions] = useState<Record<string, boolean>>({});
   const [questionErrors, setQuestionErrors] = useState<Record<string, string>>({});
   const [stoppingRunId, setStoppingRunId] = useState<string | undefined>();
@@ -420,9 +275,7 @@ export function ChannelView({
     setDetailsWidth,
     setDetailsTab,
     setChatFontSize,
-    upsertApproval,
     upsertRun,
-    setActiveTerminals,
   } = useWorkspaceStore(
     useShallow((state) => ({
       setActiveTab: state.setActiveTab,
@@ -431,9 +284,7 @@ export function ChannelView({
       setDetailsWidth: state.setDetailsWidth,
       setDetailsTab: state.setDetailsTab,
       setChatFontSize: state.setChatFontSize,
-      upsertApproval: state.upsertApproval,
       upsertRun: state.upsertRun,
-      setActiveTerminals: state.setActiveTerminals,
     }))
   );
 
@@ -501,7 +352,7 @@ export function ChannelView({
   }, [currentChannel?.memberIds]);
 
   const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
-  const activeTerminals = useWorkspaceStore(selectActiveTerminals);
+  const activeTerminals = useActiveTerminalJobs(globalActiveRuns, organizationId);
   const composerReasoningEffort =
     useWorkspaceStore((state) =>
       currentThreadId ? state.composerReasoningEffortByThread[currentThreadId] : undefined,
@@ -510,8 +361,6 @@ export function ChannelView({
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
   const openWorkflowRunDrawer = useWorkspaceStore((s) => s.openWorkflowRunDrawer);
   const [stopError, setStopError] = useState<string | undefined>(undefined);
-
-  useTerminalPolling(globalActiveRuns, bootstrap.organization?.id, setActiveTerminals);
 
   const traceMembers = useMemo(
     () =>
@@ -523,15 +372,39 @@ export function ChannelView({
     [members],
   );
   const reasoningTraceVisible = showDetails;
-  const reasoningTraceSteps = useReasoningTrace({
+  const liveTraceActivity = useMemo(
+    () => (reasoningTraceVisible ? feed.activity : []),
+    [feed.activity, reasoningTraceVisible],
+  );
+  const liveTraceRuns = useMemo(
+    () => (reasoningTraceVisible ? feed.runs : []),
+    [feed.runs, reasoningTraceVisible],
+  );
+  const deferredTraceActivity = useDeferredValue(liveTraceActivity);
+  const deferredTraceRuns = useDeferredValue(liveTraceRuns);
+  const reasoningTraceSteps = useMemo(() => {
+    if (!currentThreadId || !reasoningTraceVisible) return [];
+    return buildReasoningTraceSteps({
+      threadId: currentThreadId,
+      agentIdFilter: conversation.type === "agent" ? conversation.id : undefined,
+      conversationName: conversation.name,
+      conversationType: conversation.type,
+      members: traceMembers,
+      activity: deferredTraceActivity,
+      runs: deferredTraceRuns,
+      organizationId,
+    });
+  }, [
     currentThreadId,
     reasoningTraceVisible,
-    conversation,
+    conversation.id,
+    conversation.name,
+    conversation.type,
     traceMembers,
-    activity: feed.activity,
-    runs: feed.runs,
-    organizationId: bootstrap.organization?.id,
-  });
+    deferredTraceActivity,
+    deferredTraceRuns,
+    organizationId,
+  ]);
 
   const approvalsSource = activeTab === "conversation" || activeTab === "approvals" ? feed.approvals : null;
   const visibleApprovals = useMemo(
@@ -552,10 +425,12 @@ export function ChannelView({
   );
 
   const isAgent = conversation.type === "agent";
-  const agentMember = isAgent ? memberById.get(conversation.id) : undefined;
+  const agentMember = isAgent
+    ? (memberById.get(conversation.id) ??
+       members.find((m) => m.kind === "agent" && (m.id === conversation.id || m.name === conversation.id)))
+    : undefined;
   const tabs = isAgent ? AGENT_TABS : CHANNEL_TABS;
   const tabIds = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs]);
-  const conversationColorIndex = Math.max(memberIndexById.get(conversation.id) ?? 0, 0);
   const messageVirtualizer = useVirtualizer({
     count: feed.messages.length,
     getScrollElement: () => listRef.current,
@@ -608,10 +483,6 @@ export function ChannelView({
     virtualizerTotalSize: messageVirtualizer.getTotalSize(),
   });
 
-  const selectedStatus =
-    conversation.type === "channel"
-      ? { variant: "active" as const, label: "Active" }
-      : feed.status;
   const liveThreadRuns = useMemo(() => {
     if (!currentThreadId) return EMPTY_RUNS;
     const byId = new Map<string, RunState>();
@@ -731,7 +602,13 @@ export function ChannelView({
     () => Math.max(memberIndexById.get(typingMember?.id ?? "") ?? 0, 0),
     [memberIndexById, typingMember?.id],
   );
-  const organizationId = bootstrap.organization?.id;
+  const { pendingQuestions, activeQuestionIndex, setActiveQuestionIndex, removeQuestion } =
+    useThreadQuestions({
+      currentThreadId,
+      organizationId,
+      waitingInputRunIds,
+      refreshSignal: questionRefreshSignal,
+    });
   const mentionSuggestions = useMemo(() => (
     members
       .filter((member) => member.id !== bootstrap.auth.member?.id)
@@ -745,130 +622,17 @@ export function ChannelView({
         detail: member.roleName,
       }))
   ), [bootstrap.auth.member?.id, members]);
-  useEffect(() => {
-    let cancelled = false;
-    if (!organizationId || !currentThreadId) {
-      setPendingQuestions([]);
-      setActiveQuestionIndex(0);
-      return;
-    }
-    void (async () => {
-      const byThread = fetch(`/api/questions?threadId=${encodeURIComponent(currentThreadId)}`)
-        .then(async (res) => {
-          if (!res.ok) return [];
-          const body = (await res.json().catch(() => null)) as { questions?: InteractiveQuestion[] } | null;
-          return body?.questions ?? [];
-        });
-      const pages = await Promise.all(
-        [
-          byThread,
-          ...waitingInputRunIds.map(async (runId) => {
-            const res = await fetch(`/api/questions?runId=${encodeURIComponent(runId)}`);
-            if (!res.ok) return [];
-            const body = (await res.json().catch(() => null)) as { questions?: InteractiveQuestion[] } | null;
-            return body?.questions ?? [];
-          }),
-        ],
-      );
-      if (cancelled) return;
-      const next = Array.from(new Map(pages.flat().map((question) => [question.id, question])).values());
-      setPendingQuestions(next);
-      setActiveQuestionIndex((index) => Math.min(index, Math.max(next.length - 1, 0)));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentThreadId, organizationId, questionRefreshSignal, waitingInputRunIds]);
-
-  const resolveApproval = useCallback(
-    async (
-      approvalId: string,
-      resolution: "allow_once" | "allow_always" | "allow_family" | "reject",
-    ) => {
-      if (!organizationId) {
-        throw new Error("Missing organization context for approval resolution.");
-      }
-      setResolvingApprovals((state) => ({ ...state, [approvalId]: true }));
-      setApprovalErrors((state) => {
-        const next = { ...state };
-        delete next[approvalId];
-        return next;
-      });
-      // Workflow gates resolve through the workflow transition endpoint.
-      const workflowCard = useWorkspaceStore
-        .getState()
-        .approvals.find((a) => a.id === approvalId && a.workflowScope);
-      if (workflowCard) {
-        try {
-          await resolveWorkflowGate(workflowCard, resolution);
-          useWorkspaceStore.getState().removeApproval(approvalId);
-        } catch (err) {
-          setApprovalErrors((state) => ({
-            ...state,
-            [approvalId]: err instanceof Error ? err.message : "Unable to resolve gate.",
-          }));
-        } finally {
-          setResolvingApprovals((state) => {
-            const next = { ...state };
-            delete next[approvalId];
-            return next;
-          });
-        }
-        return;
-      }
-      try {
-        const response = await resolveWorkspaceApproval({
-          organizationId,
-          approvalId,
-          resolution,
-        });
-        if (!response.ok) {
-          const body = await response.json().catch(() => null);
-          const message =
-            body && typeof body === "object" && "message" in body && typeof body.message === "string"
-              ? body.message
-              : "Unable to resolve approval.";
-          setApprovalErrors((state) => ({ ...state, [approvalId]: message }));
-          return;
-        }
-        const body = await response.json().catch(() => null);
-        const parsed = ApprovalRequestSchema.safeParse(body);
-        if (parsed.success) {
-          upsertApproval(
-            parsed.data,
-            (value, state) => approvalToCard(value, { members: state.members }),
-            approvalToActivity,
-          );
-        }
-      } finally {
-        setResolvingApprovals((state) => {
-          const next = { ...state };
-          delete next[approvalId];
-          return next;
-        });
-      }
-    },
-    [organizationId, upsertApproval],
-  );
 
   const stopAgentRun = useCallback(
     async (runId: string) => {
       if (!organizationId) {
         throw new Error("Missing organization context.");
       }
-      const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
+      const body = await clientFetchJson<unknown>(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ organizationId }),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        const message =
-          body && typeof body === "object" && "message" in body && typeof body.message === "string"
-            ? body.message
-            : "Unable to stop the run.";
-        throw new Error(message);
-      }
+      }, "Unable to stop the run.");
       const parsed = RunStateSchema.safeParse(body);
       if (parsed.success) {
         upsertRun(parsed.data, runToActivity);
@@ -900,25 +664,17 @@ export function ChannelView({
         return next;
       });
       try {
-        const response = await fetch(`/api/questions/${encodeURIComponent(questionId)}/answer`, {
+        await clientFetchJson<unknown>(`/api/questions/${encodeURIComponent(questionId)}/answer`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ selectedOption }),
-        });
-        const body = await response.json().catch(() => null);
-        if (!response.ok) {
-          const message =
-            body && typeof body === "object" && "message" in body && typeof body.message === "string"
-              ? body.message
-              : "Unable to answer question.";
-          setQuestionErrors((state) => ({ ...state, [questionId]: message }));
-          return;
-        }
-        setPendingQuestions((state) => {
-          const next = state.filter((question) => question.id !== questionId);
-          setActiveQuestionIndex((index) => Math.min(index, Math.max(next.length - 1, 0)));
-          return next;
-        });
+        }, "Unable to answer question.");
+        removeQuestion(questionId);
+      } catch (error) {
+        setQuestionErrors((state) => ({
+          ...state,
+          [questionId]: error instanceof Error ? error.message : "Unable to answer question.",
+        }));
       } finally {
       setResolvingQuestions((state) => {
         const next = { ...state };
@@ -927,7 +683,7 @@ export function ChannelView({
       });
       }
     },
-    [],
+    [removeQuestion],
   );
   const handleTabChange = useCallback(
     (tab: string) => {
@@ -1068,13 +824,34 @@ export function ChannelView({
     [conversationAttachmentsSource],
   );
 
-  const visibleActivity = useMemo(
-    () =>
-      activeTab === "activity"
-        ? feed.activity.filter(isSidebarActivityEvent).slice(-MAX_ACTIVITY_ROWS).reverse()
-        : EMPTY_ACTIVITY_EVENTS,
-    [activeTab, feed.activity],
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [activityLimit, setActivityLimit] = useState(ACTIVITY_PAGE_SIZE);
+
+  const visibleActivity = useMemo(() => {
+    if (activeTab !== "activity") return EMPTY_ACTIVITY_EVENTS;
+    const base = feed.activity.filter(isSidebarActivityEvent);
+    const filtered =
+      activityFilter === "all"
+        ? base
+        : base.filter((event) => ACTIVITY_FILTER_MATCHERS[activityFilter](event.type));
+    return filtered.slice(-MAX_ACTIVITY_ROWS).reverse();
+  }, [activeTab, feed.activity, activityFilter]);
+
+  const activityPage = useMemo(
+    () => visibleActivity.slice(0, activityLimit),
+    [visibleActivity, activityLimit],
   );
+
+  const activityDayGroups = useMemo(() => {
+    const groups: { label: string; events: typeof activityPage }[] = [];
+    for (const event of activityPage) {
+      const label = calendarDayLabel(event.timestamp);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.events.push(event);
+      else groups.push({ label, events: [event] });
+    }
+    return groups;
+  }, [activityPage]);
 
   useLayoutEffect(() => {
     if (!tabIds.has(activeTab)) {
@@ -1095,63 +872,11 @@ export function ChannelView({
       style={{ gridTemplateColumns: `minmax(0, 1fr) minmax(0, ${detailsCol})` }}
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
-        {/* Absolute header and tabs overlay */}
-        <div className="absolute top-0 left-0 right-0 z-30 flex flex-col pointer-events-none">
-          <div className="pointer-events-auto">
-            <ChatHeader
-              title={conversation.name}
-              type={conversation.type === "agent" ? "dm" : "channel"}
-              avatarName={isAgent ? conversation.name : undefined}
-              avatarColorIndex={conversationColorIndex}
-              status={selectedStatus.variant}
-              statusLabel={selectedStatus.label}
-              actions={
-                isAgent && agentMember && onMemberUpdated ? (
-                  <CollapsibleHeaderActions
-                    key={`${conversation.type}:${conversation.id}`}
-                    kind="agent"
-                    chatFontSize={chatFontSize}
-                    onChatFontSizeChange={setChatFontSize}
-                    orgId={bootstrap.organization?.id ?? ""}
-                    agentMember={agentMember}
-                    providers={bootstrap.providers}
-                    orgShellApprovalMode={orgShellApprovalMode}
-                    goalMode={goalMode}
-                    onMemberUpdated={onMemberUpdated}
-                    onOpenAgentEditor={onOpenAgentEditor}
-                  />
-                ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
-                  <CollapsibleHeaderActions
-                    key={`${conversation.type}:${conversation.id}`}
-                    kind="channel"
-                    chatFontSize={chatFontSize}
-                    onChatFontSizeChange={setChatFontSize}
-                    channelValue={orgShellApprovalMode}
-                    onChannelChange={onOrgShellApprovalModeChange}
-                  />
-                ) : (
-                  <CollapsibleHeaderActions
-                    key={`${conversation.type}:${conversation.id}`}
-                    kind="channel"
-                    chatFontSize={chatFontSize}
-                    onChatFontSizeChange={setChatFontSize}
-                    channelValue={"never" as ShellApprovalMode}
-                    onChannelChange={async () => undefined}
-                  />
-                )
-              }
-              showDetails={showDetails}
-              onToggleDetails={() => setShowDetails(!showDetails, { userIntent: true })}
-            />
-          </div>
-          <div className="pointer-events-auto">
-            <ChatTabs
-              tabs={tabsWithCounts}
-              activeTab={activeTab}
-              onTabChange={handleTabChange}
-            />
-          </div>
-        </div>
+        <ChatTabs
+          tabs={tabsWithCounts}
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+        />
         {activeTab === "conversation" ? (
           <div className="relative flex flex-1 min-h-0 flex-col" aria-busy={Boolean(feed.archiving)}>
             {feed.archiving ? (
@@ -1176,9 +901,9 @@ export function ChannelView({
                 </div>
               </div>
             ) : null}
-            <ChatMessageList ref={listRef} onScroll={handleScroll} className="pt-24">
+            <ChatMessageList ref={listRef} onScroll={handleScroll} className="pt-3">
             {feed.loading && feed.messages.length === 0 ? (
-              <ConversationSkeleton />
+              <ListSkeleton variant="conversation" />
             ) : feed.messages.length > 0 ? (
               <>
                   <div
@@ -1193,7 +918,7 @@ export function ChannelView({
                           key={message.id}
                           data-index={virtualRow.index}
                           ref={messageVirtualizer.measureElement}
-                          className="absolute left-0 top-0 w-full pb-2"
+                          className="absolute left-0 top-0 w-full pb-1"
                           style={{
                             transform: `translateY(${virtualRow.start}px)`,
                           }}
@@ -1242,13 +967,13 @@ export function ChannelView({
               onSaved={setChannelMemberIds}
             />
           ) : feed.loading ? (
-            <TabPanel><MemberListSkeleton /></TabPanel>
+            <TabPanel><ListSkeleton variant="member" /></TabPanel>
           ) : (
             <TabEmpty context="members" label="Channel unavailable." />
           )
         ) : activeTab === "approvals" ? (
           feed.loading ? (
-            <TabPanel><MemberListSkeleton /></TabPanel>
+            <TabPanel><ListSkeleton variant="card" /></TabPanel>
           ) : visibleApprovals.length > 0 ? (
             <TabPanel>
               <ApprovalQueue
@@ -1263,22 +988,26 @@ export function ChannelView({
           )
         ) : activeTab === "tasks" ? (
           organizationId ? (
-            <ChannelGoalsBoard
-              key={currentThreadId ?? conversation.id}
-              channelId={currentThreadId ?? conversation.id}
-              members={members}
-            />
+            <TabPanel>
+              <ChannelGoalsBoard
+                key={currentThreadId ?? conversation.id}
+                channelId={currentThreadId ?? conversation.id}
+                members={members}
+              />
+            </TabPanel>
           ) : (
             <TabEmpty context="tasks" label="No organization context available." />
           )
         ) : activeTab === "workflows" ? (
-          conversation.type === "channel" && organizationId ? (
-            <ChannelWorkflowsTab
-              channelId={conversation.id}
-              threadId={currentThreadId ?? conversation.id}
-            />
+          organizationId ? (
+            <TabPanel>
+              <ChannelWorkflowsTab
+                channelId={conversation.id}
+                threadId={currentThreadId ?? conversation.id}
+              />
+            </TabPanel>
           ) : (
-            <TabEmpty context="generic" label="Workflows are available in channels." />
+            <TabEmpty context="generic" label="No organization context available." />
           )
         ) : activeTab === "culture" ? (
           (conversation.type === "channel" || conversation.type === "agent") && organizationId ? (
@@ -1290,7 +1019,7 @@ export function ChannelView({
           )
         ) : activeTab === "files" ? (
           feed.loading ? (
-            <TabPanel><FileListSkeleton /></TabPanel>
+            <TabPanel><ListSkeleton variant="file" /></TabPanel>
           ) : conversationAttachments.length > 0 ? (
             <TabPanel>
               <div className="space-y-2">
@@ -1325,13 +1054,60 @@ export function ChannelView({
           )
         ) : (
           feed.loading ? (
-            <TabPanel><ActivityListSkeleton /></TabPanel>
+            <TabPanel><ListSkeleton variant="activity" /></TabPanel>
           ) : visibleActivity.length > 0 ? (
             <TabPanel>
-              <div className="space-y-2">
-                {visibleActivity.map((event) => (
-                  <ActivityRow key={event.event_id} event={event} />
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1" role="group" aria-label="Filter activity">
+                    {(["all", "runs", "tools", "approvals"] as const).map((filter) => (
+                      <button
+                        key={filter}
+                        type="button"
+                        aria-pressed={activityFilter === filter}
+                        onClick={() => {
+                          setActivityFilter(filter);
+                          setActivityLimit(ACTIVITY_PAGE_SIZE);
+                        }}
+                        className={`rounded-md border px-2.5 py-1 text-[11px] font-medium capitalize transition-colors ${
+                          activityFilter === filter
+                            ? "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/10 dark:text-violet-300"
+                            : "border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:border-zinc-700"
+                        }`}
+                      >
+                        {filter}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-zinc-400">
+                    Showing {activityPage.length} of {visibleActivity.length}
+                  </span>
+                </div>
+                {activityDayGroups.map((group) => (
+                  <div key={group.label} className="space-y-2">
+                    <p className="sticky top-0 z-[1] bg-background px-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                      {group.label}
+                    </p>
+                    {group.events.map((event) => (
+                      <ActivityRow
+                        key={event.event_id}
+                        event={event}
+                        onOpenTask={() => handleOpenTasksTab()}
+                      />
+                    ))}
+                  </div>
                 ))}
+                {activityPage.length < visibleActivity.length ? (
+                  <div className="flex justify-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setActivityLimit((limit) => limit + ACTIVITY_PAGE_SIZE)}
+                      className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    >
+                      Show more ({visibleActivity.length - activityPage.length} earlier)
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </TabPanel>
           ) : (
@@ -1425,6 +1201,41 @@ export function ChannelView({
             stoppableRunIds={stoppableRunIds}
             onStopRuns={stopRuns}
             onSend={handleSend}
+            actions={
+              isAgent && agentMember && onMemberUpdated ? (
+                <CollapsibleHeaderActions
+                  key={`${conversation.type}:${conversation.id}`}
+                  kind="agent"
+                  chatFontSize={chatFontSize}
+                  onChatFontSizeChange={setChatFontSize}
+                  orgId={bootstrap.organization?.id ?? ""}
+                  agentMember={agentMember}
+                  providers={bootstrap.providers}
+                  orgShellApprovalMode={orgShellApprovalMode}
+                  goalMode={goalMode}
+                  onMemberUpdated={onMemberUpdated}
+                  onOpenAgentEditor={onOpenAgentEditor}
+                />
+              ) : conversation.type === "channel" && onOrgShellApprovalModeChange ? (
+                <CollapsibleHeaderActions
+                  key={`${conversation.type}:${conversation.id}`}
+                  kind="channel"
+                  chatFontSize={chatFontSize}
+                  onChatFontSizeChange={setChatFontSize}
+                  channelValue={orgShellApprovalMode}
+                  onChannelChange={onOrgShellApprovalModeChange}
+                />
+              ) : (
+                <CollapsibleHeaderActions
+                  key={`${conversation.type}:${conversation.id}`}
+                  kind="channel"
+                  chatFontSize={chatFontSize}
+                  onChatFontSizeChange={setChatFontSize}
+                  channelValue={"never" as ShellApprovalMode}
+                  onChannelChange={async () => undefined}
+                />
+              )
+            }
           />
         </div>
       </div>
@@ -1471,7 +1282,7 @@ export function ChannelView({
 
 function TabPanel({ children }: { children: ReactNode }) {
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pt-24">
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pt-4">
       {children}
     </div>
   );
@@ -1479,7 +1290,7 @@ function TabPanel({ children }: { children: ReactNode }) {
 
 function TabEmpty({ context, label }: { context?: "messages" | "members" | "approvals" | "tasks" | "files" | "activity" | "search" | "generic"; label?: string }) {
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pt-24">
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pt-4">
       <EmptyState context={context ?? "generic"} title={label} />
     </div>
   );

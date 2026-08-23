@@ -34,6 +34,15 @@ export type WorkspaceTab =
 export type WorkspaceDetailsTab = "Thinking trace" | "Changes" | "Metadata";
 export type ChatFontSize = "normal" | "large" | "xlarge" | "xxlarge" | "3xlarge" | "6xlarge";
 
+export const CHAT_FONT_SIZE_OPTIONS: { value: ChatFontSize; label: string }[] = [
+  { value: "normal", label: "Normal" },
+  { value: "large", label: "Large" },
+  { value: "xlarge", label: "X-Large" },
+  { value: "xxlarge", label: "2X Large" },
+  { value: "3xlarge", label: "3X Large" },
+  { value: "6xlarge", label: "6X Large" },
+];
+
 export interface ActiveJob {
   runId: string;
   jobId: string;
@@ -102,11 +111,11 @@ export interface WorkspaceState {
   clearConversationUnreadCount(conversationId: string): void;
   resetConversationFeed(conversationKey: string): void;
   setLoading(loading: boolean): void;
-  hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent): void;
+  hydrateMessages(messages: Message[], toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent, expectedConversationKey?: string): void;
   addPendingMessage(message: ChatMessageData): void;
   receiveMessage(tempId: string | undefined, message: Message, toMessage: (message: Message) => ChatMessageData, toActivity: (message: Message) => ActivityEvent, expectedConversationKey?: string): void;
-  appendRunChunk(message: ChatMessageData | undefined, activity?: ActivityEvent): void;
-  appendRunChunkBatch(items: { message?: ChatMessageData; activity?: ActivityEvent }[]): void;
+  appendRunChunk(message: ChatMessageData | undefined, activity?: ActivityEvent, expectedConversationKey?: string): void;
+  appendRunChunkBatch(items: { message?: ChatMessageData; activity?: ActivityEvent }[], expectedConversationKey?: string): void;
   removeMessage(id: string): void;
   replaceApprovals(approvals: ApprovalCardData[]): void;
   /** Replace only workflow-gate approvals (sourced from the workflow-approvals poll). */
@@ -274,39 +283,23 @@ function mergeRuns(current: RunState[], incoming: RunState[]): RunState[] {
   return next;
 }
 
-// Module-level incremental set tracking seen activity event IDs.
-// Avoids rebuilding a Set from the entire activity array on every append.
-let _activityEventIds: Set<string> | null = null;
-let _activityForIds: ActivityEvent[] | null = null;
-
-function getActivityEventIds(activity: ActivityEvent[]): Set<string> {
-  // If the activity array reference changed (e.g. conversation reset), rebuild.
-  if (_activityForIds !== activity || !_activityEventIds) {
-    _activityEventIds = new Set(activity.map((event) => event.event_id));
-    _activityForIds = activity;
-  }
-  return _activityEventIds;
-}
-
 function appendSequencedEvents(
   state: Pick<WorkspaceState, "activitySequence" | "activity">,
   events: ActivityEvent[],
 ): Pick<WorkspaceState, "activitySequence" | "activity"> {
   if (events.length === 0) return state;
-  const seen = getActivityEventIds(state.activity);
-  const stamped = events.map((event, index) => ({
-    ...event,
-    order: state.activitySequence + index,
-  })).filter((event) => !seen.has(event.event_id));
+  const seen = new Set(state.activity.map((event) => event.event_id));
+  const stamped: ActivityEvent[] = [];
+  for (const event of events) {
+    if (seen.has(event.event_id)) continue;
+    seen.add(event.event_id);
+    stamped.push({ ...event, order: state.activitySequence + stamped.length });
+  }
   if (stamped.length === 0) return state;
-  // Incrementally update the tracking set while keeping the live feed bounded.
   let nextActivity = [...state.activity, ...stamped];
-  for (const event of stamped) seen.add(event.event_id);
   if (nextActivity.length > MAX_ACTIVITY_EVENTS) {
     nextActivity = nextActivity.slice(-MAX_ACTIVITY_EVENTS);
-    _activityEventIds = new Set(nextActivity.map((event) => event.event_id));
   }
-  _activityForIds = nextActivity;
   return {
     activitySequence: state.activitySequence + stamped.length,
     activity: nextActivity,
@@ -713,9 +706,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   resetConversationFeed: (conversationKey) =>
     set((state) => {
       if (state.conversationKey === conversationKey && state.loading) return state;
-      // Clear the incremental activity event ID cache on feed reset.
-      _activityEventIds = null;
-      _activityForIds = null;
       return {
         messages: [],
         approvals: [],
@@ -728,8 +718,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }),
   setLoading: (loading) =>
     set((state) => (state.loading === loading ? state : { loading })),
-  hydrateMessages: (messages, toMessage, toActivity) =>
+  hydrateMessages: (messages, toMessage, toActivity, expectedConversationKey) =>
     set((state) => {
+      if (expectedConversationKey && state.conversationKey !== expectedConversationKey) return state;
       const converted = messages.map((message) => toMessage(message));
       const withoutStaleStreams = converted.reduce(pruneStreamingMessage, state.messages);
       const mergedMessages = ensureReplyPreviews(mergeChatMessages(withoutStaleStreams, converted));
@@ -768,13 +759,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         ...appendSequencedEvents(state, [toActivity(message)]),
       };
     }),
-  appendRunChunk: (message, activity) =>
+  appendRunChunk: (message, activity, expectedConversationKey) =>
     set((state) => {
+      if (expectedConversationKey && state.conversationKey !== expectedConversationKey) return state;
       const patch = applyRunChunkItems(state, [{ message, activity }]);
       return Object.keys(patch).length > 0 ? patch : state;
     }),
-  appendRunChunkBatch: (items) =>
+  appendRunChunkBatch: (items, expectedConversationKey) =>
     set((state) => {
+      if (expectedConversationKey && state.conversationKey !== expectedConversationKey) return state;
       const patch = applyRunChunkItems(state, items);
       return Object.keys(patch).length > 0 ? patch : state;
     }),

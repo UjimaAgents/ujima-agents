@@ -1,5 +1,5 @@
-import path from 'node:path';
-import { existsSync, realpathSync } from 'node:fs';
+import path from 'path';
+import { existsSync, realpathSync } from 'fs';
 import { RoleScopesSchema, type RoleScopes } from './org-schemas.js';
 
 export function normalizeWorkspaceRoot(root: string, baseDirectory = process.cwd()): string {

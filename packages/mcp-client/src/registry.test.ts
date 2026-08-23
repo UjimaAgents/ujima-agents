@@ -23,4 +23,15 @@ describe('curated registry', () => {
   // invariants only; per-entry shape assertions are not worth the
   // upkeep (typecheck already enforces the RegistryEntry contract).
 
+  // OAuth-only entries instantiate like any other remote connector —
+  // the bearer token arrives later via the secret-backed headersKeyRef.
+  it('instantiates oauth entries without throwing', () => {
+    const oauthEntries = CURATED_REGISTRY.filter((e) => e.authMode === 'oauth');
+    expect(oauthEntries.length).toBeGreaterThan(0);
+    for (const entry of oauthEntries) {
+      const def = instantiateFromRegistry(entry.id);
+      expect(def.url).toBeTruthy();
+      expect(def.headers ?? {}).toEqual({});
+    }
+  });
 });

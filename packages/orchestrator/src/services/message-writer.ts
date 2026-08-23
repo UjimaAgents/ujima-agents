@@ -5,7 +5,7 @@ import {
   type MessageMention,
 } from '@ujima/shared';
 import type { RealtimeService } from './context.js';
-import type { ConversationRepository } from './repository-reader.js';
+import type { ConversationStore } from './repository-reader.js';
 import { buildMessage } from './message-factory.js';
 
 /**
@@ -23,7 +23,15 @@ import { buildMessage } from './message-factory.js';
  * - Callback hooks (onMessagePublished)
  */
 export interface MessageWriterDeps {
-  repo: ConversationRepository;
+  repo: Pick<
+    ConversationStore,
+    | 'getMessage'
+    | 'linkAttachmentsToMessage'
+    | 'listMessageAttachments'
+    | 'replaceMessageMentions'
+    | 'saveMessage'
+    | 'updateMessage'
+  >;
   realtime: RealtimeService;
   requireActiveChannel(organizationId: string, channelId: string): Channel;
   resolveMessageMentions(

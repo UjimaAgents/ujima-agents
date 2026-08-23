@@ -1,4 +1,26 @@
 import { streamText, type AssistantContent, type LanguageModel, type ModelMessage, type ToolContent, type ToolSet } from 'ai';
+import {
+  classifyModelError,
+  ContextLengthExceededError,
+  findToolApprovalRequiredError,
+  findToolInputRequiredError,
+  ModelNotFoundError,
+  SchemaTooLargeError,
+  ToolApprovalRequiredError,
+  ToolInputRequiredError,
+} from './error-classification.js';
+
+export {
+  classifyModelError,
+  ContextLengthExceededError,
+  findToolApprovalRequiredError,
+  findToolInputRequiredError,
+  isContextLengthExceededError,
+  ModelNotFoundError,
+  SchemaTooLargeError,
+  ToolApprovalRequiredError,
+  ToolInputRequiredError,
+} from './error-classification.js';
 
 export const RUN_TERMINATING_TOOL_NAMES = new Set([
   'message',
@@ -71,73 +93,6 @@ export type HumanPause =
   | { kind: 'approval'; id: string }
   | { kind: 'input'; id: string };
 
-export class ToolApprovalRequiredError extends Error {
-  constructor(readonly approvalId: string) {
-    super(`Tool action requires approval: ${approvalId}`);
-    this.name = 'ToolApprovalRequiredError';
-  }
-}
-
-export class ToolInputRequiredError extends Error {
-  constructor(readonly questionId: string) {
-    super(`Tool action requires interactive user input: ${questionId}`);
-    this.name = 'ToolInputRequiredError';
-  }
-}
-
-export class ModelNotFoundError extends Error {
-  constructor(
-    readonly modelId: string,
-    readonly providerKindHint: string | undefined,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'ModelNotFoundError';
-  }
-}
-
-export class SchemaTooLargeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SchemaTooLargeError';
-  }
-}
-
-export class ContextLengthExceededError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ContextLengthExceededError';
-  }
-}
-
-export function findToolApprovalRequiredError(error: unknown): ToolApprovalRequiredError | null {
-  if (error instanceof ToolApprovalRequiredError) return error;
-  if (!error || typeof error !== 'object') return null;
-  const record = error as Record<string, unknown>;
-  if (record.name === 'ToolApprovalRequiredError' && typeof record.approvalId === 'string') {
-    return new ToolApprovalRequiredError(record.approvalId);
-  }
-  for (const key of ['cause', 'error']) {
-    const nested = findToolApprovalRequiredError(record[key]);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-export function findToolInputRequiredError(error: unknown): ToolInputRequiredError | null {
-  if (error instanceof ToolInputRequiredError) return error;
-  if (!error || typeof error !== 'object') return null;
-  const record = error as Record<string, unknown>;
-  if (record.name === 'ToolInputRequiredError' && typeof record.questionId === 'string') {
-    return new ToolInputRequiredError(record.questionId);
-  }
-  for (const key of ['cause', 'error']) {
-    const nested = findToolInputRequiredError(record[key]);
-    if (nested) return nested;
-  }
-  return null;
-}
-
 function rethrowClassified(error: unknown): never {
   const approval = findToolApprovalRequiredError(error);
   if (approval) throw approval;
@@ -148,55 +103,11 @@ function rethrowClassified(error: unknown): never {
     error instanceof SchemaTooLargeError ||
     error instanceof ContextLengthExceededError
   ) throw error;
-  const classified = classifyApiError(error);
+  const classified = classifyModelError(error);
   if (classified) throw classified;
+  // Abort errors (AI_AbortError / DOMException "AbortError") are intentionally
+  // left unclassified — they propagate unchanged and are not retried.
   throw error;
-}
-
-function classifyApiError(error: unknown): Error | null {
-  if (!error || typeof error !== 'object') return null;
-  const e = error as Record<string, unknown>;
-  const cause = e.cause && typeof e.cause === 'object' ? e.cause as Record<string, unknown> : undefined;
-  const message = [e.message, cause?.message]
-    .filter((value): value is string => typeof value === 'string')
-    .join(' ');
-  const url = typeof e.url === 'string' ? e.url : typeof cause?.url === 'string' ? cause.url : '';
-  const status = typeof e.statusCode === 'number'
-    ? e.statusCode
-    : typeof cause?.statusCode === 'number'
-      ? cause.statusCode
-      : undefined;
-  const hasApiShape = e.name === 'AI_APICallError' || cause?.name === 'AI_APICallError' || status !== undefined;
-  const hasKnownProviderMessage = /context_length_exceeded|maximum context length|reduce the length of the (messages|prompt)|too many states for serving|is not found for API version|is not supported for generateContent/i.test(message);
-  if (!hasApiShape && !hasKnownProviderMessage) return null;
-
-  if (
-    status === 404 &&
-    /is not found for API version|is not supported for generateContent/i.test(message)
-  ) {
-    const modelMatch = url.match(/models\/([^:]+):/);
-    const modelId = modelMatch?.[1] ?? 'unknown';
-    const providerHint = url.includes('generativelanguage.googleapis.com') ? 'google' : undefined;
-    return new ModelNotFoundError(modelId, providerHint, message);
-  }
-
-  if (status === 400 && /too many states for serving/i.test(message)) {
-    return new SchemaTooLargeError(message);
-  }
-
-  // Providers phrase this differently: OpenAI uses `context_length_exceeded`;
-  // deepseek/others say "maximum context length is N tokens ... reduce the
-  // length of the messages". Recognize both so the compaction-and-retry hook
-  // fires instead of the run just failing.
-  if (
-    /context_length_exceeded/i.test(message) ||
-    /maximum context length/i.test(message) ||
-    /reduce the length of the (messages|prompt)/i.test(message)
-  ) {
-    return new ContextLengthExceededError(message);
-  }
-
-  return null;
 }
 
 function stepToolResultItems(step: AgentLoopStep): { output?: unknown; result?: unknown }[] {

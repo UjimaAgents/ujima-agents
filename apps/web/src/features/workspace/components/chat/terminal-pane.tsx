@@ -2,11 +2,10 @@ import { Terminal } from "lucide-react";
 import {
   TERMINAL_COMMAND_ROW,
   TERMINAL_CWD,
-  TERMINAL_PANEL,
   TERMINAL_PROMPT,
-  TERMINAL_SECTION,
 } from "./terminal-chrome";
 import { ExpandableOutput } from "./expandable-output";
+import { ToolPane } from "./primitives";
 
 export function TerminalPane({
   className = "",
@@ -15,8 +14,11 @@ export function TerminalPane({
   output,
   outputPlaceholder,
   outputTone = "default",
+  storageKey,
 }: {
   className?: string;
+  /** Stable identity — keeps expand/collapse state across virtualized unmounts. */
+  storageKey?: string;
   cwd: string;
   /** Command without leading `$`; the pane renders the prompt. */
   commandLine: string;
@@ -32,26 +34,29 @@ export function TerminalPane({
   const showOutputRegion = showBody || showPlaceholder;
 
   return (
-    <div className={`${TERMINAL_PANEL} ${className}`}>
-      <div className={TERMINAL_SECTION}>
-        <div className={`${TERMINAL_CWD} flex items-center gap-1.5`}>
-          <Terminal className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
-          <span>{cwd}</span>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            navigator.clipboard.writeText(commandLine);
-          }}
-          className={`${TERMINAL_COMMAND_ROW} group/cmd flex items-start gap-1.5 text-left transition-colors hover:text-violet-600 dark:hover:text-violet-400`}
-          title="Click to copy command"
-        >
-          <span className={TERMINAL_PROMPT}>$ </span>
-          <span className="break-all">{commandLine}</span>
-        </button>
-      </div>
+    <ToolPane
+      header={
+        <>
+          <div className={`${TERMINAL_CWD} flex items-center gap-1.5`}>
+            <Terminal className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+            <span>{cwd}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard.writeText(commandLine);
+            }}
+            className={`${TERMINAL_COMMAND_ROW} group/cmd flex items-start gap-1.5 text-left transition-colors hover:text-violet-600 dark:hover:text-violet-400`}
+            title="Click to copy command"
+          >
+            <span className={TERMINAL_PROMPT}>$ </span>
+            <span className="break-all">{commandLine}</span>
+          </button>
+        </>
+      }
+    >
       {showOutputRegion ? (
-        <ExpandableOutput>
+        <ExpandableOutput storageKey={storageKey}>
           <div
             className={`px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
               outputTone === "error"
@@ -66,6 +71,6 @@ export function TerminalPane({
           </div>
         </ExpandableOutput>
       ) : null}
-    </div>
+    </ToolPane>
   );
 }

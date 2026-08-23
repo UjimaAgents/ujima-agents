@@ -615,7 +615,9 @@ function canonicalizeApprovalScope(scope: string, family: boolean): string {
       serverId: connector.serverId,
       serverDisplayName: '',
       toolName: connector.toolName,
-      argsPreview: family ? '' : connector.argsPreview,
+      // The preview is display-only. Use the stable fingerprint when the
+      // connector provides one; retain the preview only for legacy rows.
+      argsPreview: family || connector.argsFingerprint ? '' : connector.argsPreview,
       ...(!family && connector.argsFingerprint
         ? { argsFingerprint: connector.argsFingerprint }
         : {}),

@@ -1,6 +1,5 @@
 "use client";
 
-import type { ApiError } from "@ujima/api-schema";
 import { normalizeOrgShellApprovalMode } from "@ujima/shared";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
@@ -8,6 +7,7 @@ import { Home, Sparkles } from "lucide-react";
 import { isProviderDraftComplete, normalizeProviderName } from "./api-contract";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MIN_TEAM_AGENTS, buildOnboardingRequest } from "./api-contract";
+import { clientFetchJson } from "@/lib/client-api";
 import { ActivationOnboardingForm } from "./components/activation-onboarding-form";
 import { OnboardingStepper, OnboardingStepProgress } from "./components/onboarding-stepper";
 import {
@@ -358,30 +358,17 @@ export function OnboardingExperience({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/onboarding", {
+      const body = await clientFetchJson<{
+        auth?: { authenticated?: boolean };
+      }>("/api/onboarding", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(buildOnboardingRequest(currentDraft, attemptId)),
-      });
-      const body = (await response.json().catch(() => null)) as ApiError | null;
-
-      if (!response.ok) {
-        setSubmitError(
-          body && typeof body === "object" && "message" in body && typeof body.message === "string"
-            ? body.message
-            : "Unable to complete onboarding right now.",
-        );
-        return;
-      }
+      }, "Unable to complete onboarding right now.");
 
       if (
         !body ||
-        typeof body !== "object" ||
-        !("auth" in body) ||
-        typeof body.auth !== "object" ||
-        body.auth === null ||
-        !("authenticated" in body.auth) ||
-        body.auth.authenticated !== true
+        body.auth?.authenticated !== true
       ) {
         setSubmitError("Onboarding finished without a signed-in session. Try again or sign in if your organization was created.");
         return;

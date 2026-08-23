@@ -1,5 +1,5 @@
-import { realpath } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { realpath } from 'fs/promises';
+import { isAbsolute, relative, resolve, sep } from 'path';
 import { formatPathEscapeError, type PathEscapeReason } from './path-escape.js';
 
 export const ERR_PATH_ESCAPE = 'ERR_PATH_ESCAPE';
@@ -101,7 +101,6 @@ export async function createPathResolver(opts: PathResolveOptions): Promise<Path
       }
       if (
         enforceRoleScopes &&
-        scopePaths.length > 0 &&
         !scopePaths.some(
           (sp, index) =>
             withinRoot(sp, resolved.targetPath) &&

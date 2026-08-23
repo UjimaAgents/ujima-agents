@@ -3,6 +3,8 @@
 export {
   RUN_TERMINATING_TOOL_NAMES,
   ContextLengthExceededError,
+  classifyModelError,
+  isContextLengthExceededError,
   ToolApprovalRequiredError,
   ToolInputRequiredError,
   ModelNotFoundError,

@@ -3,6 +3,7 @@ import {
   WorkflowGraphSchema,
   WorkflowNodeSchema,
   extractWorkflowTokens,
+  normalizeWorkflowGraph,
   parseWorkflowToken,
   validateWorkflowGraph,
   type WorkflowGraph,
@@ -132,6 +133,18 @@ describe("parseWorkflowToken", () => {
 });
 
 describe("validateWorkflowGraph", () => {
+  it("normalizes missing capability ports from the source node kind", () => {
+    const normalized = normalizeWorkflowGraph({
+      nodes: [
+        {id: "agent", kind: "agent", position: {x: 0, y: 0}, config: {agentId: "a"}},
+        {id: "skill", kind: "skill", position: {x: 1, y: 0}, config: {skillName: "brief"}},
+      ],
+      edges: [{id: "e", source: "skill", target: "agent"}],
+    });
+    expect(normalized.edges[0]?.sourcePort).toBe("ai_skill");
+    expect(normalized.edges[0]?.targetPort).toBe("ai_skill");
+  });
+
   it("accepts a valid SOP", () => {
     expect(WorkflowGraphSchema.safeParse(validSop()).success).toBe(true);
     const res = validateWorkflowGraph(validSop());

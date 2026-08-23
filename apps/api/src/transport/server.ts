@@ -1,7 +1,6 @@
 import {readFileSync} from "node:fs";
 import Fastify, {
   type FastifyInstance,
-  type FastifyReply,
   type FastifyRequest,
 } from "fastify";
 import {Server as SocketIOServer, type Socket} from "socket.io";
@@ -29,12 +28,10 @@ import type {
 import { isTelegramPollingEnabled } from "@ujima/orchestrator";
 import type {UjimaEvent} from "@ujima/shared";
 import {
-  ApiErrorSchema,
   DEFAULT_BIND_HOST,
   DEFAULT_BIND_PORT,
   EventSubscribeQuerySchema,
   HealthResponseSchema,
-  type ErrorCode,
   type WsFrame,
 } from "@ujima/api-schema";
 import {z} from "zod";
@@ -47,6 +44,7 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import {RealtimeService} from "./realtime.js";
+import {apiError} from "./routes/route-errors.js";
 import {registerAttachmentRoutes} from "./routes/attachments.js";
 import {registerConversationRoutes} from "./routes/conversations.js";
 import {registerAuthRoutes} from "./routes/auth.js";
@@ -296,11 +294,11 @@ export function createTransport(opts: TransportOptions): Transport {
         const auth = req.headers.authorization ?? "";
         const match = /^Bearer\s+(.+)$/.exec(auth);
         if (!match || match[1] !== token) {
-          return replyError(
+          return apiError(
             reply,
             401,
-            "ERR_UNAUTHORIZED",
-            "missing or invalid bearer token"
+            "missing or invalid bearer token",
+            "ERR_UNAUTHORIZED"
           );
         }
       });
@@ -418,7 +416,7 @@ export function createTransport(opts: TransportOptions): Transport {
       error: err.message,
       stack: err.stack,
     });
-    return replyError(reply, 500, "ERR_INTERNAL", err.message);
+    return apiError(reply, 500, err.message, "ERR_INTERNAL");
   });
 
   let readyUrl = "";
@@ -508,15 +506,6 @@ function onSocketConnection(socket: Socket, host: RuntimeHost): void {
 
   socket.on("disconnect", () => subscription.unsubscribe());
   send({kind: "ready", since_ms: filter.since_ms});
-}
-
-function replyError(
-  reply: FastifyReply,
-  status: number,
-  code: ErrorCode,
-  message: string
-): FastifyReply {
-  return reply.status(status).send(ApiErrorSchema.parse({code, message}));
 }
 
 export type {FastifyRequest};

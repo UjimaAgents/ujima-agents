@@ -1,5 +1,6 @@
 import type {SqliteDbHandle as DbHandle} from '@ujima/context-store';
 import {
+  normalizeWorkflowGraph,
   WorkflowDefinitionSchema,
   WorkflowNodeRunSchema,
   WorkflowRunSchema,
@@ -70,14 +71,15 @@ function rowToDefinition(row: Row): WorkflowDefinition {
     nodes?: unknown;
     edges?: unknown;
   };
+  const normalizedGraph = normalizeWorkflowGraph(graph);
   return WorkflowDefinitionSchema.parse({
     id: rowString(row, 'id'),
     organizationId: rowString(row, 'organization_id'),
     channelId: optionalRowString(row, 'channel_id') ?? null,
     name: rowString(row, 'name'),
     description: optionalRowString(row, 'description'),
-    nodes: graph.nodes ?? [],
-    edges: graph.edges ?? [],
+    nodes: normalizedGraph.nodes,
+    edges: normalizedGraph.edges,
     version: rowNumber(row, 'version'),
     createdAt: rowString(row, 'created_at'),
     updatedAt: rowString(row, 'updated_at'),
@@ -88,7 +90,10 @@ export function saveWorkflowDefinition(
   db: DbHandle,
   def: WorkflowDefinition,
 ): WorkflowDefinition {
-  const payload = WorkflowDefinitionSchema.parse(def);
+  const payload = WorkflowDefinitionSchema.parse({
+    ...def,
+    ...normalizeWorkflowGraph({ nodes: def.nodes, edges: def.edges }),
+  });
   const graphJson = JSON.stringify({nodes: payload.nodes, edges: payload.edges});
   db.prepare(
     `INSERT INTO workflow_definitions (

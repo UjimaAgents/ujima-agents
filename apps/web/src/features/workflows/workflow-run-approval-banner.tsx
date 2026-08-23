@@ -28,19 +28,24 @@ export function WorkflowRunApprovalBanner({
   onReload?: () => void;
 }) {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resolvingAction, setResolvingAction] = useState<"allow_once" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
   if (detail.blockingApprovals.length === 0) return null;
 
   async function resolve(id: string, resolution: "allow_once" | "reject") {
     setResolvingId(id);
+    setResolvingAction(resolution);
     setError(null);
     try {
       await resolveBlockingApproval(id, detail.run.organizationId, resolution);
-      onReload?.();
+      setTimeout(() => {
+        onReload?.();
+      }, 200);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to resolve approval.");
     } finally {
       setResolvingId(null);
+      setResolvingAction(null);
     }
   }
 
@@ -66,7 +71,12 @@ export function WorkflowRunApprovalBanner({
               onClick={() => void resolve(a.id, "reject")}
               className="flex items-center justify-center gap-1.5 rounded-md border border-red-300 px-2 py-1.5 font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60 dark:border-red-500/40 dark:hover:bg-red-500/10"
             >
-              <X className="h-3.5 w-3.5" /> Reject
+              {resolvingId === a.id && resolvingAction === "reject" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <X className="h-3.5 w-3.5" />
+              )}
+              Reject
             </button>
             <button
               type="button"
@@ -74,7 +84,11 @@ export function WorkflowRunApprovalBanner({
               onClick={() => void resolve(a.id, "allow_once")}
               className="flex items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 py-1.5 font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-60"
             >
-              {resolvingId === a.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {resolvingId === a.id && resolvingAction === "allow_once" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
               Approve
             </button>
           </div>

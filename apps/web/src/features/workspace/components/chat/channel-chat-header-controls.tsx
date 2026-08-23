@@ -1,14 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronDown, Shield } from "lucide-react";
+import { ChevronDown, Shield } from "lucide-react";
 import type { ShellApprovalMode } from "@ujima/shared/browser";
-
-const APPROVAL_OPTIONS: { value: ShellApprovalMode; label: string }[] = [
-  { value: "always_review", label: "Ask for approval" },
-  { value: "auto_review", label: "Approve for me" },
-  { value: "allow_all", label: "Full access" },
-];
+import { ApprovalModeOptionRow, CHANNEL_APPROVAL_OPTIONS } from "./approval-mode-options";
 
 export function ChannelChatHeaderControls({
   value,
@@ -26,24 +21,25 @@ export function ChannelChatHeaderControls({
         type="button"
         disabled={saving}
         onClick={() => setOpen((current) => !current)}
-        className="grid w-full grid-cols-[1.25rem_minmax(7rem,1fr)_minmax(0,10rem)_1rem] items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[15px] font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        className="grid w-full grid-cols-[1rem_minmax(7rem,1fr)_minmax(0,10rem)_0.875rem] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium text-zinc-900 transition hover:bg-zinc-100 disabled:opacity-60 dark:text-zinc-100 dark:hover:bg-zinc-800"
         aria-expanded={open}
       >
-        <Shield className="h-5 w-5 text-zinc-500 dark:text-zinc-300" />
-        <span className="min-w-0 truncate">Shell approvals</span>
-        <span className="min-w-0 truncate text-right text-sm text-zinc-400">
-          {APPROVAL_OPTIONS.find((option) => option.value === value)?.label}
+        <Shield className="h-4 w-4 text-zinc-500 dark:text-zinc-300" />
+        <span className="min-w-0 truncate">Approvals</span>
+        <span className="min-w-0 truncate text-right text-xs text-zinc-400">
+          {CHANNEL_APPROVAL_OPTIONS.find((option) => option.value === value)?.label}
         </span>
-        <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`h-3.5 w-3.5 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
-        <div className="mt-1 flex flex-col pl-10">
-          {APPROVAL_OPTIONS.map((option) => (
-            <button
+        <div className="mt-0.5 flex flex-col pl-8">
+          {CHANNEL_APPROVAL_OPTIONS.map((option) => (
+            <ApprovalModeOptionRow
               key={option.value}
-              type="button"
+              option={option}
+              selected={option.value === value}
               disabled={saving}
-              onClick={() => {
+              onSelect={() => {
                 setSaving(true);
                 Promise.resolve(onChange(option.value))
                   .catch((err) => {
@@ -53,11 +49,7 @@ export function ChannelChatHeaderControls({
                     setSaving(false);
                   });
               }}
-              className="flex items-center rounded-lg px-2.5 py-2 text-left text-[16px] font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-60 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
-            >
-              {option.label}
-              {option.value === value ? <Check className="ml-auto h-4 w-4 text-zinc-900 dark:text-white" /> : null}
-            </button>
+            />
           ))}
         </div>
       ) : null}

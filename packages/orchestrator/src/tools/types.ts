@@ -6,6 +6,8 @@ import type { ApiRepository, RepositoryReader } from '../services/repository-rea
 import type { DelegateKind } from '../utils/delegate-turn.js';
 import type { ToolInvocationInput } from '../services/tool-service.js';
 import type {
+  AdvanceInput,
+  AdvanceResult,
   StartRunInput,
   TransitionInput,
   TransitionResult,
@@ -15,6 +17,8 @@ import type {
 export interface WorkflowEngineToolAccess {
   startRun(input: StartRunInput): Promise<{ workflowRunId: string }>;
   transition(input: TransitionInput): Promise<TransitionResult>;
+  /** `workflow.advance` — the engine is the single writer of node-run state. */
+  advance(input: AdvanceInput): Promise<AdvanceResult>;
 }
 
 export interface AgentDelegateResult {
@@ -96,9 +100,10 @@ export interface ToolExecutionContext {
   readDelegateThread: DelegateHandlers['readDelegateThread'];
   sendToDelegate: DelegateHandlers['sendToDelegate'];
   /**
-   * Present when workflows are wired at the composition root. `workflow.run`
-   * and `workflow.transition` require it; `workflow.list`/`view`/`advance`
-   * operate on `repo` alone and work without it.
+   * Present when workflows are wired at the composition root. `workflow.run`,
+   * `workflow.transition`, and `workflow.advance` require it (the engine is
+   * the single writer of run state); `workflow.list`/`view` operate on `repo`
+   * alone and work without it.
    */
   workflowEngine?: WorkflowEngineToolAccess;
   reportProgress?: (output: unknown) => Promise<void> | void;

@@ -14,7 +14,13 @@ async function createFixture(opts: { agentNames?: string[] } = {}) {
   return {
     ...base,
     conversations,
-    taskSessions: new TaskSessionService(base.repo, conversations),
+    taskSessions: new TaskSessionService(
+      base.repo,
+      conversations,
+      // Phase 1 tests only exercise create()/get(); start() is covered
+      // by the spirit integration tests that wire a real SpiritService.
+      { spawn: () => { throw new Error('start() not exercised in phase 1 tests'); } } as never,
+    ),
   };
 }
 
