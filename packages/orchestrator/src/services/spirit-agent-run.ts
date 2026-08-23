@@ -332,6 +332,11 @@ export class SpiritServiceAgentRun extends SpiritServiceBase {
       stopWhen: stepCountIs(params.maxIterations),
       maxOutputTokens: this.maxOutputTokens,
       temperature: this.temperature,
+      providerOptions: {
+        openai: {
+          conversationKey: `${params.organizationId}:${params.threadId}:${params.runId}`,
+        },
+      },
       toolChoice: 'auto',
       abortSignal: params.abortSignal,
       detectExternalPause: () => this.detectRunPauseForHuman(params.organizationId, params.runId),

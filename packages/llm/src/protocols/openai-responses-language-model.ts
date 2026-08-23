@@ -9,13 +9,10 @@ import {
   type LanguageModelV3GenerateResult,
   type LanguageModelV3TextPart,
   type LanguageModelV3ProviderTool,
-  type LanguageModelV3ReasoningPart,
   type LanguageModelV3StreamPart,
   type LanguageModelV3StreamResult,
-  type LanguageModelV3ToolCallPart,
   type LanguageModelV3ToolChoice,
   type LanguageModelV3ToolResultOutput,
-  type LanguageModelV3ToolResultPart,
   type LanguageModelV3Usage,
   type SharedV3ProviderMetadata,
   type SharedV3Warning,
@@ -32,6 +29,7 @@ import type {
   OpenAIResponsesUserContentPart,
   OpenAIResponsesUsage,
 } from './openai-responses-api-types.js';
+import { clearCodexTurnState, getCodexTurnState, setCodexTurnState } from './codex-turn-state.js';
 
 interface OpenAIResponsesLanguageModelOptions {
   fetch: typeof fetch;
@@ -142,13 +140,20 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
       this.supportsMaxOutputTokens,
       this.preserveItemIds,
     );
+    const providerOptions = getProviderOptions(options.providerOptions);
+    const headersWithState = { ...options.headers };
+    const conversationKey = providerOptions.conversationKey?.trim() || undefined;
+    const turnState = conversationKey ? getCodexTurnState(conversationKey) : undefined;
+    if (turnState) headersWithState['x-codex-turn-state'] = turnState;
     const response = await this.fetchFn(this.url, {
       method: 'POST',
-      headers: requestHeaders(options.headers),
+      headers: requestHeaders(headersWithState),
       body: JSON.stringify(prepared.body),
       signal: options.abortSignal,
     });
     const headers = responseHeadersRecord(response);
+    const responseTurnState = headers['x-codex-turn-state'];
+    if (conversationKey && responseTurnState) setCodexTurnState(conversationKey, responseTurnState);
     if (!response.ok) {
       const rawText = await response.text();
       throw apiError({
@@ -174,13 +179,14 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     const stream = new ReadableStream<LanguageModelV3StreamPart>({
       async start(controller) {
         controller.enqueue({ type: 'stream-start', warnings: prepared.warnings });
-        const state = createStreamState(options.includeRawChunks === true);
+        const state = createStreamState(options.includeRawChunks === true, conversationKey);
         try {
           for await (const value of streamOpenAIResponsesEvents(body)) {
             handleStreamEvent(value, controller, state);
           }
           flushStreamState(controller, state);
         } catch (error) {
+          if (conversationKey) clearCodexTurnState(conversationKey);
           controller.error(error instanceof Error ? error : new Error(String(error)));
         } finally {
           state.textOpen.clear();
@@ -311,52 +317,54 @@ function promptToInput(
     }
 
     if (message.role === 'assistant') {
-      const reasoningParts = message.content.filter((part): part is LanguageModelV3ReasoningPart => part.type === 'reasoning');
-      for (const part of reasoningParts) {
-        if (!preserveItemIds) continue;
-        const meta = providerMeta(part.providerOptions);
-        if (meta.itemId || meta.reasoningEncryptedContent) {
+      let textParts: LanguageModelV3TextPart[] = [];
+      const flushText = () => {
+        if (textParts.length === 0) return;
+        input.push({
+          role: 'assistant',
+          content: textParts.map((part) => ({ type: 'output_text', text: part.text })),
+          ...withOptionalId(preserveItemIds ? providerMeta(textParts[0]?.providerOptions).itemId : undefined),
+        });
+        textParts = [];
+      };
+
+      for (const part of message.content) {
+        if (part.type === 'text') {
+          textParts.push(part);
+          continue;
+        }
+        flushText();
+        if (part.type === 'reasoning') {
+          const meta = providerMeta(part.providerOptions);
+          if (meta.itemId || meta.reasoningEncryptedContent) {
+            input.push({
+              type: 'reasoning',
+              id: meta.itemId ?? randomId('rs'),
+              encrypted_content: meta.reasoningEncryptedContent ?? null,
+              summary: [{ type: 'summary_text', text: part.text }],
+            });
+          }
+          continue;
+        }
+        if (part.type === 'tool-call') {
           input.push({
-            type: 'reasoning',
-            id: meta.itemId ?? randomId('rs'),
-            encrypted_content: meta.reasoningEncryptedContent ?? null,
-            summary: [{ type: 'summary_text', text: part.text }],
+            type: 'function_call',
+            call_id: part.toolCallId,
+            name: part.toolName,
+            arguments: JSON.stringify(part.input ?? {}),
+            ...withOptionalId(preserveItemIds ? providerMeta(part.providerOptions).itemId : undefined),
+          });
+          continue;
+        }
+        if (part.type === 'tool-result') {
+          input.push({
+            type: 'function_call_output',
+            call_id: part.toolCallId,
+            output: toolResultOutputToString(part.output),
           });
         }
       }
-
-      const toolCalls = message.content.filter((part): part is LanguageModelV3ToolCallPart => part.type === 'tool-call');
-      for (const part of toolCalls) {
-        input.push({
-          type: 'function_call',
-          call_id: part.toolCallId,
-          name: part.toolName,
-          arguments: JSON.stringify(part.input ?? {}),
-          ...withOptionalId(preserveItemIds ? providerMeta(part.providerOptions).itemId : undefined),
-        });
-      }
-
-      const toolResults = message.content.filter((part): part is LanguageModelV3ToolResultPart => part.type === 'tool-result');
-      for (const part of toolResults) {
-        input.push({
-          type: 'function_call_output',
-          call_id: part.toolCallId,
-          output: toolResultOutputToString(part.output),
-        });
-      }
-
-      const textContent = message.content
-        .filter((part): part is LanguageModelV3TextPart => part.type === 'text')
-        .map((part) => ({ type: 'output_text' as const, text: part.text }));
-      if (textContent.length > 0) {
-        const first = message.content.find((part) => part.type === 'text' || part.type === 'reasoning' || part.type === 'tool-call');
-        const meta = first ? providerMeta((first as { providerOptions?: unknown }).providerOptions) : {};
-        input.push({
-          role: 'assistant',
-          content: textContent,
-          ...withOptionalId(preserveItemIds ? meta.itemId : undefined),
-        });
-      }
+      flushText();
       continue;
     }
 
@@ -561,7 +569,7 @@ function mapFinishReason(raw: string | undefined, hasToolCall: boolean) {
   return { unified: 'other' as const, raw };
 }
 
-function createStreamState(includeRaw: boolean) {
+function createStreamState(includeRaw: boolean, conversationKey?: string) {
   return {
     includeRaw,
     textOpen: new Set<string>(),
@@ -574,6 +582,7 @@ function createStreamState(includeRaw: boolean) {
     responseTimestamp: undefined as Date | undefined,
     serviceTier: undefined as string | undefined,
     hasToolCall: false,
+    conversationKey,
   };
 }
 
@@ -599,6 +608,13 @@ function handleStreamEvent(
         timestamp: state.responseTimestamp,
       });
       return;
+    case 'codex.response.metadata': {
+      const turnState = current.headers?.['x-codex-turn-state'];
+      if (state.conversationKey && typeof turnState === 'string' && turnState) {
+        setCodexTurnState(state.conversationKey, turnState);
+      }
+      return;
+    }
     case 'response.output_text.delta': {
       if (!state.textOpen.has(current.item_id)) {
         state.textOpen.add(current.item_id);
@@ -789,6 +805,7 @@ function flushStreamState(
     finishReason: mapFinishReason(state.finishRaw, state.hasToolCall),
     providerMetadata: finishProviderMetadata(state.responseId, state.serviceTier),
   });
+  if (state.conversationKey && !state.hasToolCall) clearCodexTurnState(state.conversationKey);
   controller.close();
 }
 

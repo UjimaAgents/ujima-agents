@@ -151,13 +151,13 @@ function FloatingStatusRail({
   if (activeAgentChats.length === 0 && activeTerminals.length === 0) return null;
 
   return (
-    <div className="relative z-20 flex shrink-0 flex-wrap gap-2 px-3 pb-1.5 pt-1 animate-in slide-in-from-bottom-2 duration-300">
+    <div className="relative z-20 flex shrink-0 flex-nowrap gap-2 overflow-x-auto px-3 pb-1.5 pt-1 animate-in slide-in-from-bottom-2 duration-300">
       {activeAgentChats.map((chat) => (
         <button
           key={chat.threadId}
           type="button"
           onClick={() => onOpenChat(chat.threadId, chat.name)}
-          className="flex max-w-[min(32rem,100%)] items-center gap-2 rounded-full border border-zinc-200 bg-white/90 px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg backdrop-blur-sm transition hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-200"
+          className="flex max-w-[min(32rem,calc(100vw-1.5rem))] shrink-0 items-center gap-2 rounded-full border border-zinc-200 bg-white px-3.5 py-1.5 text-xs text-zinc-800 shadow-lg transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
