@@ -528,7 +528,7 @@ function ChatInputComponent({
   readOnly = false,
   reasoningProvider,
   reasoningModelValue,
-  reasoningEffort: reasoningEffortProp = "medium",
+  reasoningEffort: reasoningEffortPreference,
   onReasoningEffortChange,
 }: {
   placeholder?: string;
@@ -591,9 +591,12 @@ function ChatInputComponent({
       })),
     [reasoningModelValue, reasoningProvider],
   );
+  const defaultReasoningEffort = reasoningOptions.some((option) => option.value === "medium")
+    ? "medium"
+    : reasoningOptions[0]?.value ?? "none";
   const selectedReasoningEffort = clampReasoningEffortForProvider(
     reasoningProvider ?? "",
-    reasoningEffortProp,
+    reasoningEffortPreference ?? defaultReasoningEffort,
     reasoningModelValue,
   );
   const showReasoningSelect = reasoningOptions.length > 1;

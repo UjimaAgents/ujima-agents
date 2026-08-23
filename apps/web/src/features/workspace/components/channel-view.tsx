@@ -356,7 +356,7 @@ export function ChannelView({
   const composerReasoningEffort =
     useWorkspaceStore((state) =>
       currentThreadId ? state.composerReasoningEffortByThread[currentThreadId] : undefined,
-    ) ?? "medium";
+    );
   const setComposerReasoningEffort = useWorkspaceStore((state) => state.setComposerReasoningEffort);
   const [isTerminalDrawerOpen, setIsTerminalDrawerOpen] = useState(false);
   const openWorkflowRunDrawer = useWorkspaceStore((s) => s.openWorkflowRunDrawer);
@@ -729,22 +729,16 @@ export function ChannelView({
   }, []);
 
   const handleComposerCommand = useCallback(
-    async (command: string, _rawContent?: string, metadata?: ConversationMessageMetadata) => {
-      if (currentThreadId && metadata?.reasoningEffort) {
-        setComposerReasoningEffort(currentThreadId, metadata.reasoningEffort);
-      }
+    async (command: string) => {
       await feedRef.current.archiveConversation(command as "summarize" | "clear");
       setReplyTo(null);
       scrollToLatest("auto");
     },
-    [currentThreadId, scrollToLatest, setComposerReasoningEffort],
+    [scrollToLatest],
   );
 
   const handleSend = useCallback(
     (content: string, attachmentIds?: string[], metadata?: ConversationMessageMetadata) => {
-      if (currentThreadId && metadata?.reasoningEffort) {
-        setComposerReasoningEffort(currentThreadId, metadata.reasoningEffort);
-      }
       if (isAgent) {
         openDetailsForAgentMessage();
       }
@@ -752,7 +746,7 @@ export function ChannelView({
       setReplyTo(null);
       return promise;
     },
-    [currentThreadId, isAgent, openDetailsForAgentMessage, setComposerReasoningEffort],
+    [isAgent, openDetailsForAgentMessage],
   );
 
   const handleReasoningEffortChange = useCallback(

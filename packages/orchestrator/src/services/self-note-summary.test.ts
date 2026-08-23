@@ -117,43 +117,146 @@ describe('conversation-summary', () => {
     expect(prompt).toContain('BillingService');
   });
 
-  it('passes the rolling previous summary back into later summary chunks', async () => {
+  it('summarizes the whole context window in a single LLM call', async () => {
+    vi.mocked(generateText).mockResolvedValue({
+      text: JSON.stringify({
+        objective: ['whole window'],
+        importantDetails: ['detail one'],
+        completed: ['done one'],
+        active: ['active one'],
+        blocked: [],
+        nextActions: ['next one'],
+      }),
+    } as never);
+
+    const summary = await buildConversationSummaryViaLlm({
+      model: { provider: 'anthropic' } as never,
+      messages: Array.from({ length: 200 }, (_, index) =>
+        makeMessage(`message-${index}`, `2026-05-08T09:${String(index % 60).padStart(2, '0')}:00.000Z`),
+      ),
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(generateText).mock.calls[0]?.[0].system).not.toContain('PREVIOUS summary');
+    expect(vi.mocked(generateText).mock.calls[0]?.[0].prompt).toContain('message-199');
+    expect(summary).toContain('whole window');
+    expect(streamText).not.toHaveBeenCalled();
+  });
+
+  it('preserves every transcript entry when the full window overflows the summarizer', async () => {
     vi.mocked(generateText)
+      .mockRejectedValueOnce(new Error('prompt is too long: 250000 tokens > 200000 maximum context length'))
       .mockResolvedValueOnce({
         text: JSON.stringify({
-          objective: ['first chunk'],
-          importantDetails: ['detail one'],
-          completed: ['done one'],
-          active: ['active one'],
+          objective: ['whole window'],
+          importantDetails: ['early context'],
+          completed: [],
+          active: [],
           blocked: [],
-          nextActions: ['next one'],
+          nextActions: [],
         }),
       } as never)
       .mockResolvedValueOnce({
         text: JSON.stringify({
-          objective: ['second chunk'],
-          importantDetails: ['detail two'],
-          completed: ['done two'],
-          active: ['active two'],
+          objective: ['whole window'],
+          importantDetails: ['late context'],
+          completed: [],
+          active: [],
           blocked: [],
-          nextActions: ['next two'],
+          nextActions: [],
+        }),
+      } as never)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          objective: ['whole window'],
+          importantDetails: ['early context', 'late context'],
+          completed: [],
+          active: [],
+          blocked: [],
+          nextActions: [],
         }),
       } as never);
 
     const summary = await buildConversationSummaryViaLlm({
       model: { provider: 'anthropic' } as never,
-      messages: Array.from({ length: 36 }, (_, index) =>
-        makeMessage(`message-${index}`, `2026-05-08T09:${String(index).padStart(2, '0')}:00.000Z`),
+      messages: Array.from({ length: 200 }, (_, index) =>
+        makeMessage(
+          `message-${index}`,
+          `2026-05-08T${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}:00.000Z`,
+        ),
       ),
     });
 
-    expect(generateText).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(generateText).mock.calls[0]?.[0].system).not.toContain('PREVIOUS summary');
-    expect(vi.mocked(generateText).mock.calls[1]?.[0].system).toContain('PREVIOUS summary');
-    expect(vi.mocked(generateText).mock.calls[1]?.[0].system).toContain('"objective"');
-    expect(summary).toContain('second chunk');
-    expect(summary).not.toContain('first chunk');
-    expect(streamText).not.toHaveBeenCalled();
+    expect(generateText).toHaveBeenCalledTimes(4);
+    const earlyPrompt = vi.mocked(generateText).mock.calls[1]?.[0].prompt ?? '';
+    const latePrompt = vi.mocked(generateText).mock.calls[2]?.[0].prompt ?? '';
+    const mergePrompt = vi.mocked(generateText).mock.calls[3]?.[0].prompt ?? '';
+    expect(earlyPrompt).toContain('message-0');
+    expect(latePrompt).toContain('message-199');
+    expect(mergePrompt).toContain('early context');
+    expect(mergePrompt).toContain('late context');
+    expect(summary).toContain('early context');
+    expect(summary).toContain('late context');
+  });
+
+  it('preserves every transcript entry when summary JSON is truncated', async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({
+        text: '{ "objective": ["unfinished',
+      } as never)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          objective: ['whole window'],
+          importantDetails: ['early context'],
+          completed: [],
+          active: [],
+          blocked: [],
+          nextActions: [],
+        }),
+      } as never)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          objective: ['whole window'],
+          importantDetails: ['late context'],
+          completed: [],
+          active: [],
+          blocked: [],
+          nextActions: [],
+        }),
+      } as never)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          objective: ['whole window'],
+          importantDetails: ['early context', 'late context'],
+          completed: [],
+          active: [],
+          blocked: [],
+          nextActions: [],
+        }),
+      } as never);
+
+    const summary = await buildConversationSummaryViaLlm({
+      model: { provider: 'anthropic' } as never,
+      messages: [
+        makeMessage('early context', '2026-05-08T09:41:00.000Z'),
+        makeMessage('late context', '2026-05-08T09:42:00.000Z'),
+      ],
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(4);
+    expect(summary).toContain('early context');
+    expect(summary).toContain('late context');
+  });
+
+  it('does not fall back on non-overflow summarizer failures', async () => {
+    vi.mocked(generateText).mockRejectedValue(new Error('connection reset by peer'));
+
+    await expect(buildConversationSummaryViaLlm({
+      model: { provider: 'anthropic' } as never,
+      messages: [makeMessage('hello', '2026-05-08T09:41:00.000Z')],
+    })).rejects.toThrow('Conversation summarization failed');
+
+    expect(generateText).toHaveBeenCalledTimes(1);
   });
 
 });
