@@ -33,6 +33,8 @@ import type { RolePresetTemplate } from "../../onboarding/types";
 import { defaultModelForProvider } from "../../onboarding/types";
 import { resolveMemberActivity } from "../workspace-store";
 import type { ActivityState } from "../activity-state";
+import type { RunState } from "@ujima/shared/browser";
+import { isLiveRun } from "../feed-selectors";
 import { listItemIdle, listItemSelectedNeutral } from "@/lib/list-item-styles";
 import { AgentEditorModal } from "./sidebar/agent-editor-modal";
 import { CreateAgentModal } from "./sidebar/create-agent-modal";
@@ -84,6 +86,7 @@ export interface WorkspaceSidebarProps {
   channels: BootstrapResponse["channels"];
   members: BootstrapResponse["members"];
   memberActivity: Record<string, ActivityState>;
+  globalActiveRuns: RunState[];
   conversationUnreadCounts: Record<string, number>;
   selected?: SelectedConversation;
   tasksActive?: boolean;
@@ -236,6 +239,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   channels,
   members,
   memberActivity,
+  globalActiveRuns,
   conversationUnreadCounts,
   selected,
   tasksActive = false,
@@ -300,6 +304,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const agentMembers = useMemo(
     () => members.filter((member) => member.kind === "agent"),
     [members],
+  );
+  const agentColorIndexById = useMemo(
+    () => new Map(agentMembers.map((agent, index) => [agent.id, index])),
+    [agentMembers],
   );
   const filteredChannels = useMemo(
     () =>
@@ -612,17 +620,18 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                 />
               )
             ) : (
-              filteredAgents.slice(0, visibleCounts.agents).map((agent, idx) => {
-                const roleTitle = teamSettings?.roles.find((r) => r.name === agent.roleName)?.title;
+              filteredAgents.slice(0, visibleCounts.agents).map((agent) => {
+                const roleTitle = teamSettings?.roles.find((role) => role.name === agent.roleName)?.title ?? agent.roleName;
+                const hasLiveRun = globalActiveRuns.some((run) => run.agentId === agent.id && isLiveRun(run));
                 return (
                   <SidebarItem
                     key={agent.id}
-                    icon={<Avatar name={agent.name} colorIndex={idx} size="xs" />}
+                    icon={<Avatar name={agent.name} colorIndex={agentColorIndexById.get(agent.id) ?? 0} size="xs" />}
                     label={agent.name}
                     subtitle={roleTitle}
                     count={conversationUnreadCounts[agent.id]}
                     active={selected?.type === "agent" && selected.id === agent.id}
-                    status={resolveMemberActivity(agent, memberActivity)}
+                    status={hasLiveRun ? "working" : resolveMemberActivity(agent, memberActivity)}
                     goalMode={goalMode}
                     onClick={() =>
                       onSelect({
@@ -831,9 +840,10 @@ export const SidebarItem = memo(function SidebarItem({
   onClick?: () => void;
 }) {
   const useRunner = active && goalMode && status === "working";
+  const useTypingIndicator = !useRunner && status === "working";
   return (
     <div
-      className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition relative ${
+      className={`group/agent flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition relative ${
         active
           ? "bg-violet-600/10 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400"
           : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
@@ -849,7 +859,7 @@ export const SidebarItem = memo(function SidebarItem({
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
         <div
-          className={`relative shrink-0 ${active ? "text-violet-600 dark:text-violet-400" : "text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100"}`}
+          className={`relative shrink-0 ${active ? "text-violet-600 dark:text-violet-400" : "text-zinc-400 group-hover/agent:text-zinc-900 dark:group-hover/agent:text-zinc-100"}`}
         >
           {icon}
           {status && status !== "loading" && (
@@ -871,7 +881,7 @@ export const SidebarItem = memo(function SidebarItem({
           {label}
         </span>
         {subtitle ? (
-          <span className="shrink-0 truncate text-xs text-zinc-400 dark:text-zinc-500">
+          <span className="inline-block max-w-0 shrink-0 overflow-hidden truncate text-xs text-zinc-400 opacity-0 transition-all duration-150 group-hover/agent:max-w-28 group-hover/agent:opacity-100 dark:text-zinc-500">
             {subtitle}
           </span>
         ) : null}
@@ -884,6 +894,12 @@ export const SidebarItem = memo(function SidebarItem({
       <div className="flex items-center gap-1.5">
         {useRunner ? (
           <RunningFigureIndicator />
+        ) : useTypingIndicator ? (
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-violet-500" aria-label="Agent is typing">
+            <span className="h-1 w-1 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
+            <span className="h-1 w-1 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
+            <span className="h-1 w-1 animate-bounce rounded-full bg-current" />
+          </span>
         ) : null}
       </div>
     </div>

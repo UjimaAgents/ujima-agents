@@ -1220,7 +1220,7 @@ function ChatInputComponent({
           className="hidden"
           onChange={handleAttachmentInput}
         />
-        <div className={`relative z-10 flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 transition-all focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-200/80 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:border-zinc-600 dark:focus-within:bg-[#09090b] dark:focus-within:ring-zinc-800/80 ${goalMode || scheduleMode ? "bg-zinc-100/80 dark:bg-zinc-900/80" : ""}`}>
+        <div className={`relative z-30 flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 transition-all focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-200/80 dark:border-zinc-800 dark:bg-zinc-900/50 dark:focus-within:border-zinc-600 dark:focus-within:bg-[#09090b] dark:focus-within:ring-zinc-800/80 ${goalMode || scheduleMode ? "bg-zinc-100/80 dark:bg-zinc-900/80" : ""}`}>
           {activeReplyTo && (
             <div className="flex items-center gap-2 rounded-t-lg border-b border-zinc-200 bg-violet-50/50 px-2 py-1 dark:border-zinc-800 dark:bg-violet-500/5">
               <div className="flex-1 min-w-0">
@@ -1385,9 +1385,9 @@ function ChatInputComponent({
                 <Paperclip className="h-4 w-4" />
               </button>
             </div>
-            <div className="relative min-h-6 min-w-0 flex-1">
+            <div className="relative min-h-6 min-w-0 flex-1 overflow-hidden">
               {!content ? (
-                <span className="pointer-events-none absolute inset-0 text-sm leading-6 text-zinc-400">
+                <span className="pointer-events-none absolute inset-0 block truncate whitespace-nowrap text-sm leading-6 text-zinc-400">
                   {composerPlaceholder}
                 </span>
               ) : null}

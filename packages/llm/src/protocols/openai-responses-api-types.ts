@@ -10,6 +10,8 @@ export type OpenAIResponsesIncludeValue =
   | 'reasoning.encrypted_content';
 
 export interface OpenAIResponsesProviderOptions {
+  /** Ujima-internal scope for Codex continuation state. Never sent in the JSON body. */
+  conversationKey?: string | null;
   include?: OpenAIResponsesIncludeValue[] | null;
   instructions?: string | null;
   maxToolCalls?: number | null;
@@ -148,6 +150,7 @@ export interface OpenAIResponsesResponse {
 }
 
 export type OpenAIResponsesStreamEvent =
+  | { type: 'codex.response.metadata'; headers?: Record<string, string> }
   | { type: 'response.created'; response: { id: string; created_at: number; model: string; service_tier?: string | null } }
   | { type: 'response.output_text.delta'; item_id: string; delta: string }
   | { type: 'response.output_text.annotation.added'; annotation: OpenAIResponsesAnnotation }

@@ -1,6 +1,6 @@
 {
   "name": "@ujima/shared",
-  "version": "0.0.71",
+  "version": "0.0.72",
   "private": true,
   "main": "./dist/index.js",
   "browser": "./dist/browser.js",

@@ -170,7 +170,7 @@ describe('createCodexResponsesModel', () => {
     expect(requestBody.max_output_tokens).toBeUndefined();
   });
 
-  it('does not reuse stored response item ids on Codex replay', async () => {
+  it('preserves encrypted reasoning item ids but regenerates ordinary response item ids', async () => {
     let requestBody: any;
     vi.stubGlobal('fetch', async (_request: Parameters<typeof fetch>[0], init?: RequestInit) => {
       requestBody = JSON.parse(String(init?.body));
@@ -222,9 +222,10 @@ describe('createCodexResponsesModel', () => {
       ],
     });
 
-    expect(requestBody.input.some((item: any) => item.id === 'rs_old')).toBe(false);
+    expect(requestBody.input.some((item: any) => item.id === 'rs_old')).toBe(true);
     expect(requestBody.input.some((item: any) => item.id === 'msg_old')).toBe(false);
-    expect(requestBody.input.some((item: any) => item.type === 'reasoning')).toBe(false);
+    const replayedReasoning = requestBody.input.find((item: any) => item.type === 'reasoning');
+    expect(replayedReasoning).toMatchObject({ id: 'rs_old', encrypted_content: 'enc' });
   });
 
   it('falls back to HTTP streaming when WebSocket never opens', async () => {

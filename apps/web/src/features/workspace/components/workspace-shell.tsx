@@ -103,7 +103,12 @@ export function WorkspaceShell(props: {
   const selected = useWorkspaceStore((state) => state.selectedConversation);
   const channels = useWorkspaceStore((state) => state.channels);
   const members = useWorkspaceStore((state) => state.members);
+  const agentColorIndexById = useMemo(
+    () => new Map(members.filter((member) => member.kind === "agent").map((member, index) => [member.id, index])),
+    [members],
+  );
   const memberActivity = useWorkspaceStore((state) => state.memberActivity);
+  const globalActiveRuns = useWorkspaceStore((state) => state.globalActiveRuns);
   const conversationUnreadCounts = useWorkspaceStore((state) => state.conversationUnreadCounts);
   const {
     setSidebarWidth,
@@ -727,6 +732,7 @@ export function WorkspaceShell(props: {
           channels={channels}
           members={members}
           memberActivity={memberActivity}
+          globalActiveRuns={globalActiveRuns}
           selected={activeConversation}
           tasksActive={workspaceTasksActive}
           workflowsActive={workspaceWorkflowsActive}
@@ -768,6 +774,7 @@ export function WorkspaceShell(props: {
               : undefined
           }
           onToggleSidebar={() => setMobileSidebarOpen(true)}
+          agentColorIndexById={agentColorIndexById}
         />
 
         {notificationError ? (
