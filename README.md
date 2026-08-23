@@ -48,7 +48,7 @@ ujima start
 ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --prompt-password --workspace "$(pwd)"
 ```
 
-**Contents:** [Core concepts](#core-concepts) · [Quick start](#quick-start-with-npm) · [Provider API keys](#provider-api-keys) · [Local models](#local-and-self-hosted-models) · [`ujima init` reference](#ujima-init-reference) · [Team config](#team-config-ujimaconfigts) · [After `init`](#after-ujima-init) · [Troubleshooting](#troubleshooting) · [Security model](#security-model) · [Source and development](#source-and-development)
+**Contents:** [Core concepts](#core-concepts) · [Quick start](#quick-start-with-npm) · [Provider API keys](#provider-api-keys) · [Local models](#local-and-self-hosted-models) · [`ujima init` reference](#ujima-init-reference) · [Team config](#team-config-ujimaconfigts) · [After `init`](#after-ujima-init) · [Troubleshooting](#troubleshooting) · [Security model](#security-model) · [Source and development](#source-and-development) · [Community](#community)
 
 Open **[http://localhost:3452](http://localhost:3452)** for the web UI. The API listens on **http://127.0.0.1:7511**.
 
@@ -305,6 +305,10 @@ bun run dev:stack   # Start the API daemon and web UI locally
 ```
 
 Run tests with `bun test`, lint with `bun run lint`. See [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR.
+
+## Community
+
+Join the [WhatsApp community](https://chat.whatsapp.com/Kr6MkvNsiY027UpqsiSSSq) to ask questions, share what you're building, and follow updates.
 
 ## Contact
 
