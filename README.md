@@ -7,7 +7,7 @@
 
 ---
 
-Ujima Agents is a framework for building teams of persistent AI agents. Agents have roles, work in channels, and run inside a workspace you control.
+Ujima Agents is an open-source framework for building teams of persistent AI agents. Agents have roles, work in channels, and run inside a workspace you control. The full source lives in this repository under MIT — self-host it, modify it, and ship it as your own.
 
 Define the team in code, connect the providers you want to use, and let agents work through a chat-style interface. The local runtime keeps tool calls inside the organization's workspace root and pauses sensitive actions for approval.
 
@@ -45,8 +45,10 @@ npm install -g @ujima/agents
 ujima start
 
 # Terminal 2: Onboard your organization (uses the token)
-ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --owner-password "securepass123" --workspace "$(pwd)"
+ujima init --name "Acme Engineering" --owner "Alex" --owner-email "alex@example.com" --prompt-password --workspace "$(pwd)"
 ```
+
+**Contents:** [Core concepts](#core-concepts) · [Quick start](#quick-start-with-npm) · [Provider API keys](#provider-api-keys) · [Local models](#local-and-self-hosted-models) · [`ujima init` reference](#ujima-init-reference) · [Team config](#team-config-ujimaconfigts) · [After `init`](#after-ujima-init) · [Troubleshooting](#troubleshooting) · [Security model](#security-model) · [Source and development](#source-and-development)
 
 Open **[http://localhost:3452](http://localhost:3452)** for the web UI. The API listens on **http://127.0.0.1:7511**.
 
@@ -63,7 +65,7 @@ ujima init \
   --name "Acme Engineering" \
   --owner "Alex" \
   --owner-email "alex@example.com" \
-  --owner-password "securepass123" \
+  --prompt-password \
   --workspace "$(pwd)" \
   --provider anthropic=sk-ant-... \
   --provider openai=sk-...
@@ -147,7 +149,7 @@ vllm serve <hf-repo-or-local-path> \
 
 Open **Settings → Providers → Add**:
 
-- **Provider**: Ollama. Ujima uses this OpenAI-compatible provider type for custom endpoints too.
+- **Provider**: Ollama — despite the name, this is Ujima's generic OpenAI-compatible provider type, and it works with any custom endpoint.
 - **API key**: the Bearer token you passed as `--api-key`
 - **Base URL**: `http://127.0.0.1:8000/v1`
 
@@ -161,19 +163,6 @@ Test the connection, then assign the model to an agent the same way as above.
   model for routine work and Claude for a `code-reviewer`.
 - If a server is offline or does not expose `/v1/models`, Ujima uses its static
   model catalog instead.
-
----
-
-## Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UJIMA_HOME` | `~/.ujima` | Data directory (token, SQLite, cache) |
-| `UJIMA_TOKEN` | `$UJIMA_HOME/token` | Auth token for CLI ↔ API |
-| `UJIMA_BIND_HOST` | `127.0.0.1` | API bind address |
-| `UJIMA_PORT` | `7511` | API port |
-| `WEB_PORT` | `3452` | Web UI port |
-| `WEB_HOST` | `127.0.0.1` | Web UI bind address |
 
 ---
 
@@ -306,42 +295,16 @@ ujima update --force                     # Force reinstall
 
 ---
 
-## Architecture
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Web UI    │     │  Codex /    │     │    CLI      │
-│  (Next.js)  │     │ VS Code Ext │     │ (@ujima/..) │
-└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           ▼
-              ┌────────────────────────┐
-              │    API Daemon          │
-              │  (Fastify + WebSockets)│
-              └───────────┬────────────┘
-                          ▼
-              ┌────────────────────────┐
-              │    SQLite DB           │
-              └────────────────────────┘
-                          ▼
-              ┌────────────────────────┐
-              │  Orchestrator + Runtime│
-              │  (Agent execution)     │
-              └───────────┬────────────┘
-                          ▼
-              ┌────────────────────────┐
-              │  MCP Servers + LLMs    │
-              │  (Anthropic, OpenAI,   │
-              │   DeepSeek, etc.)      │
-              └────────────────────────┘
-```
-
----
-
 ## Source and development
 
-This repository contains the full source and local development setup.
+This repository contains the full source, organized as a Bun + Turbo monorepo (`packages/`, `apps/`).
+
+```bash
+bun install
+bun run dev:stack   # Start the API daemon and web UI locally
+```
+
+Run tests with `bun test`, lint with `bun run lint`. See [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR.
 
 ## Contact
 

@@ -19,10 +19,11 @@ export interface RegistryEntry {
   // Readable indicator for UI / catalog rendering; mirrors `defaults.transport`'s
   // nature without forcing settings code to inspect the nested MCPDef.
   transportKind?: RegistryTransportKind;
-  // What auth scheme the vendor ships. 'oauth' entries are listed for
-  // discovery but rejected at `instantiateFromRegistry` until the OAuth
-  // PR lands; 'pat' uses the existing secret-backed headers/env map;
-  // 'none' is the no-auth case (Context7, the reference stdio servers).
+  // What auth scheme the vendor ships. 'oauth' entries authorize via
+  // the OAuth 2.1 + PKCE flow in ./oauth.ts (token stored through the
+  // secret-backed headersKeyRef); 'pat' uses the existing secret-backed
+  // headers/env map; 'none' is the no-auth case (Context7, the
+  // reference stdio servers).
   authMode?: RegistryAuthMode;
   // Vendor doc URL where the user fetches the PAT (or learns about
   // OAuth). Surfaced in the settings UI's "Add" form.
@@ -275,13 +276,13 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
   },
 
   // ─────────────────────────────────────────────────────────────────────
-  // Track A — remote-hosted MCPs (PAT or no-auth only).
-  // Each uses the existing `http-streamable` transport with the secret-
-  // backed Authorization header. OAuth-only vendors are listed further
-  // down with `authMode: 'oauth'` so the catalog surfaces them but
-  // `instantiateFromRegistry` throws a clear error until the OAuth PR
-  // ships. Re-verify the endpoint URLs and PAT shapes if `lastVerified`
-  // ages past ~90 days; vendors do shift these.
+  // Track A — remote-hosted MCPs.
+  // PAT/no-auth entries use the `http-streamable` transport with the
+  // secret-backed Authorization header. OAuth-only vendors are listed
+  // further down with `authMode: 'oauth'` and authorize via the
+  // OAuth 2.1 + PKCE flow in ./oauth.ts. Re-verify the endpoint URLs
+  // and auth shapes if `lastVerified` ages past ~90 days; vendors do
+  // shift these.
   // ─────────────────────────────────────────────────────────────────────
 
   {
@@ -416,17 +417,16 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
 
   // ─────────────────────────────────────────────────────────────────────
   // Track A — remote OAuth-only entries.
-  // Listed for catalog discovery but cannot be instantiated until the
-  // OAuth 2.1 + PKCE flow lands (separate PR). `instantiateFromRegistry`
-  // throws a clear "OAuth not yet supported" error referencing
-  // `setupHint` so admins know where to wait for the integration.
+  // Authorize via the OAuth 2.1 + PKCE flow in ./oauth.ts; the bearer
+  // token is stored through the secret-backed headersKeyRef so
+  // `materializeMcpDef` attaches it at connection time.
   // ─────────────────────────────────────────────────────────────────────
 
   {
     id: 'linear-mcp',
     name: 'Linear',
     description:
-      'Linear remote MCP — issues, projects, cycles, comments. OAuth-only (PAT support not exposed by Linear). Listed in catalog; cannot instantiate yet.',
+      'Linear remote MCP — issues, projects, cycles, comments. OAuth-only (PAT support not exposed by Linear).',
     category: 'project-mgmt',
     homepage: 'https://linear.app/docs/mcp',
     tags: ['linear', 'issues', 'project-mgmt', 'remote', 'oauth'],
@@ -436,7 +436,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     lastVerified: '2026-06-05',
     defaults: {
       version: '0.0.0',
-      description: 'Linear remote MCP (OAuth-only).',
+      description: 'Linear remote MCP (OAuth).',
       category: 'project-mgmt',
       transport: 'http-streamable',
       command: '',
@@ -451,7 +451,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     id: 'vercel-mcp',
     name: 'Vercel',
     description:
-      'Vercel remote MCP — deployments, projects, environments, logs. OAuth-only. Listed in catalog; cannot instantiate yet.',
+      'Vercel remote MCP — deployments, projects, environments, logs. OAuth-only.',
     category: 'infra',
     homepage: 'https://vercel.com/docs/mcp',
     tags: ['vercel', 'deploy', 'infra', 'remote', 'oauth'],
@@ -461,7 +461,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     lastVerified: '2026-06-05',
     defaults: {
       version: '0.0.0',
-      description: 'Vercel remote MCP (OAuth-only).',
+      description: 'Vercel remote MCP (OAuth).',
       category: 'infra',
       transport: 'http-streamable',
       command: '',
@@ -476,7 +476,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     id: 'atlassian-mcp',
     name: 'Atlassian (Jira + Confluence)',
     description:
-      'Atlassian remote MCP — Jira issues, Confluence pages. OAuth-only via the Atlassian Remote MCP server. Listed in catalog; cannot instantiate yet.',
+      'Atlassian remote MCP — Jira issues, Confluence pages. OAuth-only via the Atlassian Remote MCP server.',
     category: 'project-mgmt',
     homepage: 'https://www.atlassian.com/blog/announcements/remote-mcp-server',
     tags: ['atlassian', 'jira', 'confluence', 'project-mgmt', 'remote', 'oauth'],
@@ -486,7 +486,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     lastVerified: '2026-06-05',
     defaults: {
       version: '0.0.0',
-      description: 'Atlassian remote MCP (OAuth-only).',
+      description: 'Atlassian remote MCP (OAuth).',
       category: 'project-mgmt',
       transport: 'http-streamable',
       command: '',
@@ -501,7 +501,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     id: 'notion-remote',
     name: 'Notion (remote, OAuth)',
     description:
-      'Notion remote MCP — OAuth-only variant of the Notion connector. For PAT-authenticated stdio access use the existing `notion` entry. Listed; cannot instantiate yet.',
+      'Notion remote MCP — OAuth-only variant of the Notion connector. For PAT-authenticated stdio access use the existing `notion` entry.',
     category: 'docs',
     homepage: 'https://developers.notion.com/docs/mcp',
     tags: ['notion', 'docs', 'wiki', 'remote', 'oauth'],
@@ -511,7 +511,7 @@ export const CURATED_REGISTRY: RegistryEntry[] = [
     lastVerified: '2026-06-05',
     defaults: {
       version: '0.0.0',
-      description: 'Notion remote MCP (OAuth-only).',
+      description: 'Notion remote MCP (OAuth).',
       category: 'docs',
       transport: 'http-streamable',
       command: '',
@@ -645,24 +645,26 @@ export function instantiateFromRegistry(
   if (!entry) {
     throw new Error(`Unknown registry entry: "${entryId}"`);
   }
-  if (entry.authMode === 'oauth') {
-    // OAuth entries appear in the catalog so admins can see what's coming
-    // (and so the IT-guy / search_catalog meta-tools find them at
-    // discovery time), but the 2.1 + PKCE flow lands in a separate PR.
-    // Throw a clear message rather than silently producing a half-
-    // configured MCPDef that would fail at connection time with an
-    // opaque error.
-    const where = entry.setupHint ? ` See ${entry.setupHint}.` : '';
-    throw new Error(
-      `OAuth authentication is not yet supported for "${entry.name}". ` +
-        `This entry is listed in the catalog for discovery; the OAuth ` +
-        `flow will land in a follow-up PR.${where}`,
-    );
-  }
 
   const subs = options.argSubstitutions ?? {};
   const args = entry.defaults.args.map((arg) => substitute(arg, subs));
   const env = { ...entry.defaults.env, ...(options.envOverrides ?? {}) };
+
+  if (entry.authMode === 'oauth') {
+    // OAuth entries instantiate like any other remote connector: the
+    // MCPDef carries the resource URL, and the bearer token rides the
+    // secret-backed headersKeyRef (populated by runConnectorOAuthFlow
+    // in ./oauth.js). Without a stored token the connection fails with
+    // a 401 at first use — surfaces as "connector needs authorization"
+    // in the settings UI rather than a hard instantiation error.
+    return {
+      ...entry.defaults,
+      id: options.overrideId ?? entry.id,
+      name: options.overrideName ?? entry.name,
+      args,
+      env,
+    };
+  }
 
   // Substitute headers from the resolved env map so PAT-auth remote
   // entries like `Bearer ${GITHUB_TOKEN}` become `Bearer ghp_actual_…`

@@ -13,7 +13,6 @@ import type {
 import type { ActiveSpiritRegistry } from './active-spirit-registry.js';
 import type { AttachmentCaptureClosure } from './agent-attachment-closure.js';
 import type { ConversationService } from './conversation.js';
-import type { AiService } from '../ai-service.js';
 import type { McpRuntimePool } from './mcp-runtime.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { AttachmentApprovalRequest } from '../tools/discovery-tools.js';
@@ -34,7 +33,6 @@ export interface SpiritServiceOptions {
   modelResolver?: ModelResolver;
   registry?: ActiveSpiritRegistry;
   conversations?: ConversationService;
-  ai?: AiService;
   mcpPool?: SpiritMcpPool;
   mcpResolver?: SpiritMcpResolver;
   supervisorDebounceMs?: number;

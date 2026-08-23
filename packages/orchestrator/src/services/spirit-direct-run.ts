@@ -152,10 +152,6 @@ export class SpiritService extends SpiritServiceSupervisor {
   }
 
   async createRun(input: CreateRunInput): Promise<RunState> {
-    if (!this.ai) {
-      throw new Error('Run execution is not wired into SpiritService');
-    }
-
     const member = this.repo.getMember(input.organizationId, input.agentId);
     if (!member) {
       throw new Error(`Member not found: ${input.agentId}`);

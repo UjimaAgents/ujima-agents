@@ -62,12 +62,7 @@ export class TaskSessionService {
   constructor(
     private readonly repo: ApiRepository,
     private readonly conversations: ConversationService,
-    /**
-     * Phase 2 wiring. Optional so existing call sites (and Phase 1
-     * tests) that don't care about the spirit layer can keep
-     * constructing a TaskSessionService with two args.
-     */
-    private readonly spirits?: SpiritService,
+    private readonly spirits: SpiritService,
   ) {}
 
   /**
@@ -287,9 +282,6 @@ export class TaskSessionService {
   ): Promise<{ session: TaskSession; spirits: Spirit[] }> {
     requireOrganization(this.repo, organizationId);
     const spirits = this.spirits;
-    if (!spirits) {
-      throw new Error('SpiritService is not wired into this TaskSessionService');
-    }
     const session = this.repo.getTaskSession(organizationId, taskSessionId);
     if (!session) {
       throw new Error(`Task session not found: ${taskSessionId}`);
