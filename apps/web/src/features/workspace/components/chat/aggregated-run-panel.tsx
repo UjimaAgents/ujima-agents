@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { BookOpen, Brain, Clock, FileText, GitBranch, HelpCircle, MessageSquare, Pencil, Search, Settings2, Target, Terminal, Trash2, Wrench, type LucideIcon } from "lucide-react";
 import type { AggregatedOperation } from "./trace-types";
 import { Markdown } from "../markdown";
 import { TERMINAL_PANEL } from "./terminal-chrome";
@@ -7,57 +6,29 @@ import { TerminalPane } from "./terminal-pane";
 import { SkillReadPane } from "./skill-read-pane";
 import { UnifiedDiffView } from "./unified-diff-view";
 import { Chevron, ExpandableRow } from "./primitives";
-
-const TOOL_ICONS: Record<AggregatedOperation["type"], LucideIcon> = {
-  edit: Pencil,
-  delete: Trash2,
-  read: FileText,
-  search: Search,
-  shell: Terminal,
-  tool: Wrench,
-  skill: BookOpen,
-  memory: Brain,
-  goal: Target,
-  question: HelpCircle,
-  procedure: Settings2,
-  schedule: Clock,
-  message: MessageSquare,
-  delegate: GitBranch,
-};
-
-export function ToolCallIcon({
-  type,
-  className = "h-3.5 w-3.5",
-}: {
-  type: AggregatedOperation["type"];
-  className?: string;
-}) {
-  const Icon = TOOL_ICONS[type] ?? Wrench;
-  return <Icon className={className} aria-hidden="true" />;
-}
+import {
+  TRACE_OPERATION_LIST_CLASS,
+  TRACE_OPERATION_LIST_STYLE,
+  TraceMarker,
+  TraceRow,
+} from "./trace-layout";
 
 function OperationTrailItem({
   type,
-  showMarker,
   className = "",
   children,
 }: {
   type: AggregatedOperation["type"];
-  showMarker: boolean;
   className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className={`flex min-w-0 items-start gap-2 ${className}`}>
-      {showMarker ? (
-        <span className="relative -left-1.5 z-[1] mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-background text-foreground/45">
-          <ToolCallIcon type={type} className="h-3.5 w-3.5" />
-        </span>
-      ) : (
-        <span className="h-5 w-5 shrink-0" aria-hidden="true" />
-      )}
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
+    <TraceRow
+      marker={<TraceMarker type={type} />}
+      className={className}
+    >
+      {children}
+    </TraceRow>
   );
 }
 
@@ -449,6 +420,197 @@ function normalizeToolInput(op: AggregatedOperation): Record<string, unknown> | 
   return nested ?? input;
 }
 
+function DelegateToolPane({
+  op,
+  expanded,
+  onToggle,
+}: {
+  op: AggregatedOperation;
+  expanded: boolean;
+  onToggle: (event: React.MouseEvent) => void;
+}) {
+  const input = normalizeToolInput(op) ?? {};
+  const rawResult = recordValue(op.toolResult) ?? {};
+  const result = recordValue(rawResult.result) ?? rawResult;
+  const action = stringValue(input.action) ?? "start";
+  const inputItems = Array.isArray(input.tasks)
+    ? input.tasks.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
+    : Array.isArray(input.delegates)
+      ? input.delegates.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
+      : [input];
+  const resultItems = Array.isArray(result.details)
+    ? result.details.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
+    : Array.isArray(result.results)
+      ? result.results.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
+      : Object.keys(result).length > 0 ? [result] : [];
+  const itemCount = Math.max(inputItems.length, resultItems.length, 1);
+  const items = Array.from({ length: itemCount }, (_, index) => {
+    const task = inputItems[index] ?? inputItems[0] ?? {};
+    const outcome = resultItems.find((item) => item.delegate_index === index) ?? resultItems[index] ?? {};
+    return {
+      target: stringValue(task.target) ?? stringValue(task.to) ?? stringValue(outcome.agent),
+      task: stringValue(task.task) ?? stringValue(task.message),
+      mode: stringValue(task.mode) ?? stringValue(task.kind),
+      status: stringValue(outcome.status),
+      reply: stringValue(outcome.reply_content),
+    };
+  });
+  const singleTarget = itemCount === 1 ? items[0]?.target : undefined;
+  const title = action === "start" || action === "spawn" || action === "start_many"
+    ? singleTarget ? `Delegated to ${singleTarget}` : `Delegated ${itemCount} tasks`
+    : action === "status" ? "Checked delegation status"
+      : action === "join" || action === "wait" ? "Waited for delegated work"
+        : action === "read" ? "Read delegated work"
+          : action === "stop" ? "Stopped delegated work"
+            : action === "send" ? "Messaged delegate"
+              : "Updated delegated work";
+  const status = stringValue(result.status) ?? (op.status === "success" ? "completed" : op.status);
+
+  return (
+    <ExpandableRow
+      expanded={expanded}
+      onToggle={onToggle}
+      header={<span className="trace-step-text truncate font-semibold leading-snug text-foreground/85">{title}</span>}
+      trailing={renderSingleStatusBadge(status)}
+    >
+      <div className="trace-step-text mt-2 space-y-2 leading-relaxed text-foreground/70">
+        {items.map((item, index) => (
+          <div key={`${op.id}:delegate:${index}`} className="min-w-0 pl-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-semibold text-foreground/80">
+                {item.target ?? `Task ${index + 1}`}
+              </span>
+              {item.mode ? <span className="shrink-0 text-[10px] uppercase tracking-wide text-foreground/40">{item.mode}</span> : null}
+              {item.status ? <span className="ml-auto shrink-0">{renderSingleStatusBadge(item.status)}</span> : null}
+            </div>
+            {item.task ? <p className="mt-1 whitespace-pre-wrap text-foreground/65">{item.task}</p> : null}
+            {item.reply ? <p className="mt-1 whitespace-pre-wrap text-foreground/50">{item.reply}</p> : null}
+          </div>
+        ))}
+        {items.every((item) => !item.task && !item.reply) && op.detail ? (
+          <PrettyToolDetailDetail op={op} />
+        ) : null}
+      </div>
+    </ExpandableRow>
+  );
+}
+
+function GoalToolPane({
+  op,
+  expanded,
+  onToggle,
+}: {
+  op: AggregatedOperation;
+  expanded: boolean;
+  onToggle: (event: React.MouseEvent) => void;
+}) {
+  const input = normalizeToolInput(op) ?? {};
+  const rawResult = recordValue(op.toolResult) ?? {};
+  const result = recordValue(rawResult.result) ?? rawResult;
+  const goal = recordValue(result.goal) ?? {};
+  const action = stringValue(input.action);
+  const title = stringValue(input.title) ?? stringValue(goal.title);
+  const taskRecords = Array.isArray(input.tasks)
+    ? input.tasks.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
+    : Array.isArray(result.tasks)
+      ? result.tasks.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
+      : [];
+  const plan = stringValue(input.plan_markdown) ?? stringValue(input.description) ?? stringValue(goal.description);
+  const header = op.toolName === "goal.start"
+    ? title ? `Started ${title}` : "Started goal"
+    : op.toolName === "goal.task.update"
+      ? title ? `Updated ${title}` : "Updated goal task"
+      : action === "create" ? title ? `Created goal · ${title}` : "Created goal"
+        : action === "start" || action === "resume" ? title ? `Resumed goal · ${title}` : "Resumed goal"
+          : action === "pause" ? title ? `Paused goal · ${title}` : "Paused goal"
+            : action === "stop" ? title ? `Stopped goal · ${title}` : "Stopped goal"
+              : title ? `Updated ${title}` : "Updated goal";
+  const status = stringValue(result.status) ?? stringValue(goal.status) ?? (op.status === "success" ? "completed" : op.status);
+
+  return (
+    <ExpandableRow
+      expanded={expanded}
+      onToggle={onToggle}
+      header={<span className="trace-step-text truncate font-semibold leading-snug text-foreground/85">{header}</span>}
+      trailing={renderSingleStatusBadge(status)}
+    >
+      <div className="trace-step-text mt-2 space-y-2 leading-relaxed text-foreground/65">
+        {plan ? (
+          <p
+            className="whitespace-pre-wrap"
+            style={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 4, overflow: "hidden" }}
+          >
+            {plan}
+          </p>
+        ) : null}
+        {taskRecords.length > 0 ? (
+          <div className="space-y-1.5">
+            {taskRecords.map((task, index) => {
+              const taskTitle = stringValue(task.title) ?? `Task ${index + 1}`;
+              const assignee = stringValue(task.assignee_id) ?? stringValue(task.assigneeId);
+              const taskStatus = stringValue(task.status);
+              return (
+                <div key={`${op.id}:goal-task:${index}`} className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-foreground/75">{taskTitle}</span>
+                  {assignee ? <span className="shrink-0 text-[10px] text-foreground/40">{assignee}</span> : null}
+                  {taskStatus ? <span className="ml-auto shrink-0">{renderSingleStatusBadge(taskStatus)}</span> : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {!plan && taskRecords.length === 0 && op.detail ? <PrettyToolDetailDetail op={op} /> : null}
+      </div>
+    </ExpandableRow>
+  );
+}
+
+function QuestionToolPane({
+  op,
+  expanded,
+  onToggle,
+}: {
+  op: AggregatedOperation;
+  expanded: boolean;
+  onToggle: (event: React.MouseEvent) => void;
+}) {
+  const input = normalizeToolInput(op) ?? {};
+  const result = recordValue(op.toolResult);
+  const question = stringValue(input.question_text) ?? stringValue(input.questionText) ?? "Asked a question";
+  const options = Array.isArray(input.options)
+    ? input.options.filter((option): option is string => typeof option === "string" && option.trim().length > 0)
+    : [];
+  const status = stringValue(result?.status) ?? (op.status === "success" ? undefined : op.status);
+
+  return (
+    <ExpandableRow
+      expanded={expanded}
+      onToggle={onToggle}
+      header={<span className="trace-step-text truncate font-semibold leading-snug text-foreground/85">Asked</span>}
+      trailing={status ? renderSingleStatusBadge(status) : null}
+    >
+      <div className="trace-step-text mt-2 space-y-2 leading-relaxed text-foreground/70">
+        <p className="whitespace-pre-wrap font-medium text-foreground/80">{question}</p>
+        {options.length > 0 ? (
+          <ol className="space-y-1.5 pl-1">
+            {options.map((option, index) => {
+              const recommended = /\s*\(Recommended\)\s*$/i.test(option);
+              const label = option.replace(/\s*\(Recommended\)\s*$/i, "");
+              return (
+                <li key={`${op.id}:question-option:${index}`} className="flex min-w-0 items-start gap-2 text-foreground/65">
+                  <span className="shrink-0 tabular-nums text-foreground/35">{index + 1}.</span>
+                  <span className="min-w-0 whitespace-pre-wrap">{label}</span>
+                  {recommended ? <span className="shrink-0 text-[0.75em] font-semibold uppercase tracking-wide text-foreground/40">Recommended</span> : null}
+                </li>
+              );
+            })}
+          </ol>
+        ) : null}
+      </div>
+    </ExpandableRow>
+  );
+}
+
 function messageToolSummary(op: AggregatedOperation): string {
   const tool = op.toolName ?? "";
   if (tool === "channel.reply") return "replied";
@@ -461,7 +623,15 @@ function messageToolSummary(op: AggregatedOperation): string {
   return "completed a message action";
 }
 
-function MessageToolPane({ op }: { op: AggregatedOperation }) {
+function MessageToolPane({
+  op,
+  expanded,
+  onToggle,
+}: {
+  op: AggregatedOperation;
+  expanded: boolean;
+  onToggle: (event: React.MouseEvent) => void;
+}) {
   const input = normalizeToolInput(op);
   const result = recordValue(op.toolResult);
   const tool = op.toolName ?? "";
@@ -492,20 +662,17 @@ function MessageToolPane({ op }: { op: AggregatedOperation }) {
             : "Target";
 
   return (
-    <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-3 text-xs">
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="font-semibold text-sm text-foreground/90">{title}</div>
-          {target ? <div className="mt-0.5 text-[11px] text-foreground/50">{targetLabel}: {target}</div> : null}
-        </div>
-        {op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
+    <ExpandableRow
+      expanded={expanded}
+      onToggle={onToggle}
+      header={<span className="trace-step-text truncate font-semibold leading-snug text-foreground/85">{title}</span>}
+      trailing={op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
+    >
+      <div className="trace-step-text mt-2 space-y-1 leading-relaxed text-foreground/70">
+        {target ? <div className="text-foreground/45">{targetLabel}: {target}</div> : null}
+        {body ? <p className="whitespace-pre-wrap text-foreground/70">{body}</p> : null}
       </div>
-      {body ? (
-        <div className="mt-2 rounded-md bg-background/60 px-3 py-2 text-sm leading-6 text-foreground/80">
-          {body}
-        </div>
-      ) : null}
-    </div>
+    </ExpandableRow>
   );
 }
 
@@ -520,7 +687,15 @@ function memoryEntries(result: Record<string, unknown> | undefined): string[] {
     .filter((value): value is string => Boolean(value));
 }
 
-function MemoryToolPane({ op }: { op: AggregatedOperation }) {
+function MemoryToolPane({
+  op,
+  expanded,
+  onToggle,
+}: {
+  op: AggregatedOperation;
+  expanded: boolean;
+  onToggle: (event: React.MouseEvent) => void;
+}) {
   const input = normalizeToolInput(op);
   const result = recordValue(op.toolResult);
   const tool = op.toolName ?? "";
@@ -541,30 +716,25 @@ function MemoryToolPane({ op }: { op: AggregatedOperation }) {
   const emptyRecall = tool === "memory.recall" && recalled.length === 0;
 
   return (
-    <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-3 text-xs">
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="font-semibold text-sm text-foreground/90">{title}</div>
-          {query ? <div className="mt-0.5 text-[11px] text-foreground/50">{semanticTargetLabel(tool)}: {query}</div> : null}
-        </div>
-        {op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
-      </div>
-      {body ? (
-        <div className="mt-2 rounded-md bg-background/60 px-3 py-2 text-sm leading-6 text-foreground/80">
-          {body}
-        </div>
-      ) : null}
-      {recalled.length > 0 ? (
-        <div className="mt-2 rounded-md bg-background/60 px-3 py-2 text-sm leading-6 text-foreground/80">
+    <ExpandableRow
+      expanded={expanded}
+      onToggle={onToggle}
+      header={<span className="trace-step-text truncate font-semibold leading-snug text-foreground/85">{title}</span>}
+      trailing={op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
+    >
+      <div className="trace-step-text mt-2 space-y-1 leading-relaxed text-foreground/70">
+        {query ? <div className="text-foreground/45">{semanticTargetLabel(tool)}: {query}</div> : null}
+        {body ? <p className="whitespace-pre-wrap text-foreground/70">{body}</p> : null}
+        {recalled.length > 0 ? (
+          <div className="space-y-1 text-foreground/65">
           {recalled.map((item, index) => (
             <div key={`${op.id}-memory-${index}`}>{item}</div>
           ))}
-        </div>
-      ) : null}
-      {emptyRecall ? (
-        <div className="mt-2 text-[11px] text-foreground/50">No matching memories found.</div>
-      ) : null}
-    </div>
+          </div>
+        ) : null}
+        {emptyRecall ? <div className="text-foreground/45">No matching memories found.</div> : null}
+      </div>
+    </ExpandableRow>
   );
 }
 
@@ -593,7 +763,7 @@ export function SemanticToolPane({ op }: { op: AggregatedOperation }) {
   ].filter((item): item is DetailItem => Boolean(item));
 
   return (
-    <div className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3 py-2 text-xs">
+    <div className="trace-step-text min-w-0 leading-relaxed">
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="font-semibold text-foreground/85">{title}</div>
@@ -601,7 +771,7 @@ export function SemanticToolPane({ op }: { op: AggregatedOperation }) {
         </div>
         {op.status !== "success" ? renderSingleStatusBadge(op.status) : null}
       </div>
-      {body ? <div className="mt-2 rounded-md bg-background/60 px-2 py-1.5 text-foreground/70">{body}</div> : null}
+      {body ? <div className="mt-1 whitespace-pre-wrap text-foreground/70">{body}</div> : null}
       {meta.length > 0 ? <PrettyToolDetail sections={[{ type: "key-value", items: meta }]} /> : null}
     </div>
   );
@@ -780,10 +950,10 @@ export function AggregatedRunPanel({
     <div className="w-full">
       <button
         onClick={() => setIsOpen(!panelOpen)}
-        className="flex w-full cursor-pointer items-start justify-between gap-2 rounded-md p-0 text-left text-xs font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.04] hover:text-foreground active:bg-foreground/[0.06] active:text-foreground/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/20"
+        className="trace-step-text flex w-full cursor-pointer items-start justify-between gap-2 rounded-md p-0 text-left font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.04] hover:text-foreground active:bg-foreground/[0.06] active:text-foreground/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/20"
       >
         <span className="flex min-w-0 flex-1 items-start">
-          <span className="min-w-0 flex-1 whitespace-normal break-words leading-5">
+          <span className="min-w-0 flex-1 whitespace-normal break-words leading-6">
             {actorName ? <span className="font-semibold text-foreground">{actorName}</span> : null}
             {actorName ? " " : null}
             <span className={actorName ? "font-normal text-foreground/75" : ""}>{displaySummary}</span>
@@ -799,18 +969,16 @@ export function AggregatedRunPanel({
 
       {panelOpen && operations.length > 0 && (
         <div
-          className="relative mt-1 space-y-1 py-0.5 animate-in fade-in slide-in-from-top-1 duration-200"
-          style={{ marginLeft: "-1.5rem" }}
+          className={TRACE_OPERATION_LIST_CLASS}
+          style={TRACE_OPERATION_LIST_STYLE}
         >
           {operations.map((op, index) => {
             const autoExpandOperation = autoOpen && (op.status === "running" || index === operations.length - 1);
             const isExpanded = expanded[op.id] ?? autoExpandOperation;
-            const showMarker = index > 0 && operations[index - 1]?.type !== op.type;
-
             if (op.type === "edit" || op.type === "delete") {
               const verb = op.type === "edit" ? "Edited" : "Deleted";
               return (
-                  <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
+                  <OperationTrailItem key={op.id} type={op.type}>
                     <ExpandableRow
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}
@@ -830,22 +998,34 @@ export function AggregatedRunPanel({
 
             if (op.type === "read") {
               return (
-                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker} className="py-1 text-xs leading-snug text-foreground/60">
-                  <div className="flex min-w-0 items-center gap-1 truncate">
-                    <span className="shrink-0">Read</span>
-                    <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
-                    {op.lines ? <span className="ml-1 inline-block shrink-0 text-foreground/40 font-medium">(lines {op.lines})</span> : null}
-                  </div>
+                <OperationTrailItem key={op.id} type={op.type} className="trace-step-text leading-snug text-foreground/60">
+                  <ExpandableRow
+                    expanded={isExpanded}
+                    onToggle={toggle(op.id)}
+                    header={
+                      <span className="flex min-w-0 items-center gap-1 truncate">
+                        <span className="shrink-0">Read file</span>
+                        <PathBreadcrumb path={op.file ?? ""} className="min-w-0 truncate" />
+                        {op.lines ? <span className="ml-1 shrink-0 font-medium text-foreground/40">(lines {op.lines})</span> : null}
+                      </span>
+                    }
+                  >
+                    {op.body ? (
+                      <pre className="trace-step-text-sm mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words pl-1 font-mono leading-relaxed text-foreground/70">
+                        {op.body}
+                      </pre>
+                    ) : null}
+                  </ExpandableRow>
                 </OperationTrailItem>
               );
             }
 
             if (op.type === "search") {
               return (
-                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker} className="py-1 text-xs leading-snug text-foreground/70">
-                  <div className="flex min-w-0 items-center gap-1 truncate">
+                <OperationTrailItem key={op.id} type={op.type} className="trace-step-text leading-snug text-foreground/70">
+                  <div className="flex min-h-5 min-w-0 items-center gap-1 truncate">
                     <span className="shrink-0">Searched for</span>
-                    <span className="max-w-[8rem] truncate font-mono text-[11px] text-foreground/80">&ldquo;{op.query}&rdquo;</span>
+                    <span className="max-w-[8rem] truncate font-mono text-xs text-foreground/80">&ldquo;{op.query}&rdquo;</span>
                     {op.file ? (
                       <>
                         <span className="shrink-0">in</span>
@@ -859,7 +1039,7 @@ export function AggregatedRunPanel({
 
             if (op.type === "shell") {
               return (
-                  <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
+                  <OperationTrailItem key={op.id} type={op.type}>
                     <ExpandableRow
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}
@@ -884,11 +1064,10 @@ export function AggregatedRunPanel({
 
             if (op.type === "skill" && op.skillRead) {
               return (
-                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
+                <OperationTrailItem key={op.id} type={op.type}>
                   <SkillReadPane
                     skillName={op.skillRead.skillName}
                     pluginName={op.skillRead.pluginName}
-                    description={op.skillRead.description}
                     output={op.skillRead.output}
                     status={op.status}
                   />
@@ -897,16 +1076,48 @@ export function AggregatedRunPanel({
             }
 
             if (op.type === "message") {
-              return <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}><MessageToolPane op={op} /></OperationTrailItem>;
+              return (
+                <OperationTrailItem key={op.id} type={op.type}>
+                  <MessageToolPane op={op} expanded={isExpanded} onToggle={toggle(op.id)} />
+                </OperationTrailItem>
+              );
             }
 
             if (op.type === "memory") {
-              return <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}><MemoryToolPane op={op} /></OperationTrailItem>;
+              return (
+                <OperationTrailItem key={op.id} type={op.type}>
+                  <MemoryToolPane op={op} expanded={isExpanded} onToggle={toggle(op.id)} />
+                </OperationTrailItem>
+              );
             }
 
-            if (op.type === "goal" || op.type === "question" || op.type === "procedure" || op.type === "schedule" || op.type === "delegate" || op.type === "tool") {
+            if (op.type === "delegate") {
               return (
-                <OperationTrailItem key={op.id} type={op.type} showMarker={showMarker}>
+                <OperationTrailItem key={op.id} type={op.type}>
+                  <DelegateToolPane op={op} expanded={isExpanded} onToggle={toggle(op.id)} />
+                </OperationTrailItem>
+              );
+            }
+
+            if (op.type === "goal") {
+              return (
+                <OperationTrailItem key={op.id} type={op.type}>
+                  <GoalToolPane op={op} expanded={isExpanded} onToggle={toggle(op.id)} />
+                </OperationTrailItem>
+              );
+            }
+
+            if (op.type === "question") {
+              return (
+                <OperationTrailItem key={op.id} type={op.type}>
+                  <QuestionToolPane op={op} expanded={isExpanded} onToggle={toggle(op.id)} />
+                </OperationTrailItem>
+              );
+            }
+
+            if (op.type === "procedure" || op.type === "schedule" || op.type === "tool") {
+              return (
+                <OperationTrailItem key={op.id} type={op.type}>
                   <ExpandableRow
                   expanded={isExpanded}
                   onToggle={toggle(op.id)}

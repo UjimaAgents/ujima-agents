@@ -32,7 +32,7 @@ import type { RealtimeService } from './context.js';
 import type { ApiRepository } from './repository-reader.js';
 import type { TeamStore } from './team-store.js';
 import type { ToolService } from './tool-service.js';
-import { goalModeEnabledFromMessage } from './goal-mode-prompt.js';
+import { ACTIVE_GOAL_STATUSES, goalModeEnabledFromMessage } from './goal-mode-prompt.js';
 import { scheduleModeEnabledFromMessage } from './schedule-prompt.js';
 import { isLiveSpiritStatus } from './live-status.js';
 import type { AgentLoopChunk } from './agent-loop.js';
@@ -90,7 +90,7 @@ export class SpiritServiceBase {
     options: SpiritServiceOptions = {},
   ) {
     this.maxIterationsPerRun = options.maxIterationsPerRun ?? 12;
-    this.maxOutputTokens = options.maxOutputTokens ?? 8_000;
+    this.maxOutputTokens = options.maxOutputTokens ?? 15_000;
     this.temperature = options.temperature ?? DEFAULT_SPIRIT_TEMPERATURE;
     this.modelResolver = options.modelResolver ?? this.defaultModelResolver();
     this.registry = options.registry ?? new ActiveSpiritRegistry();
@@ -761,6 +761,16 @@ export class SpiritServiceBase {
       if (messageContent === undefined) messageContent = latestHumanMessage?.content;
       if (goalMode === undefined) goalMode = goalModeEnabledFromMessage(latestHumanMessage);
       if (scheduleMode === undefined) scheduleMode = scheduleModeEnabledFromMessage(latestHumanMessage);
+    }
+
+    // Agent-created goals activate goal mode without a user-toggled
+    // message flag: an active goal on the thread's channel implies it.
+    if (!goalMode && input.threadId) {
+      const channelId = this.repo.getThread?.(input.organizationId, input.threadId)?.channelId;
+      const channelGoal = channelId
+        ? this.repo.getGoalByChannel?.(input.organizationId, channelId)
+        : null;
+      if (channelGoal && ACTIVE_GOAL_STATUSES.has(channelGoal.status)) goalMode = true;
     }
 
     const pendingTasks = (this.repo.listGoalTasksByOrganization?.(input.organizationId) ?? [])

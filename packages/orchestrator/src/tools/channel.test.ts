@@ -404,6 +404,7 @@ describe('ALWAYS_AVAILABLE_AGENT_TOOLS', () => {
         'channel.reply',
         'channel.set_member_mode',
         'glob',
+        'goal.mode',
         'goal.start',
         'goal.task.update',
         'grep',

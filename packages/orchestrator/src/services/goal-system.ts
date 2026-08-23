@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Goal, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima/shared';
+import type { Goal, GoalStatus, GoalTask, GoalTaskStatus, InteractiveQuestion } from '@ujima/shared';
 import { goalTaskColumnLabel } from '@ujima/shared';
 import type { ApiRepository } from './repository-reader.js';
 import type { ConversationService } from './conversation.js';
@@ -154,6 +154,92 @@ export class GoalSystemService {
       if (tasks.length === 0) throw new Error('Goal has no tasks');
       const updated = this.repo.saveGoal({ ...goal, status: 'running', updatedAt: now });
       return { goal: updated, tasks };
+    });
+  }
+
+  // Agent-triggered goal mode: a lightweight create with just a title
+  // and description. The full plan + task board still arrives later
+  // via goal.start, which reuses the same goal row.
+  create(input: {
+    organizationId: string;
+    channelId: string;
+    supervisorId: string;
+    title: string;
+    description: string;
+  }): Goal {
+    const now = new Date().toISOString();
+    return this.repo.transaction(() => {
+      const channel = this.repo.getChannel(input.organizationId, input.channelId);
+      const existing =
+        channel?.kind === 'dm' || channel?.kind === 'self'
+          ? this.repo.getGoalByChannel(input.organizationId, input.channelId)
+          : null;
+      if (existing?.status === 'running') {
+        throw new Error(
+          `A goal is already running on this channel ("${existing.title}"). Pause or stop it before creating a new one.`,
+        );
+      }
+      const goal = this.repo.saveGoal({
+        id: existing?.id ?? randomUUID(),
+        organizationId: input.organizationId,
+        channelId: input.channelId,
+        title: input.title,
+        status: 'planning',
+        supervisorId: input.supervisorId,
+        planMarkdown: input.description,
+        planVersion: (existing?.planVersion ?? 0) + 1,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      });
+      if (existing) {
+        this.repo.deleteGoalTasks(input.organizationId, goal.id);
+        for (const question of this.repo.listPendingInteractiveQuestions(input.organizationId, input.channelId)) {
+          if (question.goalId !== goal.id) continue;
+          this.repo.saveInteractiveQuestion({ ...question, status: 'superseded', updatedAt: now });
+        }
+      }
+      return goal;
+    });
+  }
+
+  pause(organizationId: string, goalId: string): Goal {
+    return this.setGoalStatus(organizationId, goalId, ['planning', 'running'], 'suspended');
+  }
+
+  // Resuming is allowed from 'suspended' only. planning → running is
+  // exclusive to implement() behind goal.start's approval question —
+  // resume never bypasses that gate because a suspended goal was
+  // already approved once.
+  resume(organizationId: string, goalId: string): Goal {
+    return this.setGoalStatus(organizationId, goalId, ['suspended'], 'running');
+  }
+
+  stop(organizationId: string, goalId: string): Goal {
+    return this.repo.transaction(() => {
+      const goal = this.repo.getGoal(organizationId, goalId);
+      if (!goal) throw new Error(`Goal not found: ${goalId}`);
+      if (goal.status === 'completed' || goal.status === 'cancelled') return goal;
+      return this.repo.saveGoal({
+        ...goal,
+        status: 'cancelled',
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  }
+
+  private setGoalStatus(
+    organizationId: string,
+    goalId: string,
+    allowed: GoalStatus[],
+    next: GoalStatus,
+  ): Goal {
+    return this.repo.transaction(() => {
+      const goal = this.repo.getGoal(organizationId, goalId);
+      if (!goal) throw new Error(`Goal not found: ${goalId}`);
+      if (!allowed.includes(goal.status)) {
+        throw new Error(`Cannot move goal from "${goal.status}" to "${next}"`);
+      }
+      return this.repo.saveGoal({ ...goal, status: next, updatedAt: new Date().toISOString() });
     });
   }
 

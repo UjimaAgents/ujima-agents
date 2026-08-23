@@ -482,16 +482,16 @@ label:disabled {
 
 /* Reasoning/trace panel font scaling */
 [data-chat-font-size] .trace-step-text {
-  font-size: calc(0.8125rem * var(--chat-font-scale, 1));
+  font-size: calc(0.875rem * var(--chat-font-scale, 1));
 }
 
 [data-chat-font-size] .trace-step-text-sm {
-  font-size: calc(0.6875rem * var(--chat-font-scale, 1));
+  font-size: calc(0.75rem * var(--chat-font-scale, 1));
 }
 
 /* Trace step title text */
 [data-chat-font-size] .trace-step-title {
-  font-size: calc(0.8125rem * var(--chat-font-scale, 1));
+  font-size: calc(0.875rem * var(--chat-font-scale, 1));
 }
 
 /* Header controls area should not scale */

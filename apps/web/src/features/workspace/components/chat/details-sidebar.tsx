@@ -8,7 +8,8 @@ import { GrepToolPane } from "./grep-tool-pane";
 import { WebSearchToolPane } from "./web-search-tool-pane";
 import { SkillReadPane } from "./skill-read-pane";
 import { UnifiedDiffView } from "./unified-diff-view";
-import { AggregatedRunPanel, SemanticToolPane, ToolCallIcon, TraceMarkdown } from "./aggregated-run-panel";
+import { AggregatedRunPanel, SemanticToolPane, TraceMarkdown } from "./aggregated-run-panel";
+import { TRACE_ITEM_GAP, TraceConnector, TraceMarker, TraceRow } from "./trace-layout";
 import { collectFileChanges } from "../../change-summary";
 import type { AggregatedOperation, TraceStepData } from "./trace-types";
 
@@ -28,8 +29,6 @@ export const TraceStep = memo(function TraceStep({
   const markerType = isUnifiedRun
     ? step.aggregatedOperations?.[0]?.type ?? "tool"
     : getTraceOperationType(step);
-  const rowMargin = step.title.startsWith("Run ·") ? "mt-2" : "";
-  const rowPadding = isLast ? "pb-0" : "pb-4";
   const body = step.aggregatedOperations && step.aggregatedOperations.length > 0 ? (
     <AggregatedRunPanel
       operations={step.aggregatedOperations}
@@ -81,7 +80,6 @@ export const TraceStep = memo(function TraceStep({
     <SkillReadPane
       skillName={step.skillRead.skillName}
       pluginName={step.skillRead.pluginName}
-      description={step.skillRead.description}
       output={step.skillRead.output}
       status={step.status}
     />
@@ -105,28 +103,15 @@ export const TraceStep = memo(function TraceStep({
 
   return (
     <div
-      className={`relative pl-6 ${rowMargin} ${rowPadding}`}
+      className="relative"
+      style={{ paddingBottom: isLast ? 0 : TRACE_ITEM_GAP }}
     >
-      <span
-        className="pointer-events-none z-[2] flex h-5 w-5 items-center justify-center rounded-sm bg-background text-foreground/45"
-        style={{ position: "absolute", left: -6, top: 2 }}
-        aria-hidden="true"
-      >
-        <ToolCallIcon type={markerType} className="h-3.5 w-3.5" />
-      </span>
-      {!isLast ? (
-        <div
-          className="absolute bottom-0 left-1 top-5 w-px bg-zinc-300 dark:bg-zinc-700"
-          aria-hidden
-        />
-      ) : null}
-
-      <div className="min-w-0">
+      <TraceRow marker={<TraceMarker type={markerType} />}>
         {isUnifiedRun ? body : (
           <>
             <div className="flex min-h-5 items-baseline justify-between gap-3">
               <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-0">
-                <p className="min-w-0 text-xs leading-snug text-foreground trace-step-title">
+                <p className="min-w-0 text-xs leading-5 text-foreground trace-step-title">
                   <span className="font-semibold">{subject}</span>
                   {remainder ? <span className="font-normal">{remainder}</span> : null}
                 </p>
@@ -152,7 +137,8 @@ export const TraceStep = memo(function TraceStep({
             ) : null}
           </>
         )}
-      </div>
+      </TraceRow>
+      {!isLast ? <TraceConnector /> : null}
     </div>
   );
 });

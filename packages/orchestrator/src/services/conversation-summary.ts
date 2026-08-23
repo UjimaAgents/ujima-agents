@@ -26,10 +26,35 @@ export {
   SELF_NOTE_SUMMARY_MARKER,
 } from "@ujima/shared";
 
-export const CONVERSATION_SUMMARIZATION_CHUNK_SIZE = 35;
 const SUMMARY_VALUE_MAX_CHARS = 2_000;
 const SUMMARY_EXCERPT_MAX_CHARS = 6_000;
 const SUMMARY_BULLET_MAX_CHARS = 300;
+const SUMMARY_MAX_OUTPUT_TOKENS = 15_000;
+
+const CONTEXT_WINDOW_OVERFLOW_PATTERN =
+  /context length|context window|prompt is too long|too many (input )?tokens|maximum context|input length exceeds|exceed[s]? .{0,40}token|request too large|payload too large/i;
+
+export function isContextWindowOverflowError(error: unknown): boolean {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; current instanceof Error && depth < 5; depth += 1) {
+    parts.push(current.message);
+    current = current.cause;
+  }
+  if (!(error instanceof Error)) parts.push(String(error));
+  return CONTEXT_WINDOW_OVERFLOW_PATTERN.test(parts.join(" "));
+}
+
+class SummaryOutputTruncatedError extends Error {}
+
+function isSummaryOutputTruncatedError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; current instanceof Error && depth < 5; depth += 1) {
+    if (current instanceof SummaryOutputTruncatedError) return true;
+    current = current.cause;
+  }
+  return false;
+}
 
 export interface ConversationSummaryFacts {
   objective: string[];
@@ -194,20 +219,6 @@ export interface LlmSummarizerInput {
   abortSignal?: AbortSignal;
 }
 
-function mergeFacts(prev: ConversationSummaryFacts, next: ConversationSummaryFacts, maxBullets: number): ConversationSummaryFacts {
-  function union(a: string[], b: string[]): string[] {
-    return [...new Set([...a, ...b])].slice(-maxBullets);
-  }
-  return {
-    objective: next.objective.length > 0 ? next.objective : prev.objective,
-    importantDetails: union(prev.importantDetails, next.importantDetails),
-    completed: union(prev.completed, next.completed),
-    active: union(prev.active, next.active),
-    blocked: union(prev.blocked, next.blocked),
-    nextActions: union(prev.nextActions, next.nextActions),
-  };
-}
-
 export async function buildConversationSummaryViaLlm(
   input: LlmSummarizerInput,
 ): Promise<string> {
@@ -221,29 +232,19 @@ export async function buildConversationSummaryViaLlm(
     throw new Error("Cannot summarize a conversation with no user or agent messages.");
   }
   const entries = summaryTranscriptEntries(filtered, input.runSteps ?? []);
-  const chunks = chunk(entries, CONVERSATION_SUMMARIZATION_CHUNK_SIZE);
   console.warn("[conversation-summary] starting LLM compaction", {
     mode,
     sourceCount: input.messages.length,
     filteredCount: entries.length,
-    chunkCount: chunks.length,
   });
-  let previousSummary: string | undefined;
-  let facts: ConversationSummaryFacts | undefined;
-  for (const [index, entries] of chunks.entries()) {
-    if (input.abortSignal?.aborted) throw new Error("Conversation summarization aborted.");
-    const transcript = entries.join("\n");
-    const summary = await extractSummary(input.model, transcript, maxBullets, {
-      mode,
-      chunkIndex: index,
-      chunkCount: chunks.length,
-      messageCount: entries.length,
-    }, previousSummary, input.abortSignal);
-    facts = facts
-      ? mergeFacts(facts, summary, maxBullets)
-      : summary;
-    previousSummary = JSON.stringify(facts, null, 2);
-  }
+  if (input.abortSignal?.aborted) throw new Error("Conversation summarization aborted.");
+  const facts = await summarizeEntries(
+    input.model,
+    entries,
+    maxBullets,
+    mode,
+    input.abortSignal,
+  );
   if (!facts) throw new Error("Conversation summarization produced no result.");
   const archive = mode === "archive";
   const workStateBullets = [
@@ -264,7 +265,54 @@ export async function buildConversationSummaryViaLlm(
   });
 }
 
-function buildSummarySystemPrompt(previousSummary?: string): string {
+async function summarizeEntries(
+  model: LanguageModel,
+  entries: string[],
+  maxBullets: number,
+  mode: "summary" | "archive",
+  abortSignal?: AbortSignal,
+): Promise<ConversationSummaryFacts> {
+  if (abortSignal?.aborted) throw new Error("Conversation summarization aborted.");
+  try {
+    return await extractSummary(model, entries.join("\n"), maxBullets, {
+      mode,
+      messageCount: entries.length,
+    }, abortSignal);
+  } catch (error) {
+    if (!isContextWindowOverflowError(error) && !isSummaryOutputTruncatedError(error)) throw error;
+    const partitions = splitSummaryEntries(entries);
+    if (!partitions) throw error;
+    console.warn("[conversation-summary] summarizer hit an input or output limit; splitting without dropping entries", {
+      mode,
+      entryCount: entries.length,
+      partitionSizes: partitions.map((partition) => partition.length),
+    });
+    const partials: ConversationSummaryFacts[] = [];
+    for (const partition of partitions) {
+      partials.push(await summarizeEntries(model, partition, maxBullets, mode, abortSignal));
+    }
+    return extractSummary(
+      model,
+      partials.map((partial) => `[partial-summary] ${JSON.stringify(partial)}`).join("\n"),
+      maxBullets,
+      { mode, messageCount: entries.length },
+      abortSignal,
+    );
+  }
+}
+
+function splitSummaryEntries(entries: string[]): [string[], string[]] | null {
+  if (entries.length > 1) {
+    const midpoint = Math.ceil(entries.length / 2);
+    return [entries.slice(0, midpoint), entries.slice(midpoint)];
+  }
+  const entry = entries[0];
+  if (!entry || entry.length < 2) return null;
+  const midpoint = Math.ceil(entry.length / 2);
+  return [[entry.slice(0, midpoint)], [entry.slice(midpoint)]];
+}
+
+function buildSummarySystemPrompt(): string {
   const lines: string[] = [
     "You are a conversation summariser. Read the transcript and emit a JSON object with these fields:",
     "- objective: what the user is trying to accomplish (1-2 short sentences, array of strings)",
@@ -278,16 +326,6 @@ function buildSummarySystemPrompt(previousSummary?: string): string {
     `Keep each bullet at least 2 characters and ≤ ${SUMMARY_BULLET_MAX_CHARS} chars. Use terse bullets, not prose paragraphs. No fluff.`,
     "Return only valid JSON. No markdown fences, no explanation.",
   ];
-  if (previousSummary) {
-    lines.push(
-      "",
-      "Below is the PREVIOUS summary for this conversation. Update it with new information from the transcript.",
-      "Preserve facts that are still accurate. Add new facts. Remove anything superseded.",
-      "Do NOT recreate from scratch — merge new transcript data into the existing structure.",
-      "",
-      previousSummary,
-    );
-  }
   return lines.join("\n");
 }
 
@@ -297,37 +335,46 @@ async function extractSummary(
   maxBullets: number,
   context?: {
     mode: "summary" | "archive";
-    chunkIndex: number;
-    chunkCount: number;
     messageCount: number;
   },
-  previousSummary?: string,
   abortSignal?: AbortSignal,
 ) {
   try {
     const { generateText, streamText } = await import("ai");
-    const system = buildSummarySystemPrompt(previousSummary);
+    const system = buildSummarySystemPrompt();
     const prompt = `Summarize this conversation transcript. Each array must have at most ${maxBullets} items.\n\n${transcript}`;
-    const text = (
-      isCodexResponsesModel(model)
-        ? await streamText({
-            model,
-            system,
-            prompt,
-            maxOutputTokens: 2_048,
-            abortSignal,
-          }).text
-        : (await generateText({
-            model,
-            system,
-            prompt,
-            maxOutputTokens: 2_048,
-            abortSignal,
-          })).text
-    ).trim();
+    let text: string;
+    let finishReason: string | undefined;
+    if (isCodexResponsesModel(model)) {
+      const result = streamText({
+        model,
+        system,
+        prompt,
+        maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS,
+        abortSignal,
+      });
+      [text, finishReason] = await Promise.all([result.text, result.finishReason]);
+    } else {
+      const result = await generateText({
+        model,
+        system,
+        prompt,
+        maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS,
+        abortSignal,
+      });
+      text = result.text;
+      finishReason = result.finishReason;
+    }
+    text = text.trim();
+    if (finishReason === "length") {
+      throw new SummaryOutputTruncatedError(`Model stopped at the ${SUMMARY_MAX_OUTPUT_TOKENS}-token summary limit.`);
+    }
     const jsonStart = text.indexOf("{");
     const jsonEnd = text.lastIndexOf("}");
     if (jsonStart === -1 || jsonEnd === -1) {
+      if (jsonStart !== -1) {
+        throw new SummaryOutputTruncatedError(`Incomplete JSON object in model response: ${text.slice(0, 200)}`);
+      }
       throw new Error(`No JSON object found in model response: ${text.slice(0, 200)}`);
     }
     const object = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
@@ -342,15 +389,13 @@ async function extractSummary(
   } catch (error) {
     const detail = {
       mode: context?.mode ?? "summary",
-      chunkIndex: context?.chunkIndex ?? 0,
-      chunkCount: context?.chunkCount ?? 1,
       messageCount: context?.messageCount ?? 0,
       transcriptChars: transcript.length,
     };
     console.warn("[conversation-summary] LLM summary failed", detail, error);
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Conversation summarization failed (${detail.mode}, chunk ${detail.chunkIndex + 1}/${detail.chunkCount}, ${detail.messageCount} messages, ${detail.transcriptChars} transcript chars): ${message}`,
+      `Conversation summarization failed (${detail.mode}, ${detail.messageCount} messages, ${detail.transcriptChars} transcript chars): ${message}`,
       { cause: error },
     );
   }
@@ -430,13 +475,6 @@ export function compactionSummaryExcerpt(content: string): string {
     return oneLine(content);
   }
   return lines.join(" ").slice(0, SUMMARY_EXCERPT_MAX_CHARS);
-}
-
-function chunk<T>(values: T[], size: number): T[][] {
-  return Array.from(
-    { length: Math.ceil(values.length / size) },
-    (_, index) => values.slice(index * size, (index + 1) * size),
-  );
 }
 
 function nonEmpty(arr: string[], fallback: string): string[] {

@@ -7,7 +7,6 @@ import { ExpandableRow } from "./primitives";
 interface SkillReadPaneProps {
   skillName: string;
   pluginName?: string;
-  description?: string;
   /** The raw <loaded_skill>...</loaded_skill> block returned by the tool, or a brief error string. */
   output?: string;
   status: "success" | "running" | "failed";
@@ -15,7 +14,6 @@ interface SkillReadPaneProps {
 
 function parseLoadedSkillBlock(raw: string): {
   name?: string;
-  description?: string;
   instructions?: string;
   error?: string;
 } {
@@ -42,7 +40,6 @@ function parseLoadedSkillBlock(raw: string): {
   const instructions = extract("instructions");
   return {
     name: extract("name"),
-    description: extract("description"),
     instructions,
   };
 }
@@ -50,14 +47,12 @@ function parseLoadedSkillBlock(raw: string): {
 export function SkillReadPane({
   skillName,
   pluginName,
-  description,
   output,
   status,
 }: SkillReadPaneProps) {
   const [open, setOpen] = useState(false);
   const parsed = output ? parseLoadedSkillBlock(output) : {};
   const title = parsed.name ?? skillName;
-  const summary = parsed.description ?? description;
   const instructions = parsed.instructions;
   const isError = status === "failed" || !!parsed.error;
   const rawOutput = output?.replace(/^\s*>\s*$/gm, "").trim();
@@ -69,7 +64,7 @@ export function SkillReadPane({
   ) : null;
 
   return (
-    <div className="mt-2">
+    <div>
       <ExpandableRow
         expanded={open}
         onToggle={(e) => {
@@ -80,10 +75,9 @@ export function SkillReadPane({
           <div className="flex min-w-0 items-start">
             <div className="min-w-0">
               <div className="flex min-w-0 items-baseline gap-1.5 leading-tight">
-                <span className="shrink-0 text-xs text-foreground/45">Read</span>
-                <span className="truncate text-xs font-semibold text-foreground/85">{title}</span>
+                <span className="trace-step-text shrink-0 text-foreground/45">Read</span>
+                <span className="trace-step-text truncate font-semibold text-foreground/85">{title}</span>
               </div>
-              {summary && <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-foreground/55">{summary}</div>}
             </div>
           </div>
         }
@@ -102,17 +96,17 @@ export function SkillReadPane({
               </div>
               <Markdown
                 content={instructions}
-                className="!text-[11px] !leading-relaxed !text-foreground/75 [&_p]:!my-0 [&_code]:text-[10px] whitespace-pre-wrap"
+                className="trace-step-text !leading-relaxed !text-foreground/75 [&_p]:!my-0 [&_code]:!text-[0.875em] whitespace-pre-wrap"
               />
             </div>
           )}
           {parsed.error && (
-            <div className="text-[11px] text-foreground/65">
+            <div className="trace-step-text text-foreground/65">
               {parsed.error}
             </div>
           )}
           {showRawOutput && (
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words border-l border-foreground/10 pl-3 font-mono text-[10px] leading-relaxed text-foreground/65">
+            <pre className="trace-step-text-sm max-h-48 overflow-auto whitespace-pre-wrap break-words border-l border-foreground/10 pl-3 font-mono leading-relaxed text-foreground/65">
               {rawOutput}
             </pre>
           )}

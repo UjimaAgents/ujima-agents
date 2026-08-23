@@ -14,7 +14,7 @@ import {
 import { channelRecallTool } from './channel-recall.js';
 import { globTool } from './glob.js';
 import { grepTool } from './grep.js';
-import { goalStartTool, goalTaskUpdateTool, questionAskTool } from './goal.js';
+import { goalModeTool, goalStartTool, goalTaskUpdateTool, questionAskTool } from './goal.js';
 import { lsTool } from './ls.js';
 import { downloadTool, fetchTool } from './web-tools.js';
 import { shellTool } from './shell.js';
@@ -77,6 +77,7 @@ export const ORCHESTRATOR_TOOLS = {
   'procedure.list': procedureListTool,
   'procedure.view': procedureViewTool,
   'channel.recall': channelRecallTool,
+  'goal.mode': goalModeTool,
   'goal.start': goalStartTool,
   'goal.task.update': goalTaskUpdateTool,
   'question.ask': questionAskTool,
