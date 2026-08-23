@@ -50,7 +50,7 @@ function OperationTrailItem({
   return (
     <div className={`flex min-w-0 items-start gap-2 ${className}`}>
       {showMarker ? (
-        <span className="relative -left-1.5 z-[1] -my-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-background text-foreground/45">
+        <span className="relative -left-1.5 z-[1] mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-background text-foreground/45">
           <ToolCallIcon type={type} className="h-3.5 w-3.5" />
         </span>
       ) : (
@@ -249,6 +249,7 @@ function getToolHeaderAndCleanDetail(op: AggregatedOperation, sections: DetailSe
   // Build the clean verb label
   let verb = "Executed";
   if (op.type === "shell" || lowerName === "shell" || lowerName === "execute") {
+    target = op.command?.trim() || target;
     verb = target ? `Ran "${target}"` : "Ran terminal";
   } else if (op.type === "memory" || lowerName.startsWith("memory.")) {
     const isWrite = lowerName.includes("write");

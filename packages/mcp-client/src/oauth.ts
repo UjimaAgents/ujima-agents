@@ -2,22 +2,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 
 /**
- * OAuth 2.1 + PKCE client for remote MCP connectors ("Track A" catalog
- * entries). Implements the authorization-code flow the MCP auth spec
- * describes:
- *
- *   1. Discover the resource server's authorization server via
- *      `/.well-known/oauth-protected-resource` (falling back to the
- *      resource origin itself).
- *   2. Read the AS metadata (`/.well-known/oauth-authorization-server`).
- *   3. Register a dynamic OAuth client (RFC 7591) — public client,
- *      PKCE required, no client secret.
- *   4. Run the authorization-code + S256 PKCE dance against a local
- *      loopback callback server.
- *   5. Exchange / refresh tokens.
- *
- * Tokens never touch disk here — callers persist them through the
- * secret store (headersKeyRef on the mcp_servers row).
+ * OAuth 2.1 + PKCE authorization-code flow for remote MCP connectors:
+ * protected-resource discovery (origin fallback), AS metadata,
+ * RFC 7591 dynamic client registration, S256 PKCE against a loopback
+ * callback server, then token exchange/refresh. Tokens never touch
+ * disk here — callers persist them through the secret store
+ * (headersKeyRef on the mcp_servers row).
  */
 
 export interface PkcePair {
@@ -56,18 +46,13 @@ export class OAuthFlowError extends Error {
   }
 }
 
-function base64url(buf: Buffer): string {
-  return buf.toString('base64url');
+function pkceChallenge(verifier: string): string {
+  return createHash('sha256').update(verifier).digest('base64url');
 }
 
 export function createPkcePair(): PkcePair {
-  const verifier = base64url(randomBytes(32));
-  const challenge = pkceChallenge(verifier);
-  return { verifier, challenge };
-}
-
-function pkceChallenge(verifier: string): string {
-  return base64url(createHash('sha256').update(verifier).digest());
+  const verifier = randomBytes(32).toString('base64url');
+  return { verifier, challenge: pkceChallenge(verifier) };
 }
 
 function joinUrl(base: string, path: string): string {

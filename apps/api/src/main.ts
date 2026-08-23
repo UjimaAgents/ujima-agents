@@ -118,12 +118,9 @@ async function main(): Promise<void> {
   // process (matches the migrateUnifiedWorkspaceOrg assumption).
   const lateRepoRef: DaemonRepoRef = { current: undefined };
 
-  // Late refs for the workspace-catalog loaders below. The host is
-  // constructed before the Repository/teamStore exist (same reason as
-  // `lateRepoRef`), but the loaders only run once tasks start — by
-  // which time main() has fully wired the daemon. The closures resolve
-  // the active org from the workspace id (`ws_{organizationId}`,
-  // single-org-per-process, matching migrateUnifiedWorkspaceOrg).
+  // Late refs for the workspace-catalog loaders below, same reason as
+  // `lateRepoRef`: the host is constructed before the Repository and
+  // teamStore exist, but the loaders only run once tasks start.
   const daemonCatalog: {
     teamStore?: ReturnType<typeof createTeamStore>;
     configSync?: ConfigSyncService;
