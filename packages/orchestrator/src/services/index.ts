@@ -1623,7 +1623,6 @@ export function createApiServices(context: ApiServicesContext): ApiServices {
     tools,
     {
       conversations,
-      ai,
       modelResolver: spiritModelResolver,
       registry: activeSpirits,
       mcpPool: context.mcpPool,

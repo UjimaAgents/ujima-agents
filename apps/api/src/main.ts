@@ -10,13 +10,16 @@ import {
   Repository,
 } from '@ujima/runtime-core';
 import type { AgentDef, MCPDef, TeamDef } from '@ujima/shared';
+import { AGENT_KIND, organizationIdFromWorkspaceId } from '@ujima/shared';
 import type { LanguageModel } from 'ai';
 import {
   ALWAYS_AVAILABLE_AGENT_TOOLS,
   ConfigSyncService,
   createApiServices,
+  createSpiritModelResolver,
   createTeamStore,
   DEFAULT_SKILL_URLS,
+  materializeMcpDef,
   migrateUnifiedWorkspaceOrg,
   PluginRegistryService,
   type PermissionContextBuilder,
@@ -115,20 +118,129 @@ async function main(): Promise<void> {
   // process (matches the migrateUnifiedWorkspaceOrg assumption).
   const lateRepoRef: DaemonRepoRef = { current: undefined };
 
+  // Late refs for the workspace-catalog loaders below. The host is
+  // constructed before the Repository/teamStore exist (same reason as
+  // `lateRepoRef`), but the loaders only run once tasks start — by
+  // which time main() has fully wired the daemon. The closures resolve
+  // the active org from the workspace id (`ws_{organizationId}`,
+  // single-org-per-process, matching migrateUnifiedWorkspaceOrg).
+  const daemonCatalog: {
+    teamStore?: ReturnType<typeof createTeamStore>;
+    configSync?: ConfigSyncService;
+  } = {};
+
+  function requireDaemonRepo(): Repository {
+    if (!lateRepoRef.current) {
+      throw new Error('runtime: loaders called before daemon finished starting');
+    }
+    return lateRepoRef.current;
+  }
+
+  function requireOrgId(workspaceId: string): string {
+    const organizationId = organizationIdFromWorkspaceId(workspaceId);
+    if (!organizationId) {
+      throw new Error(
+        `runtime: workspace "${workspaceId}" is not an org workspace (expected "ws_{organizationId}")`,
+      );
+    }
+    return organizationId;
+  }
+
+  function ensureTeam(organizationId: string) {
+    const teamStore = daemonCatalog.teamStore;
+    const configSync = daemonCatalog.configSync;
+    let team = teamStore?.getTeam(organizationId) ?? null;
+    if (!team && configSync) {
+      configSync.loadFromStoredConfig(organizationId);
+      team = teamStore?.getTeam(organizationId) ?? null;
+    }
+    return team;
+  }
+
+  // Sync getModel contract (run-task resolves models inline) vs async
+  // provider credential lookups: loadAgent pre-resolves and caches the
+  // LanguageModel so getModel stays a synchronous map read.
+  const daemonModelCache = new Map<string, LanguageModel>();
+
   const host = await createRuntimeHost(
     {
       homeDir,
       logger,
-      // TODO(12.1): wire real loaders from file-backed workspace catalog once
-      // the transport surface (12.1 stub) lands. These throw by default so
-      // callers know the daemon is inert until configured.
-      loadAgent: async (): Promise<AgentDef | undefined> => undefined,
-      loadTeam: async (): Promise<TeamDef | undefined> => undefined,
-      resolveMCPDef: async (_wsId, mcpId): Promise<MCPDef> => {
-        throw new Error(`runtime: no MCP resolver configured (requested "${mcpId}")`);
+      loadTeam: async (workspaceId, teamId): Promise<TeamDef | undefined> => {
+        const repo = requireDaemonRepo();
+        const organizationId = requireOrgId(workspaceId);
+        const team = ensureTeam(organizationId);
+        if (!team) return undefined;
+        // The daemon is one-org/one-team per process: expose every live
+        // agent member as part of the org's single team so both the
+        // named-team path and ad-hoc agentIds subsets resolve. The host
+        // validates requested agentIds against this list.
+        const agents = repo
+          .listMembers(organizationId)
+          .filter((m) => m.kind === AGENT_KIND && !m.retiredAt)
+          .map((m) => m.id);
+        return {
+          team_id: teamId ?? team.config.name,
+          name: team.config.name,
+          agents,
+        };
+      },
+      loadAgent: async (workspaceId, agentId): Promise<AgentDef | undefined> => {
+        const repo = requireDaemonRepo();
+        const organizationId = requireOrgId(workspaceId);
+        const member =
+          repo.getMember(organizationId, agentId) ??
+          repo.listMembers(organizationId).find((m) => m.name === agentId);
+        if (!member || member.kind !== AGENT_KIND || member.retiredAt) return undefined;
+        const team = ensureTeam(organizationId);
+        const teamStore = daemonCatalog.teamStore;
+        if (!team || !teamStore) return undefined;
+        const role = team.getRole(member.roleName);
+        const agentConfig = team.getAgent(member.id) ?? team.getAgent(member.name);
+        daemonModelCache.set(
+          member.id,
+          await createSpiritModelResolver(teamStore, repo)({
+            organizationId,
+            memberId: member.id,
+            role: 'worker',
+          }),
+        );
+        return {
+          id: member.id,
+          name: member.name,
+          persona: agentConfig?.personalityName ?? '',
+          model: member.model ?? role?.model ?? '',
+          mcp: '',
+          permissions: {
+            allowed_tools: [...(role?.tools ?? []), ...ALWAYS_AVAILABLE_AGENT_TOOLS],
+            blocked_tools: [],
+            rate_limit: { max_session_tokens: 100_000 },
+          },
+          communication: { publishes: [], subscribes: [] },
+          escalation: { conditions: [], escalate_to: 'human' },
+        };
+      },
+      resolveMCPDef: async (workspaceId, mcpId): Promise<MCPDef> => {
+        const repo = requireDaemonRepo();
+        const organizationId = requireOrgId(workspaceId);
+        const server = repo.getMcpServer(organizationId, mcpId);
+        if (!server) {
+          throw new Error(`runtime: MCP "${mcpId}" not found in workspace "${workspaceId}"`);
+        }
+        // Secret-backed materialization: envKeyRef/headersKeyRef rows are
+        // resolved through the file secret store, same as the orchestrator
+        // spawn path (PAT headers etc.). OAuth connectors land their token
+        // in headersKeyRef via the connector OAuth flow.
+        return materializeMcpDef(repo, server);
       },
       getModel: (agent: AgentDef): LanguageModel => {
-        throw new Error(`runtime: no model configured for agent "${agent.id}"`);
+        const cached = daemonModelCache.get(agent.id);
+        if (!cached) {
+          throw new Error(
+            `runtime: no model preloaded for agent "${agent.id}" — loadAgent must run before startTask resolves models`,
+          );
+        }
+        return cached;
       },
       policyResolver: buildPolicyResolver(lateRepoRef),
       classificationLookup: buildClassificationLookup(lateRepoRef),
@@ -155,6 +267,8 @@ async function main(): Promise<void> {
     logger.info('runtime: unified workspace/org migration', { splits: migration.splits });
   }
   const configSync = new ConfigSyncService(repository, teamStore);
+  daemonCatalog.teamStore = teamStore;
+  daemonCatalog.configSync = configSync;
   const teamConfigWatcher = await startTeamConfigWatcher({
     repo: repository,
     teamStore,

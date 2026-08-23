@@ -131,6 +131,8 @@ export {
   validateProviderKeys,
 } from './services/index.js';
 export { DEFAULT_SKILL_URLS } from './services/index.js';
+export { materializeMcpDef } from './services/mcp-runtime.js';
+export { createSpiritModelResolver } from './utils/create-spirit-model-resolver.js';
 export {
   NotificationService,
   resolveApprovalFromTelegram,

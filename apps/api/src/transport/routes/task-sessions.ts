@@ -161,7 +161,7 @@ export function registerTaskSessionRoutes(
         return apiError(reply, 404, message);
       }
       if (
-        message.includes('not wired') ||
+        message.startsWith('Member not found') ||
         message.includes('not an agent') ||
         message.includes('retired') ||
         message.includes('terminal')

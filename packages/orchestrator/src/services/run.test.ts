@@ -16,12 +16,12 @@ function createSpiritRunService(
   repo: ConstructorParameters<typeof SpiritService>[1],
   realtime: ConstructorParameters<typeof SpiritService>[2],
   conversations: NonNullable<ConstructorParameters<typeof SpiritService>[4]>['conversations'],
-  ai: NonNullable<ConstructorParameters<typeof SpiritService>[4]>['ai'],
+  replyOverride?: { generateRunReply?: unknown },
   tools: ConstructorParameters<typeof SpiritService>[3],
 ) {
-  const service = new SpiritService(teamStore, repo, realtime, tools, { conversations, ai });
-  if (ai?.generateRunReply) {
-    service.generateRunReply = ai.generateRunReply as typeof service.generateRunReply;
+  const service = new SpiritService(teamStore, repo, realtime, tools, { conversations });
+  if (replyOverride?.generateRunReply) {
+    service.generateRunReply = replyOverride.generateRunReply as typeof service.generateRunReply;
   }
   return service;
 }

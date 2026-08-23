@@ -1075,7 +1075,9 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     const ownerB = repo.listMembers(orgB).find((m) => m.kind === 'human')!.id;
 
     const conversations = new ConversationService(repo, noopRealtime());
-    const taskSessions = new TaskSessionService(repo, conversations);
+    const taskSessions = new TaskSessionService(repo, conversations, {
+      spawn: () => { throw new Error('start() not exercised in this test'); },
+    } as never);
 
     const { session: sessionA } = taskSessions.create({
       organizationId: orgA,
@@ -1722,7 +1724,9 @@ describe('TaskSessionService.create — audit fix regressions', () => {
     }) as ApiRepository;
 
     const conversations = new ConversationService(wrappedRepo, noopRealtime());
-    const taskSessions = new TaskSessionService(wrappedRepo, conversations);
+    const taskSessions = new TaskSessionService(wrappedRepo, conversations, {
+      spawn: () => { throw new Error('start() not exercised in this test'); },
+    } as never);
 
     expect(() =>
       taskSessions.create({
